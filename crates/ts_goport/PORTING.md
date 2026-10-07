@@ -1115,11 +1115,13 @@ because every request runs on the dispatch thread.
 
 One exception: the cross-project search (`ls/crossproject.rs`,
 `ls/search_thread.rs`). Go searches each project of a references,
-implementations or rename request on its own goroutine, with a query
-checker of that project's pool, and later requests in the project see the
-state the search left. Here the search of each project other than the
-default one runs at once on the dispatch thread when its pool has a query
-checker, and otherwise on the search thread of its program version:
+implementations, rename or incoming calls request on its own goroutine,
+with a query checker of that project's pool, and later requests in the
+project see the state the search left. Here the search of each project
+other than the default one runs at once on the dispatch thread when its
+pool has a query checker, and otherwise on the search thread of its
+program version (VS references search every project on the dispatch
+thread):
 - One long-lived thread per program version. It starts from a
   `program::WorkerSeed` taken after the program is bound, makes its own
   checker, and ends when the program is released
