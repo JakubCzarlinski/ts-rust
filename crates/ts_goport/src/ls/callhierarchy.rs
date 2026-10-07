@@ -3,12 +3,17 @@
 //! PORT: Go `*compiler.Program` is `&compiler::NewProgram`. Go
 //! `program.GetTypeChecker(ctx)` and `GetTypeCheckerForFile(ctx, file)` lease
 //! a checker through `ls_program`; the `Release` guard stays alive to the end
-//! of the Go function, as Go's `defer done()`.
+//! of the Go function, as Go's `defer done()`. The incoming calls answer of a
+//! project (`symbol_and_entries_to_incoming_calls`) is generic over
+//! `ProgramView`, so that a cross-project search can run it on a search
+//! thread (`crossproject.rs`, `IncomingCallsSearch`).
 
 use crate::ls::prelude::*;
 
+use crate::ls::search_thread;
 use crate::spanmap::Feature;
 use std::cell::OnceCell;
+use std::sync::mpsc;
 
 // Go: ls/callhierarchy.go:23 CallHierarchyDeclaration
 pub type CallHierarchyDeclaration = Node;
@@ -170,10 +175,7 @@ pub fn get_symbol_of_call_hierarchy_declaration(c: &mut Checker, node: Node) -> 
 // Go: ls/callhierarchy.go:161 getCallHierarchyItemName
 // Gets the text and range for the name of a call hierarchy declaration.
 // PORT: Go named results `(text string, pos int, end int)` are a tuple.
-pub fn get_call_hierarchy_item_name(
-    program: &compiler::NewProgram,
-    node: Node,
-) -> (String, i32, i32) {
+pub fn get_call_hierarchy_item_name<P: ProgramView>(program: &P, node: Node) -> (String, i32, i32) {
     if is_source_file(node) {
         let source_file = node;
         return (source_file_file_name(source_file).to_string(), 0, 0);
@@ -199,11 +201,8 @@ pub fn get_call_hierarchy_item_name(
             move_range_past_modifiers(node).pos(),
         );
         let end = pos + 6; // "static".length
-        let (checker, _done) = ls_program::get_type_checker_for_file(
-            program,
-            &gostd::context::background(),
-            source_file,
-        );
+        let (checker, _done) =
+            program.get_type_checker_for_file(&gostd::context::background(), source_file);
         let prefix = {
             let c = &mut *checker.borrow_mut();
             let symbol = c.get_symbol_at_location_exported(node.parent());
@@ -252,8 +251,8 @@ pub fn get_call_hierarchy_item_name(
 }
 
 // Go: ls/callhierarchy.go:221 getTextOfCallHierarchyName
-pub fn get_text_of_call_hierarchy_name(
-    program: &compiler::NewProgram,
+pub fn get_text_of_call_hierarchy_name<P: ProgramView>(
+    program: &P,
     source_node: Node,
     name: Node,
     print_node: Node,
@@ -268,8 +267,7 @@ pub fn get_text_of_call_hierarchy_name(
         }
     }
 
-    let (checker, _done) = ls_program::get_type_checker_for_file(
-        program,
+    let (checker, _done) = program.get_type_checker_for_file(
         &gostd::context::background(),
         get_source_file_of_node(source_node),
     );
@@ -302,10 +300,7 @@ pub fn get_text_of_call_hierarchy_name(
 }
 
 // Go: ls/callhierarchy.go:250 getCallHierarchyItemContainerName
-pub fn get_call_hierarchy_item_container_name(
-    program: &compiler::NewProgram,
-    node: Node,
-) -> String {
+pub fn get_call_hierarchy_item_container_name<P: ProgramView>(program: &P, node: Node) -> String {
     if is_assigned_expression(node) {
         let parent = node.parent();
         if is_property_declaration(parent) && is_class_like(parent.parent()) {
@@ -616,13 +611,13 @@ pub fn resolve_call_hierarchy_declaration(
     None
 }
 
-impl LanguageService {
+impl<P: ProgramView> LanguageService<P> {
     // Go: ls/callhierarchy.go:501 createCallHierarchyItem
     // Creates a `CallHierarchyItem` for a call hierarchy declaration.
     // PORT: Go returns `*lsproto.CallHierarchyItem`; nil is `None`.
     pub fn create_call_hierarchy_item(
         &self,
-        program: &compiler::NewProgram,
+        program: &P,
         node: Node,
     ) -> Option<lsproto::CallHierarchyItem> {
         let source_file = get_source_file_of_node(node);
@@ -728,12 +723,12 @@ pub fn get_call_site_group_key(site: &CallSite) -> u64 {
     get_node_id(site.declaration)
 }
 
-impl LanguageService {
+impl<P: ProgramView> LanguageService<P> {
     // Go: ls/callhierarchy.go:572 convertCallSiteGroupToIncomingCall
     // PORT: Go returns `*lsproto.CallHierarchyIncomingCall`; nil is `None`.
     pub fn convert_call_site_group_to_incoming_call(
         &self,
-        program: &compiler::NewProgram,
+        program: &P,
         entries: &[CallSite],
     ) -> Option<lsproto::CallHierarchyIncomingCall> {
         let mut from_ranges: Vec<lsproto::Range> = Vec::with_capacity(entries.len());
@@ -861,7 +856,7 @@ impl LanguageService {
             &incoming_entry,
             orchestrator,
             LanguageService::symbol_and_entries_to_incoming_calls,
-            None, /*search*/
+            Some(start_incoming_calls_search),
             combine_incoming_calls,
             false,
             false,
@@ -890,12 +885,16 @@ impl LanguageService {
         }
         Ok(result)
     }
+}
 
+impl<P: ProgramView> LanguageService<P> {
     // Go: ls/callhierarchy.go:678 symbolAndEntriesToIncomingCalls
-    pub fn symbol_and_entries_to_incoming_calls(
+    // PORT: Go `params *incomingEntry` is not read; `Q` is `IncomingEntry` on
+    // the dispatch thread and `IncomingCallsPosition` on a search thread.
+    pub fn symbol_and_entries_to_incoming_calls<Q>(
         &self,
         ctx: &Context,
-        params: &IncomingEntry<'_>,
+        params: &Q,
         data: SymbolAndEntriesData,
         options: SymbolEntryTransformOptions,
     ) -> Result<lsproto::CallHierarchyIncomingCallsResponse, GoError> {
@@ -938,6 +937,62 @@ impl LanguageService {
             call_hierarchy_incoming_calls: Some(result),
         })
     }
+}
+
+/// The text document position of an `IncomingEntry` as plain data, the
+/// params of its search on a search thread.
+#[derive(Clone, Debug)]
+pub struct IncomingCallsPosition {
+    pub uri: lsproto::DocumentUri,
+    pub position: lsproto::Position,
+}
+
+impl lsproto::HasTextDocumentURI for IncomingCallsPosition {
+    fn text_document_uri(&self) -> lsproto::DocumentUri {
+        self.uri.clone()
+    }
+}
+
+impl lsproto::HasTextDocumentPosition for IncomingCallsPosition {
+    fn text_document_position(&self) -> lsproto::Position {
+        self.position
+    }
+}
+
+/// `ProvideCallHierarchyIncomingCalls` as a `CrossProjectSearch`: its
+/// searches in other projects can run on search threads (`crossproject.rs`
+/// header).
+pub struct IncomingCallsSearch;
+
+impl CrossProjectSearch for IncomingCallsSearch {
+    type Req = IncomingCallsPosition;
+    type Resp = lsproto::CallHierarchyIncomingCallsResponse;
+
+    fn to_resp<P: ProgramView>(
+        ls: &LanguageService<P>,
+        ctx: &Context,
+        params: &Self::Req,
+        data: SymbolAndEntriesData,
+        options: SymbolEntryTransformOptions,
+    ) -> Result<Self::Resp, GoError> {
+        ls.symbol_and_entries_to_incoming_calls(ctx, params, data, options)
+    }
+}
+
+/// `search_thread::start_search::<IncomingCallsSearch>` for the
+/// `IncomingEntry` params of the request (a `search_thread::StartSearch`).
+fn start_incoming_calls_search(
+    params: &IncomingEntry<'_>,
+    ls: &LanguageService,
+    item: usize,
+    search: search_thread::SearchItem,
+    sender: mpsc::Sender<search_thread::ToDispatch<lsproto::CallHierarchyIncomingCallsResponse>>,
+) -> search_thread::Replay {
+    let params = IncomingCallsPosition {
+        uri: lsproto::HasTextDocumentURI::text_document_uri(params),
+        position: lsproto::HasTextDocumentPosition::text_document_position(params),
+    };
+    search_thread::start_search::<IncomingCallsSearch>(&params, ls, item, search, sender)
 }
 
 // Go: ls/callhierarchy.go:711 callSiteCollector

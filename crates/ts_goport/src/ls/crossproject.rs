@@ -14,9 +14,9 @@
 //!      and `symbolAndEntriesToResp`, with no session call. Item 0 (the
 //!      default project, with the caller's language service and the default
 //!      definition) runs it on the dispatch thread. So does every item of a
-//!      request that passes no `search` function (VS references, incoming
-//!      calls). The other items of references, implementations and rename
-//!      run it in parallel, as Go runs them on goroutines, each with the
+//!      request that passes no `search` function (VS references). The other
+//!      items of references, implementations, rename and incoming calls run
+//!      it in parallel, as Go runs them on goroutines, each with the
 //!      checker that Go's search uses: a query checker of the project's pool
 //!      (Go `project/checkerpool.go:252 getQueryChecker`), whose state later
 //!      requests in that project see (for example `EnumOptions<T>` against
@@ -137,8 +137,9 @@ pub type SymbolAndEntriesToResp<Req, Resp> = fn(
 ) -> Result<Resp, GoError>;
 
 /// A request whose searches in other projects can run on search threads
-/// (references, implementations, rename; see the file header). `to_resp` is
-/// the request's Go `symbolAndEntriesToResp` for any program view.
+/// (references, implementations, rename, incoming calls; see the file
+/// header). `to_resp` is the request's Go `symbolAndEntriesToResp` for any
+/// program view.
 /// `search_thread::start_search::<K>` is the `search` argument of
 /// `handle_cross_project` for it.
 pub trait CrossProjectSearch: 'static {

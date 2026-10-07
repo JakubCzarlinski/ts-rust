@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 // distinguishes "held without ID" from "not held" (empty string).
 pub const CHECKER_HELD_ANONYMOUS: &str = "<anonymous>";
 
-/// Not in Go: the request id that holds a query checker while the pool runs
-/// the logged searches again on it (`replay_searches_locked`).
+/// Not in Go: the request id of the logged searches when the pool runs them
+/// again on a new query checker (`replay_searches_locked`).
 const SEARCH_REPLAY_REQUEST: &str = "<search replay>";
 
 /// Not in Go: the searches that ran on the program's search thread
@@ -566,14 +566,16 @@ impl CheckerPool {
             "checkerpool: Replaying {} searches on query checker {index}",
             runs.len()
         ));
-        // Hold `c` for the replay's request, so that every checker request of
-        // the replayed searches gets it (`try_reacquire_for_request`). A
-        // context that can be canceled keeps request affinity on.
+        // Associate `c` with the replay's request, so that every checker
+        // request of the replayed searches gets it (request affinity,
+        // `try_reacquire_for_request`); a context that can be canceled keeps
+        // affinity on. `c` stays idle between those requests, so a request
+        // with no request id (the background context of the call hierarchy
+        // names) gets it as the first idle query checker, as in Go.
         let (ctx, cancel) = gostd::context::with_cancel(&core_context::with_request_id(
             &gostd::context::background(),
             SEARCH_REPLAY_REQUEST,
         ));
-        self.held_by.borrow_mut()[i] = SEARCH_REPLAY_REQUEST.to_string();
         self.request_associations
             .borrow_mut()
             .insert(SEARCH_REPLAY_REQUEST.to_string(), index);
@@ -586,7 +588,6 @@ impl CheckerPool {
         self.request_associations
             .borrow_mut()
             .remove(SEARCH_REPLAY_REQUEST);
-        self.held_by.borrow_mut()[i] = String::new();
         ls::drop_search_checker(&self.program);
         gostd::local::drop_later(Box::new(host));
         match replayed {

@@ -58,6 +58,16 @@ pub trait ProgramView {
 
     /// Go `program.GetTypeChecker(ctx)`.
     fn get_type_checker(&self, ctx: &Context) -> (Rc<RefCell<Checker>>, ls_program::Release);
+
+    /// Go `program.GetTypeCheckerForFile(ctx, file)`. A view with one
+    /// checker gives that one.
+    fn get_type_checker_for_file(
+        &self,
+        ctx: &Context,
+        _file: Node,
+    ) -> (Rc<RefCell<Checker>>, ls_program::Release) {
+        self.get_type_checker(ctx)
+    }
 }
 
 impl ProgramView for compiler::NewProgram {
@@ -152,5 +162,13 @@ impl ProgramView for compiler::NewProgram {
 
     fn get_type_checker(&self, ctx: &Context) -> (Rc<RefCell<Checker>>, ls_program::Release) {
         ls_program::get_type_checker(self, ctx)
+    }
+
+    fn get_type_checker_for_file(
+        &self,
+        ctx: &Context,
+        file: Node,
+    ) -> (Rc<RefCell<Checker>>, ls_program::Release) {
+        ls_program::get_type_checker_for_file(self, ctx, file)
     }
 }
