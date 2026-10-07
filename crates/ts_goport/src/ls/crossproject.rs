@@ -11,28 +11,43 @@
 //!   1. open (dispatch thread): the item's language service, Go
 //!      `GetLanguageServiceForProjectWithFile`;
 //!   2. search: `provideSymbolsAndEntries`, the original definition locations
-//!      and `symbolAndEntriesToResp`, with no session call. Every item runs
-//!      it on the dispatch thread, with a checker of its project's pool, as
-//!      Go does (the item's language service takes the pool's query checker,
-//!      Go `project/checkerpool.go:252 getQueryChecker`). Later requests in
-//!      that project get the same checker and see the state the search left
-//!      (for example `EnumOptions<T>` against
-//!      `EnumOptions<T extends object = any>` in a hover, Go
-//!      `checker.go:21090 instantiateSymbol`). Go runs the items at the same
-//!      time; here they run one at a time, in Go start order. Each project
-//!      has its own pool, so the order changes no checker's state;
+//!      and `symbolAndEntriesToResp`, with no session call. Item 0 (the
+//!      default project, with the caller's language service and the default
+//!      definition) runs it on the dispatch thread. So does every item of a
+//!      request that passes no `search` function (VS references, incoming
+//!      calls). The other items of references, implementations and rename
+//!      run it in parallel, as Go runs them on goroutines, each with the
+//!      checker that Go's search uses: a query checker of the project's pool
+//!      (Go `project/checkerpool.go:252 getQueryChecker`), whose state later
+//!      requests in that project see (for example `EnumOptions<T>` against
+//!      `EnumOptions<T extends object = any>` in a hover, lschk1). A pool
+//!      checker can not leave the dispatch thread, so
+//!      (`ls_program::SearchChecker`):
+//!      - when the pool has a query checker, the item runs at once on the
+//!        dispatch thread with it;
+//!      - otherwise it runs on the search thread of its program
+//!        (`search_thread.rs`), whose checker stands in for the query
+//!        checker that Go makes for it and that only searches used since.
+//!        The pool logs the search, and runs the logged searches again on
+//!        its new query checker when a later request first needs one
+//!        (`project::checkerpool` `SearchLog`);
 //!   3. commit (dispatch thread): for each location in search order, Go
 //!      `GetProjectsForFile` and `enqueueItem`; then the response, or the
 //!      first error.
 //!   Items get their number when they leave the queue, and commit strictly
 //!   in that order. So the enqueue calls, `results` (keys, order, winning
 //!   positions) and the first error are those of a serial run in Go start
-//!   order. An item opens only after every earlier item committed.
-//! - A `search` function runs phase 2 of the items other than item 0 on the
-//!   search thread of their program (`search_thread.rs`), in parallel. No
-//!   request passes one now: a search thread has its own checker, so the
-//!   project's pool stays cold and later requests show other type forms
-//!   than Go (lschk1). The code stays until a later change removes it.
+//!   order, whatever order the searches end in. Item 0, and every item of a
+//!   request with no `search` function, opens only after every earlier item
+//!   committed, so such a request runs as before, one item at a time.
+//! - Go starts each queued item at once on its own goroutine, and the item
+//!   returns at once if the request is canceled (`:90`). Then nothing stops
+//!   its search; only the check after it (`:119`) drops its answer and its
+//!   new items (lsp-concurrency D3). So the check uses the state of the
+//!   request when Go starts the item (`started`): when the initial items
+//!   are queued, and true for the items that a commit or the project tree
+//!   wave queues, which Go starts right after a passed check. Each searched
+//!   project keeps Go's checker state after a cancel.
 //! - Go `collections.SyncMap.Range` order is random. `results` is an
 //!   `IndexMap` in insertion order. Multi-project result order can differ
 //!   from Go; the oracle compares it without order.
@@ -122,11 +137,10 @@ pub type SymbolAndEntriesToResp<Req, Resp> = fn(
 ) -> Result<Resp, GoError>;
 
 /// A request whose searches in other projects can run on search threads
-/// (references, implementations, rename). `to_resp` is the request's Go
-/// `symbolAndEntriesToResp` for any program view.
+/// (references, implementations, rename; see the file header). `to_resp` is
+/// the request's Go `symbolAndEntriesToResp` for any program view.
 /// `search_thread::start_search::<K>` is the `search` argument of
-/// `handle_cross_project` for it. No request uses it now (see the file
-/// header).
+/// `handle_cross_project` for it.
 pub trait CrossProjectSearch: 'static {
     type Req: HasTextDocumentPosition + Clone + Send + 'static;
     type Resp: Clone + Default + Send + 'static;
@@ -148,9 +162,8 @@ pub trait CrossProjectSearch: 'static {
 // nil: `Option<&dyn CrossProjectOrchestrator>`. Go
 // `combineResults func(iter.Seq[Resp]) Resp` takes the yielded values as a
 // slice (see the file header). `search` starts phase 2 of an item on a
-// search thread (`search_thread::start_search::<K>`); with `None`, every item
-// runs on the dispatch thread with its project's pool checker. Every caller
-// passes `None`, which is Go's model (see the file header).
+// search thread (`search_thread::start_search::<K>`) when its pool has no
+// query checker; with `None`, every item runs on the dispatch thread.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_cross_project<Req, Resp>(
     default_ls: &LanguageService,
@@ -220,18 +233,21 @@ where
         for_original_location: false,
     };
     initial_item.symbol_data = default_project_data;
-    state.enqueue_item(initial_item);
+    state.enqueue_item(initial_item, ctx.err().is_none());
     for project in &state.all_projects {
         if !Rc::ptr_eq(project, &state.default_project) {
-            state.enqueue_item(ProjectAndTextDocumentPosition {
-                project: Rc::clone(project),
-                ls: None,
-                // TODO!! symlinks need to change the URI
-                uri: params.text_document_uri(),
-                position: params.text_document_position(),
-                symbol_data: None,
-                for_original_location: false,
-            });
+            state.enqueue_item(
+                ProjectAndTextDocumentPosition {
+                    project: Rc::clone(project),
+                    ls: None,
+                    // TODO!! symlinks need to change the URI
+                    uri: params.text_document_uri(),
+                    position: params.text_document_position(),
+                    symbol_data: None,
+                    for_original_location: false,
+                },
+                ctx.err().is_none(),
+            );
         }
     }
 
@@ -292,39 +308,48 @@ where
                         .unwrap_or_else(|| crate::core::go_nil_dereference());
                     if loaded_project.has_file(&default_definition.text_document_uri().file_name())
                     {
-                        state.enqueue_item(ProjectAndTextDocumentPosition {
-                            project: loaded_project,
-                            ls: None,
-                            uri: default_definition.text_document_uri(),
-                            position: default_definition.text_document_position(),
-                            symbol_data: None,
-                            for_original_location: false,
-                        });
+                        state.enqueue_item(
+                            ProjectAndTextDocumentPosition {
+                                project: loaded_project,
+                                ls: None,
+                                uri: default_definition.text_document_uri(),
+                                position: default_definition.text_document_position(),
+                                symbol_data: None,
+                                for_original_location: false,
+                            },
+                            true, /*started*/
+                        );
                         has_more_work = true;
                     } else if let Some(source_pos) = (default_definition.get_source_position)()
                         && loaded_project.has_file(&source_pos.text_document_uri().file_name())
                     {
-                        state.enqueue_item(ProjectAndTextDocumentPosition {
-                            project: loaded_project,
-                            ls: None,
-                            uri: source_pos.text_document_uri(),
-                            position: source_pos.text_document_position(),
-                            symbol_data: None,
-                            for_original_location: false,
-                        });
+                        state.enqueue_item(
+                            ProjectAndTextDocumentPosition {
+                                project: loaded_project,
+                                ls: None,
+                                uri: source_pos.text_document_uri(),
+                                position: source_pos.text_document_position(),
+                                symbol_data: None,
+                                for_original_location: false,
+                            },
+                            true, /*started*/
+                        );
                         has_more_work = true;
                     } else if let Some(generated_pos) =
                         (default_definition.get_generated_position)()
                         && loaded_project.has_file(&generated_pos.text_document_uri().file_name())
                     {
-                        state.enqueue_item(ProjectAndTextDocumentPosition {
-                            project: loaded_project,
-                            ls: None,
-                            uri: generated_pos.text_document_uri(),
-                            position: generated_pos.text_document_position(),
-                            symbol_data: None,
-                            for_original_location: false,
-                        });
+                        state.enqueue_item(
+                            ProjectAndTextDocumentPosition {
+                                project: loaded_project,
+                                ls: None,
+                                uri: generated_pos.text_document_uri(),
+                                position: generated_pos.text_document_position(),
+                                symbol_data: None,
+                                for_original_location: false,
+                            },
+                            true, /*started*/
+                        );
                         has_more_work = true;
                     }
                     true
@@ -358,10 +383,13 @@ where
 // response. `on_entry` runs first for each entry (the default definition of
 // item 0). Returns None where Go returns early because the request was
 // canceled.
+// PORT: the search itself gets `search_ctx` (see `search_thread::run_search`);
+// the rest gets the request context `ctx`.
 #[allow(clippy::too_many_arguments)]
 pub fn search_item<P: ProgramView, Req, Resp>(
     ls: &LanguageService<P>,
     ctx: &Context,
+    search_ctx: &Context,
     params: &Req,
     uri: &lsproto::DocumentUri,
     position: lsproto::Position,
@@ -381,6 +409,7 @@ pub fn search_item<P: ProgramView, Req, Resp>(
     search_item_with_data(
         ls,
         ctx,
+        search_ctx,
         params,
         uri,
         position,
@@ -401,6 +430,7 @@ pub fn search_item<P: ProgramView, Req, Resp>(
 pub fn search_item_with_data<P: ProgramView, Req, Resp>(
     ls: &LanguageService<P>,
     ctx: &Context,
+    search_ctx: &Context,
     params: &Req,
     uri: &lsproto::DocumentUri,
     position: lsproto::Position,
@@ -420,7 +450,9 @@ pub fn search_item_with_data<P: ProgramView, Req, Resp>(
 ) -> Option<Result<Resp, GoError>> {
     let (data, ok) = match symbol_data {
         Some(symbol_data) => (symbol_data, true),
-        None => ls.provide_symbols_and_entries(ctx, uri, position, is_rename, implementations),
+        None => {
+            ls.provide_symbols_and_entries(search_ctx, uri, position, is_rename, implementations)
+        }
     };
     if ctx.err().is_some() {
         return None;
@@ -476,11 +508,13 @@ struct CrossProjectState<'a, Req, Resp> {
     results: RefCell<IndexMap<String, Rc<RefCell<Response<Resp>>>>>,
     /// Go `defaultDefinition *nonLocalDefinition`.
     default_definition: RefCell<Option<NonLocalDefinition<'a>>>,
-    /// Go `wg`: the queued items with the response each one fills.
+    /// Go `wg`: the queued items with the response each one fills, and
+    /// whether Go starts the item (see the file header).
     wg: RefCell<
         VecDeque<(
             ProjectAndTextDocumentPosition<'a>,
             Rc<RefCell<Response<Resp>>>,
+            bool,
         )>,
     >,
     /// Go `err` (under `errMu`).
@@ -511,6 +545,8 @@ struct Slot<'a, Resp> {
     number: usize,
     item: ProjectAndTextDocumentPosition<'a>,
     response: Rc<RefCell<Response<Resp>>>,
+    /// Go starts the item (see the file header).
+    started: bool,
     state: SlotState<'a, Resp>,
 }
 
@@ -518,14 +554,58 @@ enum SlotState<'a, Resp> {
     /// Phases 1 and 2 run on the dispatch thread when the item is first in
     /// the window.
     Inline,
-    /// Phase 2 runs on a search thread. The language service answers the
-    /// thread's host reads and keeps the program alive until the commit.
-    Running(LanguageService),
+    /// Phase 2 runs on a search thread.
+    Running(ThreadItem),
     /// Phases 1 and 2 ended; the item commits when it is first.
     Done {
         ls: Option<ItemLs<'a>>,
         outcome: search_thread::ItemOutcome<Resp>,
     },
+}
+
+/// An item whose search runs on a search thread.
+struct ThreadItem {
+    /// Answers the thread's host reads and keeps the program alive until
+    /// the commit.
+    ls: LanguageService,
+    /// The pool of the program, which logs the search when it ends.
+    pool: Rc<dyn ls_program::CheckerPool>,
+    replay: search_thread::Replay,
+}
+
+impl ThreadItem {
+    /// Logs the ended search in the pool (`ls_program::SearchReplay`), or
+    /// makes the pool forget its searches after a panic, and gives back the
+    /// language service.
+    fn end<Resp>(
+        self,
+        uri: &lsproto::DocumentUri,
+        outcome: &search_thread::ItemOutcome<Resp>,
+    ) -> LanguageService {
+        let ThreadItem { ls, pool, replay } = self;
+        if outcome.panic.is_some() {
+            pool.forget_searches();
+            return ls;
+        }
+        // The search ran Go `symbolAndEntriesToResp` unless the request was
+        // canceled before it.
+        let to_resp = outcome.result.is_some();
+        let project_id = ls.project_id.clone();
+        let program = Rc::clone(&ls.program);
+        let active_file = uri.file_name();
+        let host: Rc<dyn Host> = Rc::clone(&ls.host);
+        pool.log_search(ls_program::SearchReplay {
+            run: Box::new(move |ctx: &Context, host: &dyn std::any::Any| {
+                let host = host
+                    .downcast_ref::<Rc<dyn Host>>()
+                    .expect("a search log keeps a language service host");
+                let ls = new_language_service(project_id, program, Rc::clone(host), &active_file);
+                replay(&ls, ctx, to_resp);
+            }),
+            host: Rc::new(host),
+        });
+        ls
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -545,6 +625,15 @@ impl<Resp> SlotState<'_, Resp> {
     }
 }
 
+/// Not in Go: `GOPORT_SEARCH_INLINE=1` searches every project on the
+/// dispatch thread with a query checker of its pool, one project at a time,
+/// with no search thread and no replay. It is for comparing the replayed
+/// checker state with the state of that run.
+fn search_inline_forced() -> bool {
+    static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var_os("GOPORT_SEARCH_INLINE").is_some_and(|v| v == "1"))
+}
+
 impl<'a, Req, Resp> CrossProjectState<'a, Req, Resp>
 where
     Req: HasTextDocumentPosition,
@@ -557,7 +646,9 @@ where
     }
 
     // Go: ls/crossproject.go:84 enqueueItem (closure)
-    fn enqueue_item(&self, item: ProjectAndTextDocumentPosition<'a>) {
+    // PORT: `started` is the state of the request when Go starts the item
+    // (see the file header).
+    fn enqueue_item(&self, item: ProjectAndTextDocumentPosition<'a>, started: bool) {
         let response = Rc::new(RefCell::new(Response::<Resp>::default()));
         {
             // Go: results.LoadOrStore(item.project.Id(), &response)
@@ -569,7 +660,7 @@ where
             results.insert(id, Rc::clone(&response));
         }
         // Go: wg.Queue(func() { ... })
-        self.wg.borrow_mut().push_back((item, response));
+        self.wg.borrow_mut().push_back((item, response, started));
     }
 
     // Go: wg.RunAndWait()
@@ -584,18 +675,20 @@ where
         let mut next_number = 0usize;
         let mut in_flight = 0usize;
         loop {
-            // Take items from the queue in order. An item for a search thread
-            // opens at once while fewer than `limit` searches run. An item
-            // for the dispatch thread waits until it is first in the window.
+            // Take items from the queue in order. An item that can run on a
+            // search thread opens at once while fewer than `limit` searches
+            // run; it searches at once on the dispatch thread when its pool
+            // has a query checker. Item 0, and an item of a request with no
+            // `search` function, waits until it is first in the window.
             loop {
                 let inline = match self.wg.borrow().front() {
                     None => break,
-                    Some((item, _)) => self.search.is_none() || item.ls.is_some(),
+                    Some((item, _, _)) => self.search.is_none() || item.ls.is_some(),
                 };
                 if (inline && !window.is_empty()) || (!inline && in_flight >= limit) {
                     break;
                 }
-                let (item, response) = self
+                let (item, response, started) = self
                     .wg
                     .borrow_mut()
                     .pop_front()
@@ -605,7 +698,7 @@ where
                 let state = if inline {
                     SlotState::Inline
                 } else {
-                    self.start_thread_item(number, &item, &sender)
+                    self.start_thread_item(number, &item, started, &sender)
                 };
                 if matches!(state, SlotState::Running(_)) {
                     in_flight += 1;
@@ -614,6 +707,7 @@ where
                     number,
                     item,
                     response,
+                    started,
                     state,
                 });
             }
@@ -622,7 +716,7 @@ where
                 None => return,
                 Some(Phase::Inline) => {
                     let front = window.front_mut().expect("the window has a first item");
-                    front.state = self.run_inline_item(&front.item);
+                    front.state = self.run_inline_item(&front.item, front.started);
                     continue;
                 }
                 Some(Phase::Done) => {
@@ -641,9 +735,9 @@ where
                 search_thread::ToDispatch::Query { item, query, reply } => {
                     let answer = match window.iter().find(|slot| slot.number == item) {
                         Some(Slot {
-                            state: SlotState::Running(ls),
+                            state: SlotState::Running(running),
                             ..
-                        }) => search_thread::answer_query(ls, query),
+                        }) => search_thread::answer_query(&running.ls, query),
                         _ => search_thread::HostAnswer::Gone,
                     };
                     let _ = reply.send(answer);
@@ -652,8 +746,9 @@ where
                     if let Some(slot) = window.iter_mut().find(|slot| slot.number == item) {
                         let state = std::mem::replace(&mut slot.state, SlotState::Inline);
                         slot.state = match state {
-                            SlotState::Running(ls) => {
+                            SlotState::Running(running) => {
                                 in_flight -= 1;
+                                let ls = running.end(&slot.item.uri, &outcome);
                                 SlotState::Done {
                                     ls: Some(ItemLs::Owned(ls)),
                                     outcome,
@@ -668,14 +763,16 @@ where
     }
 
     // Go: ls/crossproject.go:83 the queued function, phase 1 for an item
-    // whose phase 2 runs on a search thread.
+    // that can search on a search thread, then phase 2 with the checker
+    // that Go's search uses (see the file header).
     fn start_thread_item(
         &self,
         number: usize,
         item: &ProjectAndTextDocumentPosition<'a>,
+        started: bool,
         sender: &mpsc::Sender<search_thread::ToDispatch<Resp>>,
     ) -> SlotState<'a, Resp> {
-        if self.ctx.err().is_some() {
+        if !started {
             return SlotState::Done {
                 ls: None,
                 outcome: search_thread::ItemOutcome::skipped(),
@@ -684,12 +781,30 @@ where
         let start_search = self
             .search
             .expect("an item for a search thread has a search function");
+        let Some(ls) = self.open_item(item) else {
+            return SlotState::Done {
+                ls: None,
+                outcome: search_thread::ItemOutcome::skipped(),
+            };
+        };
+        let ls = match ls {
+            Ok(ls) => ls,
+            Err(panic_occurred) => {
+                return SlotState::Done {
+                    ls: None,
+                    outcome: search_thread::ItemOutcome::panicked(panic_occurred),
+                };
+            }
+        };
+        let pool = ls_program::get_checker_pool(&ls.program);
+        let fresh = match pool.search_checker() {
+            _ if search_inline_forced() => return self.search_inline(item, ItemLs::Owned(ls)),
+            ls_program::SearchChecker::Pool => return self.search_inline(item, ItemLs::Owned(ls)),
+            ls_program::SearchChecker::Thread => false,
+            ls_program::SearchChecker::Fresh => true,
+        };
         // Go: defer func() { if r := recover(); r != nil { ... } }()
-        let opened = std::panic::catch_unwind(AssertUnwindSafe(|| -> Option<LanguageService> {
-            // Get it now
-            let ls = self
-                .orchestrator
-                .get_language_service_for_project_with_file(self.ctx, &item.project, &item.uri)?;
+        let sent = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let search = search_thread::SearchItem {
                 ctx: self.ctx.clone(),
                 uri: item.uri.clone(),
@@ -697,16 +812,12 @@ where
                 is_rename: self.is_rename,
                 implementations: self.implementations,
                 options: self.options,
+                fresh,
             };
-            start_search(self.params, &ls, number, search, sender.clone());
-            Some(ls)
+            start_search(self.params, &ls, number, search, sender.clone())
         }));
-        match opened {
-            Ok(Some(ls)) => SlotState::Running(ls),
-            Ok(None) => SlotState::Done {
-                ls: None,
-                outcome: search_thread::ItemOutcome::skipped(),
-            },
+        match sent {
+            Ok(replay) => SlotState::Running(ThreadItem { ls, pool, replay }),
             Err(payload) => SlotState::Done {
                 ls: None,
                 outcome: search_thread::ItemOutcome::panicked(panic_occured_text(payload)),
@@ -716,41 +827,78 @@ where
 
     // Go: ls/crossproject.go:83 the queued function, phases 1 and 2 on the
     // dispatch thread.
-    fn run_inline_item(&self, item: &ProjectAndTextDocumentPosition<'a>) -> SlotState<'a, Resp> {
-        let ctx = self.ctx;
-        if ctx.err().is_some() {
+    fn run_inline_item(
+        &self,
+        item: &ProjectAndTextDocumentPosition<'a>,
+        started: bool,
+    ) -> SlotState<'a, Resp> {
+        if !started {
             return SlotState::Done {
                 ls: None,
                 outcome: search_thread::ItemOutcome::skipped(),
             };
         }
+        let item_ls = match item.ls {
+            Some(ls) => ItemLs::Caller(ls),
+            None => match self.open_item(item) {
+                None => {
+                    return SlotState::Done {
+                        ls: None,
+                        outcome: search_thread::ItemOutcome::skipped(),
+                    };
+                }
+                Some(Err(panic_occurred)) => {
+                    return SlotState::Done {
+                        ls: None,
+                        outcome: search_thread::ItemOutcome::panicked(panic_occurred),
+                    };
+                }
+                Some(Ok(ls)) => ItemLs::Owned(ls),
+            },
+        };
+        self.search_inline(item, item_ls)
+    }
+
+    // Go: ls/crossproject.go:106 phase 1 of the queued function: the item's
+    // language service. None where Go returns because there is none; Err
+    // with Go's `panicOccured` text where it panics.
+    fn open_item(
+        &self,
+        item: &ProjectAndTextDocumentPosition<'a>,
+    ) -> Option<Result<LanguageService, String>> {
+        // Go: defer func() { if r := recover(); r != nil { ... } }()
+        let opened = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            // Get it now
+            self.orchestrator
+                .get_language_service_for_project_with_file(self.ctx, &item.project, &item.uri)
+        }));
+        match opened {
+            Ok(ls) => ls.map(Ok),
+            Err(payload) => Some(Err(panic_occured_text(payload))),
+        }
+    }
+
+    // Go: ls/crossproject.go:117 phase 2 of the queued function on the
+    // dispatch thread, with a checker of the item's pool.
+    fn search_inline(
+        &self,
+        item: &ProjectAndTextDocumentPosition<'a>,
+        item_ls: ItemLs<'a>,
+    ) -> SlotState<'a, Resp> {
+        let ctx = self.ctx;
         let is_default_project = Rc::ptr_eq(&item.project, &self.default_project);
-        let mut item_ls: Option<ItemLs<'a>> = None;
         let mut locations: Vec<(lsproto::DocumentUri, lsproto::Position)> = Vec::new();
         // Go: defer func() { if r := recover(); r != nil { ... } }()
         let searched =
             std::panic::catch_unwind(AssertUnwindSafe(|| -> Option<Result<Resp, GoError>> {
                 // Process the item
-                let ls = match item.ls {
-                    Some(ls) => item_ls.insert(ItemLs::Caller(ls)),
-                    None => {
-                        // Get it now
-                        let ls = self
-                            .orchestrator
-                            .get_language_service_for_project_with_file(
-                                ctx,
-                                &item.project,
-                                &item.uri,
-                            )?;
-                        item_ls.insert(ItemLs::Owned(ls))
-                    }
-                }
-                .get();
+                let ls = item_ls.get();
                 // PORT: other language services can be alive (the items that
                 // run on search threads); make this one's program current.
                 let _program = ls.enter_program();
                 search_item_with_data(
                     ls,
+                    ctx,
                     ctx,
                     self.params,
                     &item.uri,
@@ -794,7 +942,7 @@ where
             },
         };
         SlotState::Done {
-            ls: item_ls,
+            ls: Some(item_ls),
             outcome,
         }
     }
@@ -829,14 +977,17 @@ where
                 for def_project in def_projects {
                     // Optimization: don't enqueue if will be discarded
                     if self.can_search_project(&def_project) {
-                        self.enqueue_item(ProjectAndTextDocumentPosition {
-                            project: def_project,
-                            ls: None,
-                            uri: uri.clone(),
-                            position,
-                            symbol_data: None,
-                            for_original_location: true,
-                        });
+                        self.enqueue_item(
+                            ProjectAndTextDocumentPosition {
+                                project: def_project,
+                                ls: None,
+                                uri: uri.clone(),
+                                position,
+                                symbol_data: None,
+                                for_original_location: true,
+                            },
+                            true, /*started*/
+                        );
                     }
                 }
             }

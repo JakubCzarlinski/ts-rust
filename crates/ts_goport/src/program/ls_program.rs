@@ -93,9 +93,52 @@ impl Drop for Release {
 // If file is non-nil, the pool may use it as an affinity hint to return the same
 // checker for the same file across calls.
 // PORT: `file` is `Node::NIL` for Go nil. The caller borrows the checker
-// (`borrow_mut`) while it uses it.
+// (`borrow_mut`) while it uses it. The other methods are not in Go: a
+// cross-project search (`ls/crossproject.rs`) uses them to run on a search
+// thread whose checker stands in for the pool's query checker.
 pub trait CheckerPool {
     fn get_checker(&self, ctx: &Context, file: Node) -> (Rc<RefCell<Checker>>, Release);
+
+    /// Which checker Go's search of this program would use. A pool that
+    /// keeps no search log gives `Pool`: the search runs on this thread.
+    fn search_checker(&self) -> SearchChecker {
+        SearchChecker::Pool
+    }
+
+    /// Records a search that ended on the program's search thread.
+    fn log_search(&self, _search: SearchReplay) {}
+
+    /// Forgets the logged searches and drops the search thread's checker
+    /// (a search panicked on it).
+    fn forget_searches(&self) {}
+}
+
+/// Not in Go: the checker that Go's cross-project search of a program uses
+/// (Go `getQueryChecker` with no request or file affinity: the first idle
+/// query checker, or a new one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchChecker {
+    /// The pool has a live query checker: search on it, on this thread.
+    Pool,
+    /// Only searches used Go's query checker since it was made: keep the
+    /// search thread's checker, which holds the same state.
+    Thread,
+    /// No live query checker: Go makes a new one, so the search thread
+    /// starts with a new checker.
+    Fresh,
+}
+
+/// Not in Go: a search that ran on a search thread, logged in the pool
+/// (`CheckerPool::log_search`). When this thread first needs a query
+/// checker of the pool, the pool runs each logged search again on it, so it
+/// holds the state of Go's query checker.
+pub struct SearchReplay {
+    /// Runs the search again with the request context of the new checker
+    /// and the newest logged `host`.
+    pub run: Box<dyn FnOnce(&Context, &dyn std::any::Any)>,
+    /// What the replay reads files through (a language service host). The
+    /// pool keeps only the newest one, so the log holds one snapshot.
+    pub host: Rc<dyn std::any::Any>,
 }
 
 /// Go `ProgramOptions.CreateCheckerPool`.
@@ -243,6 +286,16 @@ fn program_checkers(p: &NewProgram) -> Rc<ProgramCheckers> {
 /// The program version of `p`.
 pub fn program_version(p: &NewProgram) -> &'static GoProgram {
     program_checkers(p).version
+}
+
+/// `program_version`, or None when `p` is released.
+pub fn try_program_version(p: &NewProgram) -> Option<&'static GoProgram> {
+    PROGRAM_CHECKERS.with(|programs| {
+        programs
+            .borrow()
+            .get(&program_key(p))
+            .map(|checkers| checkers.version)
+    })
 }
 
 /// Not in Go: true when the tables of `version` started from those of the

@@ -9,8 +9,13 @@
 //! - The thread starts from a copy of the dispatch thread's thread-local
 //!   state (`program::WorkerSeed`), made after the program is bound. It
 //!   makes its own checker when a job first needs one, and keeps it between
-//!   jobs. It drops the checker after `CHECKER_IDLE_TIMEOUT` with no job,
-//!   and ends when the program is released (`release_search_thread`).
+//!   jobs. It ends when the program is released (`release_search_thread`).
+//! - The checker stands in for the query checker of the program's pool that
+//!   Go's search uses (`project::checkerpool` `SearchLog`). The dispatch
+//!   thread decides when it is new (`SearchItem::fresh`) and when it goes
+//!   (`drop_search_checker`), with Go's pool rules. The pool logs each search
+//!   that ended here (`Replay`), and runs them again on its new query checker
+//!   when a request on the dispatch thread first needs one.
 //! - A job gets plain data (`SearchJob`) and returns plain data
 //!   (`ItemOutcome`). The thread makes its own language service over a copy
 //!   of the program data (`SearchProgramData`, `SearchView`) and a host
@@ -22,27 +27,12 @@
 //!   (`HostQuery`). It answers them from the item's language service while it
 //!   waits for the results (`answer_query`).
 //! - No `Rc` value and no checker crosses threads.
-//!
-//! Not used now: every request passes `None` for the `search` argument of
-//! `handle_cross_project` (lschk1). Go searches each project with a query
-//! checker of that project's pool (`project/checkerpool.go:252
-//! getQueryChecker`), so later requests in the project see the checker
-//! state the search left. A search thread has its own checker and leaves the
-//! pool cold, so later hovers and completion details showed other type forms
-//! than Go. A later change can remove this file and the `ProgramView`
-//! generics.
 
 use crate::ls::prelude::*;
 
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
-
-/// A search thread drops its checker after this long with no job.
-// Go: project/checkerpool.go newCheckerPool (the default idle timeout of a
-// checker).
-const CHECKER_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The index of the next search thread checker. Search checkers get their
 /// own id range, so that no id of a dispatch thread checker repeats.
@@ -65,6 +55,9 @@ pub struct SearchItem {
     pub is_rename: bool,
     pub implementations: bool,
     pub options: SymbolEntryTransformOptions,
+    /// Go makes a new query checker for this search: the thread drops its
+    /// checker first (`ls_program::SearchChecker::Fresh`).
+    pub fresh: bool,
 }
 
 /// What phase 2 of an item needs on a search thread (plain data).
@@ -110,9 +103,18 @@ impl<Resp> ItemOutcome<Resp> {
 
 /// Starts phase 2 of item number `item` on the search thread of the
 /// language service's program: `start_search::<K>`. The request's params come
-/// first.
+/// first. Returns the replay of the search.
 pub type StartSearch<Req, Resp> =
-    fn(&Req, &LanguageService, usize, SearchItem, mpsc::Sender<ToDispatch<Resp>>);
+    fn(&Req, &LanguageService, usize, SearchItem, mpsc::Sender<ToDispatch<Resp>>) -> Replay;
+
+/// Runs a search of a search thread again on the dispatch thread, over a
+/// language service of the same program whose checker is a pool query
+/// checker (`ls_program::SearchReplay`). It makes the checker calls of the
+/// search: Go `provideSymbolsAndEntries`, and `symbolAndEntriesToResp` when
+/// `to_resp` is true (the search ran it; it does not after a cancel). The
+/// original definition locations only read the checker, and the results are
+/// dropped.
+pub type Replay = Box<dyn FnOnce(&LanguageService, &Context, bool)>;
 
 /// Phase 2 of an item on a search thread: `run_search::<K>`.
 type SearchOnThread<Req, Resp> = fn(&Rc<SearchView>, SearchJob<Req>) -> ItemOutcome<Resp>;
@@ -228,7 +230,22 @@ pub fn start_search<K: CrossProjectSearch>(
     item: usize,
     search: SearchItem,
     sender: mpsc::Sender<ToDispatch<K::Resp>>,
-) {
+) -> Replay {
+    let replay: Replay = {
+        let params = params.clone();
+        let uri = search.uri.clone();
+        let position = search.position;
+        let is_rename = search.is_rename;
+        let implementations = search.implementations;
+        let options = search.options;
+        Box::new(move |ls: &LanguageService, ctx: &Context, to_resp: bool| {
+            let (data, _) =
+                ls.provide_symbols_and_entries(ctx, &uri, position, is_rename, implementations);
+            if to_resp {
+                let _ = K::to_resp(ls, ctx, &params, data, options);
+            }
+        })
+    };
     let job = SearchJob {
         item: search,
         params: params.clone(),
@@ -238,6 +255,7 @@ pub fn start_search<K: CrossProjectSearch>(
         position_encoding: ls.converters.position_encoding(),
     };
     send_job(ls, item, job, run_search::<K>, sender);
+    replay
 }
 
 /// Sends phase 2 of item `item` to the search thread of `ls`'s program.
@@ -291,6 +309,20 @@ fn send_job<Req: Send + 'static, Resp: Send + 'static>(
 /// the program is released (Go frees its checkers with it).
 pub fn release_search_thread(program: &compiler::NewProgram) {
     SEARCH_THREADS.with(|threads| threads.borrow_mut().remove(&program.identity()));
+}
+
+/// Drops the checker of `program`'s search thread once its queued jobs ran:
+/// the pool's search log ended (`project::checkerpool` `SearchLog`).
+pub fn drop_search_checker(program: &compiler::NewProgram) {
+    let Some(version) = ls_program::try_program_version(program) else {
+        return;
+    };
+    SEARCH_THREADS.with(|threads| {
+        if let Some(jobs) = threads.borrow().get(&(version.id as usize)) {
+            let drop_checker: Job = Box::new(|view: &Rc<SearchView>| view.drop_checker());
+            let _ = jobs.send(drop_checker);
+        }
+    });
 }
 
 /// Answers a search thread's read from the item's language service.
@@ -373,22 +405,7 @@ fn search_thread_main(
     seed.install();
     let _program = ls_program::enter_version(data.version);
     let view = Rc::new(SearchView::new(data));
-    loop {
-        let job = if view.has_checker() {
-            match jobs.recv_timeout(CHECKER_IDLE_TIMEOUT) {
-                Ok(job) => job,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    view.drop_checker();
-                    continue;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        } else {
-            match jobs.recv() {
-                Ok(job) => job,
-                Err(_) => break,
-            }
-        };
+    while let Ok(job) = jobs.recv() {
         job(&view);
     }
 }
@@ -400,10 +417,17 @@ fn run_search<K: CrossProjectSearch>(
     job: SearchJob<K::Req>,
 ) -> ItemOutcome<K::Resp> {
     let item = &job.item;
-    // Go: the queued function returns at once when the request is canceled.
-    if item.ctx.err().is_some() {
-        return ItemOutcome::skipped();
+    // PORT: the dispatch thread sends only items that Go starts (the check
+    // at the start of the queued function, `crossproject.rs`).
+    if item.fresh {
+        view.drop_checker();
     }
+    // PORT: Go stops an implementations search (ls/findallreferences.go:713)
+    // and a string-literal search (:1362) when the request is canceled. Here
+    // the search runs to the end, so that the checker holds the state that
+    // its replay makes (`Replay`): Go's state when the cancel comes after
+    // the search. The check after the search uses the request context.
+    let search_ctx = crate::gostd::context::without_cancel(&item.ctx);
     let mut locations: Vec<(lsproto::DocumentUri, lsproto::Position)> = Vec::new();
     // Go: defer func() { if r := recover(); r != nil { ... } }()
     let searched = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -418,6 +442,7 @@ fn run_search<K: CrossProjectSearch>(
         search_item(
             &ls,
             &item.ctx,
+            &search_ctx,
             &job.params,
             &item.uri,
             item.position,
@@ -574,11 +599,8 @@ impl SearchView {
         *self.job.borrow_mut() = None;
     }
 
-    fn has_checker(&self) -> bool {
-        self.checker.borrow().is_some()
-    }
-
-    /// Drops the checker and the caches (idle, or after a panic).
+    /// Drops the checker and the caches (`drop_search_checker`, a fresh job,
+    /// or a panic).
     fn drop_checker(&self) {
         *self.checker.borrow_mut() = None;
         self.line_maps.borrow_mut().clear();

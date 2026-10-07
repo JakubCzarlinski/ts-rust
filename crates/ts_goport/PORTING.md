@@ -799,8 +799,8 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   of the affinity mask, lowered to the CPU limit of the process's cgroup
   (rounded up, at least 2), as in Go 1.25 and later. It sizes the parse,
   bind and emit pools (`program::available_cores`), the auto-import
-  checker pool and the unused search threads (see "Threads"), and the
-  LSP telemetry event reports it as `goMaxProcs` (Go runtime/metrics
+  checker pool and the search threads, and the LSP telemetry event
+  reports it as `goMaxProcs` (Go runtime/metrics
   `/sched/gomaxprocs:threads`). PORT: the checker threads (`--checkers`)
   all run at once; Go runs them on GOMAXPROCS threads. Go reads the value
   again while it runs; the port reads it once.
@@ -1113,23 +1113,25 @@ fswatch backends and debouncers, timer wake-ups) touch only `Send` data.
 Factory nodes and cached tokens are thread-local, which is correct
 because every request runs on the dispatch thread.
 
-The cross-project search (`ls/crossproject.rs`) also runs on the dispatch
-thread. Go searches each project of a references, implementations or
-rename request on its own goroutine, with a query checker of that
-project's pool, so later requests in the project see the checker state the
-search left. Here the projects run one at a time in Go start order, each
-with its own pool checker (lschk1). Each project has its own pool, so the
-order changes no checker's state.
-
-Not used now: `ls/search_thread.rs` can run the search of each project
-other than the default one on a search thread of its program version, in
-parallel (lspar). It made the hover and completion detail differ from Go
-after such a search (the search thread's checker left the pool cold), so
-no request passes a `search` function. A later change can remove it:
+One exception: the cross-project search (`ls/crossproject.rs`,
+`ls/search_thread.rs`). Go searches each project of a references,
+implementations or rename request on its own goroutine, with a query
+checker of that project's pool, and later requests in the project see the
+state the search left. Here the search of each project other than the
+default one runs at once on the dispatch thread when its pool has a query
+checker, and otherwise on the search thread of its program version:
 - One long-lived thread per program version. It starts from a
   `program::WorkerSeed` taken after the program is bound, makes its own
-  checker, drops it after 30 s with no job, and ends when the program is
-  released (`ls::release_search_thread`).
+  checker, and ends when the program is released
+  (`ls::release_search_thread`).
+- Its checker stands in for the pool's query checker that Go makes for the
+  search and that only searches use until a request on the dispatch thread
+  needs it. The pool logs each search that ended on the thread
+  (`project::checkerpool` `SearchLog`), runs them again on its new query
+  checker when a request first needs one, and drops the thread's checker
+  then, or after the pool's idle timeout.
+- A search that started is not stopped by a cancel, as in Go; only its
+  answer is dropped.
 - A job gets and returns only `Send` data. The thread reads the program
   through `ls::ProgramView` (a copy of the data the search reads) and
   program files from the AST store. Other reads go to the dispatch thread.
@@ -1160,7 +1162,7 @@ no request passes a `search` function. A later change can remove it:
 | `go f()` that touches dispatch-thread state | `gostd::local::go(Box::new(f))`: FIFO on the dispatch thread, run by `local::run_pending()` |
 | `go f()` over `Send` data only | `std::thread::spawn` |
 | `go f()` that waits for other-thread work (a child process, a channel), then touches dispatch-thread state | the wait on a `std::thread::spawn` thread that calls `post()` on the handle of `gostd::local::post_later(Box::new(rest))` when it ends; `rest` then runs in `local::run_pending()`, with no poll before (ATA npm) |
-| `sync.WaitGroup`, `wg.Go`, `core.WorkGroup`, `errgroup` over dispatch-thread state | serial, in Go start order, like Go's single-threaded `WorkGroup`; keep the `ctx.err()` checks (the cross-project search too, see "Threads") |
+| `sync.WaitGroup`, `wg.Go`, `core.WorkGroup`, `errgroup` over dispatch-thread state | serial, in Go start order, like Go's single-threaded `WorkGroup`; keep the `ctx.err()` checks (the cross-project search is the one exception, see "Threads") |
 | `errgroup.WithContext` over `Send` loops | `gostd::errgroup` (real threads) |
 | `chan T` with capacity n / unbuffered | `std::sync::mpsc::sync_channel(n)` / `sync_channel(0)`; `select` with `default` is `try_send` / `try_recv`; `select` on `ctx.Done()` is a `recv_timeout` loop that checks `ctx.err()` (PORT note) |
 | `sync.Mutex`, `RWMutex`, `atomic.*` on dispatch-thread data | a plain field, `Cell` or `RefCell` (drop the lock) |
@@ -1220,9 +1222,8 @@ each message and after each wake-up. Go `WaitForBackgroundTasks` runs
   `ls_program::update_program` is a program version of the process
   (`program::new_program_version`), as Go makes a new `Program` for each
   snapshot change. Versions share the file versions they have in common.
-  The checkers of every version are made on the dispatch thread (the
-  unused cross-project search threads would make their own, see
-  "Threads").
+  The checkers of every version are made on the dispatch thread, except
+  the checkers of the cross-project search threads (see "Threads").
 - Current program: checker code reads `prog()`. `ls_program::enter(p)`
   makes `p` current while its `ProgramGuard` lives; the last guard that is
   still alive wins, so guards can drop in any order. A language service

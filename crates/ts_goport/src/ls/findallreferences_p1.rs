@@ -1162,9 +1162,8 @@ impl<P: ProgramView> LanguageService<P> {
     }
 }
 
-/// `ProvideReferences` as a `CrossProjectSearch`, for searches in other
-/// projects on search threads. Not used now: the searches run on each
-/// project's pool checker, as in Go (`crossproject.rs` header).
+/// `ProvideReferences` as a `CrossProjectSearch`: its searches in other
+/// projects can run on search threads (`crossproject.rs` header).
 pub struct ReferencesSearch;
 
 impl CrossProjectSearch for ReferencesSearch {
@@ -1214,7 +1213,7 @@ impl LanguageService {
             params,
             orchestrator,
             LanguageService::symbol_and_entries_to_references,
-            None, /*search*/
+            Some(start_search::<ReferencesSearch>),
             combine_references,
             false, /*isRename*/
             false, /*implementations*/
@@ -1237,7 +1236,7 @@ impl LanguageService {
             params,
             orchestrator,
             LanguageService::symbol_and_entries_to_references,
-            None, /*search*/
+            Some(start_search::<ReferencesSearch>),
             combine_references,
             false, /*isRename*/
             false, /*implementations*/
@@ -1726,7 +1725,7 @@ impl LanguageService {
             params,
             orchestrator,
             LanguageService::symbol_and_entries_to_implementations,
-            None, /*search*/
+            Some(start_search::<ImplementationsSearch>),
             combine_implementations,
             false, /*isRename*/
             true,  /*implementations*/
@@ -1750,7 +1749,7 @@ impl LanguageService {
             params,
             orchestrator,
             LanguageService::symbol_and_entries_to_implementations,
-            None, /*search*/
+            Some(start_search::<ImplementationsSearch>),
             combine_implementations,
             false, /*isRename*/
             true,  /*implementations*/

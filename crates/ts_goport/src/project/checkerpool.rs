@@ -14,8 +14,10 @@
 use crate::project::prelude::*;
 
 use crate::frontend::core_context::{self, CheckerLifetime};
-use crate::program::ls_program::{self, Release};
+use crate::program::ls_program::{self, Release, SearchChecker, SearchReplay};
+use std::any::Any;
 use std::cell::Cell;
+use std::panic::AssertUnwindSafe;
 use std::rc::Weak;
 use std::time::{Duration, Instant};
 
@@ -24,6 +26,24 @@ use std::time::{Duration, Instant};
 // by a caller that has no request ID (e.g., context.Background()). This
 // distinguishes "held without ID" from "not held" (empty string).
 pub const CHECKER_HELD_ANONYMOUS: &str = "<anonymous>";
+
+/// Not in Go: the request id that holds a query checker while the pool runs
+/// the logged searches again on it (`replay_searches_locked`).
+const SEARCH_REPLAY_REQUEST: &str = "<search replay>";
+
+/// Not in Go: the searches that ran on the program's search thread
+/// (`ls/search_thread.rs`) since its checker was new. With one request at a
+/// time, Go's search would have used query checker 1 of this pool, which
+/// only these searches used; the search thread's checker holds the same
+/// state. The pool keeps the log while it has no query checker.
+struct SearchLog {
+    /// The searches, in the order they ended (`SearchReplay::run`).
+    runs: Vec<Box<dyn FnOnce(&Context, &dyn Any)>>,
+    /// The host of the newest search (`SearchReplay::host`).
+    host: Rc<dyn Any>,
+    /// When the newest search ended: Go `lastReleased` of checker 1.
+    released_at: Instant,
+}
 
 // Go: project/checkerpool.go:22 CheckerPoolOptions
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -133,6 +153,9 @@ pub struct CheckerPool {
     /// have not run: each request id with the done channel of its request
     /// context. `mu_lock` runs the callbacks whose channel is closed.
     request_cleanups: RefCell<Vec<(String, gostd::context::Done)>>,
+    /// Not in Go: the searches that the program's search thread ran in
+    /// place of a query checker of this pool (see `SearchLog`).
+    search_log: RefCell<Option<SearchLog>>,
     /// The Go pointer `p`, for the release and timer closures.
     this: Weak<CheckerPool>,
 }
@@ -181,6 +204,7 @@ pub fn new_checker_pool(
         global_diag_changed: Cell::new(false),
         global_diag_checker_count: RefCell::new(vec![0; max_checkers]),
         request_cleanups: RefCell::new(Vec::new()),
+        search_log: RefCell::new(None),
         this: this.clone(),
     })
 }
@@ -214,6 +238,65 @@ impl ls_program::CheckerPool for CheckerPool {
             CheckerLifetime::API => self.get_persistent_checker(),
             _ => self.get_query_checker(ctx, &request_id, file),
         }
+    }
+
+    // Not in Go. Go's search gets a query checker with no request or file
+    // affinity (`getQueryChecker`, `findOrCreateQueryCheckerLocked`): the
+    // first idle one, or a new one. Requests run one at a time here, so no
+    // query checker is held when a search starts.
+    fn search_checker(&self) -> SearchChecker {
+        self.mu_lock();
+        let has_query_checker = self.checkers.borrow()[1..].iter().any(Option::is_some);
+        if has_query_checker || self.discarded.get() {
+            // A query checker exists only after the log was replayed on it.
+            debug_assert!(self.discarded.get() || self.search_log.borrow().is_none());
+            SearchChecker::Pool
+        } else if self.search_log.borrow().is_some() {
+            SearchChecker::Thread
+        } else {
+            SearchChecker::Fresh
+        }
+    }
+
+    // Not in Go: see `SearchLog`.
+    fn log_search(&self, search: SearchReplay) {
+        self.mu_lock();
+        if self.discarded.get() {
+            // The program was replaced during the request: no later request
+            // gets a checker of this pool, so nothing replays the search.
+            ls::drop_search_checker(&self.program);
+            return;
+        }
+        let SearchReplay { run, host } = search;
+        let released_at = Instant::now();
+        let old_host = {
+            let mut log = self.search_log.borrow_mut();
+            match log.as_mut() {
+                Some(log) => {
+                    log.runs.push(run);
+                    log.released_at = released_at;
+                    Some(std::mem::replace(&mut log.host, host))
+                }
+                None => {
+                    *log = Some(SearchLog {
+                        runs: vec![run],
+                        host,
+                        released_at,
+                    });
+                    None
+                }
+            }
+        };
+        gostd::local::drop_later(Box::new(old_host));
+        self.schedule_cleanup_locked();
+    }
+
+    // Not in Go: see `SearchLog`. Go keeps using a checker after a panic;
+    // the port drops the search thread's checker, so the next search starts
+    // with a new one, and so does the pool.
+    fn forget_searches(&self) {
+        self.mu_lock();
+        self.drop_search_log_locked();
     }
 }
 
@@ -456,12 +539,80 @@ impl CheckerPool {
                 (self.log)(&format!("checkerpool: Creating query checker {i}"));
                 let c = Rc::new(RefCell::new(ls_program::new_checker(&self.program)));
                 self.checkers.borrow_mut()[i] = Some(c.clone());
+                // PORT: Go returns checker 1 with the state of the searches
+                // that used it; here they ran on the search thread.
+                let c = self.replay_searches_locked(i as i32, c);
                 return (c, i as i32);
             }
         }
         crate::core::go_panic(
             "checkerpool: no available query slot despite holding semaphore token".to_string(),
         );
+    }
+
+    /// Not in Go. The new query checker `c` in slot `index` takes over from
+    /// the program's search thread (see `SearchLog`): each logged search runs
+    /// again on it, in order, and the search thread drops its checker.
+    /// Returns the checker for the slot: `c`, or a new one when a search
+    /// panicked on `c`.
+    fn replay_searches_locked(&self, index: i32, c: Rc<RefCell<Checker>>) -> Rc<RefCell<Checker>> {
+        // Take the log first, so that a checker request in the replay that
+        // has no request affinity makes another checker, not another replay.
+        let Some(SearchLog { runs, host, .. }) = self.search_log.borrow_mut().take() else {
+            return c;
+        };
+        let i = index as usize;
+        (self.log)(&format!(
+            "checkerpool: Replaying {} searches on query checker {index}",
+            runs.len()
+        ));
+        // Hold `c` for the replay's request, so that every checker request of
+        // the replayed searches gets it (`try_reacquire_for_request`). A
+        // context that can be canceled keeps request affinity on.
+        let (ctx, cancel) = gostd::context::with_cancel(&core_context::with_request_id(
+            &gostd::context::background(),
+            SEARCH_REPLAY_REQUEST,
+        ));
+        self.held_by.borrow_mut()[i] = SEARCH_REPLAY_REQUEST.to_string();
+        self.request_associations
+            .borrow_mut()
+            .insert(SEARCH_REPLAY_REQUEST.to_string(), index);
+        let replayed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            for run in runs {
+                run(&ctx, &*host);
+            }
+        }));
+        cancel();
+        self.request_associations
+            .borrow_mut()
+            .remove(SEARCH_REPLAY_REQUEST);
+        self.held_by.borrow_mut()[i] = String::new();
+        ls::drop_search_checker(&self.program);
+        gostd::local::drop_later(Box::new(host));
+        match replayed {
+            Ok(()) => c,
+            Err(payload) => {
+                // The search did not panic on the search thread. A checker
+                // that a panic left in the middle of its work is not used.
+                (self.log)(&format!(
+                    "checkerpool: Search replay panicked: {}",
+                    ls::panic_payload_text(&*payload)
+                ));
+                let c = Rc::new(RefCell::new(ls_program::new_checker(&self.program)));
+                self.checkers.borrow_mut()[i] = Some(c.clone());
+                c
+            }
+        }
+    }
+
+    /// Not in Go: drops the search log and the search thread's checker (see
+    /// `SearchLog`).
+    fn drop_search_log_locked(&self) {
+        let log = self.search_log.borrow_mut().take();
+        if log.is_some() {
+            ls::drop_search_checker(&self.program);
+            gostd::local::drop_later(Box::new(log));
+        }
     }
 
     // Go: project/checkerpool.go:315 checkerPool.getPersistentChecker
@@ -598,6 +749,14 @@ impl CheckerPool {
                     earliest_deadline = Some(deadline);
                 }
             }
+            // PORT: the search log expires like the idle checker 1 it stands
+            // in for (see `SearchLog`).
+            if let Some(log) = self.search_log.borrow().as_ref() {
+                let deadline = log.released_at + self.opts.idle_timeout;
+                if earliest_deadline.is_none_or(|earliest| deadline < earliest) {
+                    earliest_deadline = Some(deadline);
+                }
+            }
         }
         let Some(earliest_deadline) = earliest_deadline else {
             // No idle checkers remain — stop the timer if it exists.
@@ -665,6 +824,21 @@ impl CheckerPool {
                 ));
                 self.dispose_checker_locked(i as i32, &c);
             }
+        }
+        // PORT: the search log expires like the idle checker 1 it stands in
+        // for (see `SearchLog`).
+        let log_idle = self
+            .search_log
+            .borrow()
+            .as_ref()
+            .map(|log| now.saturating_duration_since(log.released_at));
+        if let Some(idle) = log_idle
+            && idle >= self.opts.idle_timeout
+        {
+            (self.log)(&format!(
+                "checkerpool: Dropping the idle search thread checker (idle {idle:?})"
+            ));
+            self.drop_search_log_locked();
         }
         // Reschedule for any remaining idle-but-not-yet-expired checkers.
         // scheduleCleanupLocked will Reset the existing timer rather than
@@ -753,6 +927,9 @@ impl CheckerPool {
         if let Some(timer) = timer {
             timer.stop();
         }
+        // PORT: no later request gets a checker of this pool, so nothing
+        // replays the logged searches (see `SearchLog`).
+        self.drop_search_log_locked();
     }
 }
 
