@@ -1,7 +1,7 @@
 # Format, lint, build and test on every pull request and on each push to main that changes code.
 # The full protected set (TestLocal shards, gate, bound runs, LSP and API oracles, np-suite) stays in
 # the revision pipeline (scripts/goport/candidate.sh). This workflow is a fast check that the tree
-# builds and its own tests pass on Linux and macOS.
+# builds and its own tests pass on Linux (x64 and arm64) and macOS.
 name: CI
 
 on:
@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         # Blacksmith runners (the pingdotgg org has the app), as T3 Code uses.
-        runner: [blacksmith-16vcpu-ubuntu-2404, blacksmith-12vcpu-macos-26]
+        runner: [blacksmith-16vcpu-ubuntu-2404, blacksmith-16vcpu-ubuntu-2404-arm, blacksmith-12vcpu-macos-26]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:

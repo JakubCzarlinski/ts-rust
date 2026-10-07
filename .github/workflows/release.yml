@@ -1,17 +1,18 @@
-# Builds, packs and tests the tsc-rs release: the npm packages tsc-rs, @tsc-rs/linux-x64 and
-# @tsc-rs/darwin-arm64, and one standalone archive per platform (tsc and the lib files).
+# Builds, packs and tests the tsc-rs release: the npm packages tsc-rs, @tsc-rs/linux-x64,
+# @tsc-rs/linux-arm64 and @tsc-rs/darwin-arm64, and one standalone archive per platform (tsc and
+# the lib files).
 #
 # A tag v<version> also publishes the npm packages and creates a GitHub release. A stable version
 # (v0.1.0) goes to the dist-tag `latest` and a normal release. A prerelease version (v0.2.0-beta.1)
 # goes to `next` and a GitHub prerelease. npm trusted publishing (OIDC) authenticates the
-# publish: no npm token. Each of the 3 packages trusts this workflow file and the environment `npm`
+# publish: no npm token. Each of the 4 packages trusts this workflow file and the environment `npm`
 # (npm/README.md, "Trusted publishing"). Pull requests that change the release files, and a manual
 # run, do everything but the release and the publish.
 #
 # These builds are the plain shipped profile (fat LTO), without the PGO and BOLT of
 # crates/ts_goport/scripts/build-release.sh, which needs a host with BOLT and the project inputs.
-# Linux is static musl and non-PIE, so it starts on any x86-64 Linux, Alpine too (npm/README.md,
-# "Linux libc").
+# Linux is static musl and non-PIE, so it starts on any x86-64 or arm64 Linux, Alpine too
+# (npm/README.md, "Linux libc"). Each Linux tsc builds natively on a Blacksmith runner of its arch.
 name: Release
 
 on:
@@ -73,6 +74,9 @@ jobs:
           - platform: linux-x64
             target: x86_64-unknown-linux-musl
             runner: blacksmith-16vcpu-ubuntu-2404
+          - platform: linux-arm64
+            target: aarch64-unknown-linux-musl
+            runner: blacksmith-16vcpu-ubuntu-2404-arm
           # jemalloc does not cross-build for macOS with zig, so this builds on a Mac.
           - platform: darwin-arm64
             target: aarch64-apple-darwin
@@ -97,7 +101,8 @@ jobs:
       - name: Build
         run: |
           if [[ $RUNNER_OS == Linux ]]; then
-            export CC_x86_64_unknown_linux_musl=musl-gcc
+            target=${{ matrix.target }}
+            export "CC_${target//-/_}=musl-gcc"
             export RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=static"
             JEMALLOC_SYS_WITH_MALLOC_CONF=$(sed -n 's/^const JEMALLOC_CONF: &str = "\([^"]*\)";$/\1/p' crates/ts_goport/src/bin/tsgo.rs | head -1)
             [[ -n $JEMALLOC_SYS_WITH_MALLOC_CONF ]] || { echo "::error::no JEMALLOC_CONF in bin/tsgo.rs"; exit 1; }
@@ -179,14 +184,15 @@ jobs:
           bins="$RUNNER_TEMP/bins"
           chmod +x "$bins"/tsc-*/tsc
           scripts/goport/npm-pack.sh --name tsc-rs --package-version "$VERSION" \
-            --also "darwin-arm64=$bins/tsc-darwin-arm64/tsc" "$RUNNER_TEMP/pkg" "$bins/tsc-linux-x64/tsc"
+            --also "linux-arm64=$bins/tsc-linux-arm64/tsc" --also "darwin-arm64=$bins/tsc-darwin-arm64/tsc" \
+            "$RUNNER_TEMP/pkg" "$bins/tsc-linux-x64/tsc"
       # One archive per platform: the platform package's lib dir (tsc and the lib files, which a
       # noembed tsc reads next to it), LICENSE and NOTICE.txt.
       - name: Archives
         run: |
           pkg="$RUNNER_TEMP/pkg" dist="$RUNNER_TEMP/dist"
           mkdir -p "$dist"
-          for platform in linux-x64 darwin-arm64; do
+          for platform in linux-x64 linux-arm64 darwin-arm64; do
             name="tsc-rs-$VERSION-$platform"
             mkdir -p "$RUNNER_TEMP/archive/$name"
             cp -r "$pkg/tsc-rs-$platform/lib/." "$pkg/tsc-rs-$platform/LICENSE" "$pkg/tsc-rs-$platform/NOTICE.txt" "$RUNNER_TEMP/archive/$name/"
@@ -201,7 +207,9 @@ jobs:
           path: ${{ runner.temp }}/dist
           if-no-files-found: error
 
-  # Installs the npm packages in a fresh project on each platform, as a user would.
+  # Installs the npm packages in a fresh project on each platform, as a user would. These are
+  # GitHub-hosted runners, so the check runs on another host than the build. ubuntu-24.04-arm is
+  # GitHub's arm64 standard runner (2 vCPU in a private repo, 4 in a public one).
   verify:
     name: verify (${{ matrix.platform }})
     needs: [version, package]
@@ -211,6 +219,8 @@ jobs:
         include:
           - platform: linux-x64
             runner: ubuntu-latest
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
           - platform: darwin-arm64
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
@@ -280,7 +290,8 @@ jobs:
           tag=latest
           [[ $VERSION != *-* ]] || tag=next
           echo "dist-tag $tag"
-          for pkg in @tsc-rs/linux-x64:tsc-rs-linux-x64 @tsc-rs/darwin-arm64:tsc-rs-darwin-arm64 tsc-rs:tsc-rs; do
+          for pkg in @tsc-rs/linux-x64:tsc-rs-linux-x64 @tsc-rs/linux-arm64:tsc-rs-linux-arm64 \
+            @tsc-rs/darwin-arm64:tsc-rs-darwin-arm64 tsc-rs:tsc-rs; do
             name=${pkg%%:*} file=./dist/${pkg#*:}-$VERSION.tgz
             [[ -f $file ]] || { echo "::error::missing package $file"; exit 1; }
             if npm view "$name@$VERSION" version > /dev/null 2>&1; then
