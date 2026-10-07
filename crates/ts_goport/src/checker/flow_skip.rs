@@ -124,8 +124,9 @@ pub fn flow_skip_mode_from_env() -> FlowSkipMode {
     static MODE: OnceLock<FlowSkipMode> = OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("GOPORT_FLOWSKIP").as_deref() {
         Ok("0") => FlowSkipMode::Off,
-        Ok("verify") => FlowSkipMode::Verify,
-        _ => FlowSkipMode::On,
+        Ok("1") => FlowSkipMode::On,
+        // flowskip2 verify build: verify mode by default (not for merge).
+        _ => FlowSkipMode::Verify,
     })
 }
 
