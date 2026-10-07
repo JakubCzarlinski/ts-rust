@@ -1220,6 +1220,35 @@ fn go_bytes_prefix(s: &str) -> u128 {
     x >> 40
 }
 
+/// Slots of the `name_prefix` memo of each thread.
+const NAME_PREFIXES: usize = 1024;
+
+thread_local! {
+    /// `(name id, go_bytes_prefix)` pairs, direct-mapped by name id.
+    static NAME_PREFIX_MEMO: [std::cell::Cell<(u32, u128)>; NAME_PREFIXES] =
+        const { [const { std::cell::Cell::new((0, 0)) }; NAME_PREFIXES] };
+}
+
+/// `go_bytes_prefix` of a name, kept per thread by name id (sortkey2,
+/// perfmeas1 rank 3): an id names one text for the whole process (names are
+/// never freed), so a kept prefix is the prefix of the text, and a read of a
+/// kept prefix does not read the text. The empty name (id 0) has prefix 0,
+/// the value of an empty slot.
+#[inline]
+fn name_prefix(name: &Name) -> u128 {
+    let id = name.id();
+    NAME_PREFIX_MEMO.with(|memo| {
+        let slot = &memo[id as usize % NAME_PREFIXES];
+        let (kept, prefix) = slot.get();
+        if kept == id {
+            return prefix;
+        }
+        let prefix = go_bytes_prefix(name);
+        slot.set((id, prefix));
+        prefix
+    })
+}
+
 /// Go `cmp.Compare` order of a number literal value: NaN first, -0 equal
 /// to +0.
 #[inline]
@@ -1286,7 +1315,7 @@ impl Checker {
         let flags = u128::from(get_sort_order_flags(ty) as u32) << 96;
         let s = type_name_symbol(ty);
         if s.is_some() {
-            return flags | go_bytes_prefix(&self.sym(s).name) << 7;
+            return flags | name_prefix(&self.sym(s).name) << 7;
         }
         let f = ty.flags;
         // The branches of `compare_types`, in its order.
@@ -1575,6 +1604,12 @@ impl Checker {
         let (name1, name2) = (&self.sym(s1).name, &self.sym(s2).name);
         // Equal name ids are equal texts, which compare as 0.
         if name1 != name2 {
+            // PERF: sortkey2 (perfmeas1 rank 3). Different prefixes are Go's
+            // order (`go_bytes_prefix`), without a read of the texts.
+            let (p1, p2) = (name_prefix(name1), name_prefix(name2));
+            if p1 != p2 {
+                return if p1 < p2 { -1 } else { 1 };
+            }
             let c = compare_strings(name1, name2);
             if c != 0 {
                 return c;
@@ -2117,6 +2152,25 @@ pub(crate) mod union_sort_tests {
             }
         }
         assert!(decided > 200, "{decided}");
+    }
+
+    /// `name_prefix` gives `go_bytes_prefix` of the name's text, also when
+    /// more names than memo slots are read on one thread (a slot is read
+    /// again after another id took it).
+    #[test]
+    fn name_prefix_is_go_bytes_prefix() {
+        let mut texts = strings();
+        texts.extend((0..3 * NAME_PREFIXES).map(|i| format!("name{i:05}")));
+        let names: Vec<Name> = texts.iter().map(|s| Name::from(s.as_str())).collect();
+        for round in 0..2 {
+            for (name, text) in names.iter().zip(&texts) {
+                assert_eq!(
+                    name_prefix(name),
+                    go_bytes_prefix(text),
+                    "{text:?} round {round}"
+                );
+            }
+        }
     }
 
     /// `number_sort_value` order is Go `cmp.Compare` order.
