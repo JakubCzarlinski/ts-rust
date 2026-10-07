@@ -33,11 +33,26 @@
 //! walks have taken 16 steps per flow node (sampled), so files with short
 //! walks pay almost nothing.
 //!
+//! flowskip2 (`studies/flowskip1/go-model-2.md` with the fixes in
+//! `go-model-2-fix.md`) adds three ends to pi(u):
+//! - M, the declaration of the reference's root symbol (flow.go:224-266):
+//!   Go matches there, runs `isReachableFlowNode(M)` (flow.go:2513) and
+//!   returns the declared type. The skip dry-runs that call on the current
+//!   caches and commits what Go writes (`lastFlowNode`, `flowNodeReachable`).
+//! - a loop label with 2+ antecedents (flow.go:1325): Go reads
+//!   `flowLoopCache`, then walks the entry only and writes the cache. The
+//!   skip reads the cache and plans the same writes.
+//! - for an identifier whose initial type differs from its declared type
+//!   (Variant B), Go walks every antecedent of each branch label, so the
+//!   skip takes only a path with no 2+ branch label, which ends at M, at
+//!   Unreachable or at a loop hit.
+//!
 //! `GOPORT_FLOWSKIP`: unset or `1` on, `0` off, `verify` indexes every file,
 //! tests each walk, then runs Go's walk anyway, and panics when the skip
-//! would differ (result, counters of made things and effects, visited nodes,
-//! depth). `GOPORT_FLOWSKIP_STATS=<file>` writes the process totals of the
-//! tests to `<file>` (updated every 256 tests per checker).
+//! would differ (result, counters of made things and effects, the planned
+//! writes, visited nodes, depth). `GOPORT_FLOWSKIP_STATS=<file>` writes the
+//! process totals of the tests to `<file>` (updated every 256 tests per
+//! checker), with the time of the walks that the test refused, by reason.
 //! `GOPORT_FLOWSKIP_BUILD_STEPS` and `GOPORT_FLOWSKIP_MIN_STEPS` set the
 //! tuning values for A/B runs.
 
@@ -84,6 +99,12 @@ const MAX_INLINE: u8 = 5;
 const ROOT_START: u8 = 1;
 const ROOT_UNREACHABLE: u8 = 2;
 const ROOT_BLOCKED: u8 = 3;
+/// A loop label with 2+ antecedents (flow.go:1325): the walk reads the
+/// loop cache there and goes on at the entry (`antecedents[0]`).
+const ROOT_LOOP: u8 = 4;
+
+/// Go's limit of nested `getTypeAtFlowNode` calls (flow.go:118).
+const MAX_NEST: u32 = 2000;
 
 /// Candidate states per class.
 const S_UNKNOWN: u8 = 0;
@@ -113,10 +134,14 @@ pub fn flow_skip_mode_from_env() -> FlowSkipMode {
 fn tuning(name: &'static str, default: u32) -> u32 {
     static VALUES: OnceLock<FxHashMap<&'static str, u32>> = OnceLock::new();
     let values = VALUES.get_or_init(|| {
-        ["GOPORT_FLOWSKIP_BUILD_STEPS", "GOPORT_FLOWSKIP_MIN_STEPS"]
-            .into_iter()
-            .filter_map(|n| Some((n, std::env::var(n).ok()?.parse().ok()?)))
-            .collect()
+        [
+            "GOPORT_FLOWSKIP_BUILD_STEPS",
+            "GOPORT_FLOWSKIP_MIN_STEPS",
+            "GOPORT_FLOWSKIP_MIN_STEPS_M",
+        ]
+        .into_iter()
+        .filter_map(|n| Some((n, std::env::var(n).ok()?.parse().ok()?)))
+        .collect()
     });
     values.get(name).copied().unwrap_or(default)
 }
@@ -139,8 +164,22 @@ enum Refusal {
     Extras,
     Root,
     Cross,
+    /// A loop cache entry of the key that is not the declared type.
+    LoopOther,
+    /// The key is on `flowLoopStack` with types (flow.go:1347).
+    LoopStack,
+    /// The rule at M (go-model-2-fix.md "At M") does not give declared.
+    DeclRule,
+    /// The dry run of `isReachableFlowNode(M)` aborts or gives false.
+    DeclReach,
+    /// Variant B: a 2+ branch label, a Start, no M, or a declared type
+    /// that the label arithmetic would change.
+    Region,
+    /// Not tested: declared != initial and the reference is not an
+    /// identifier (or Variant B is off).
+    Initial,
 }
-const REFUSALS: usize = 14;
+const REFUSALS: usize = 20;
 const REFUSAL_NAMES: [&str; REFUSALS] = [
     "kind",
     "inline",
@@ -156,6 +195,12 @@ const REFUSAL_NAMES: [&str; REFUSALS] = [
     "extras",
     "root",
     "cross",
+    "loop_other",
+    "loop_stack",
+    "decl_rule",
+    "decl_reach",
+    "region",
+    "initial",
 ];
 
 /// Counters of the tests of one checker (`GOPORT_FLOWSKIP_STATS`).
@@ -168,15 +213,45 @@ pub struct FlowSkipStats {
     pub built: u64,
     pub built_nodes: u64,
     pub build_ns: u64,
+    /// Nanoseconds of Go's walks after a refusal, by reason.
+    refused_ns: [u64; REFUSALS],
+    /// Walks whose result was the declared type, and their nanoseconds,
+    /// by refusal reason (the walks a better rule could skip).
+    refused_decl: [u64; REFUSALS],
+    refused_decl_ns: [u64; REFUSALS],
+    /// Nanoseconds of the tests (skipped or not).
+    pub test_ns: u64,
+    /// Skips that reached M (Variant A and B), skips of Variant B, skips
+    /// that crossed a loop label, and dry runs of `isReachableFlowNode`.
+    pub skipped_m: u64,
+    pub skipped_b: u64,
+    pub skipped_loop: u64,
+    pub dry_runs: u64,
+    pub dry_ns: u64,
+    /// Per kind of skip (`Plan::category`): skips, nanoseconds of their
+    /// tests, and (verify mode) nanoseconds of Go's walks of them.
+    skip_count: [u64; 3],
+    skip_test_ns: [u64; 3],
+    skip_walk_ns: [u64; 3],
 }
 
-const STAT_SLOTS: usize = 6 + REFUSALS;
+/// Skip kinds for the stats: Variant A with no M and no loop label,
+/// Variant A with M or a loop label, Variant B.
+const CATEGORY_NAMES: [&str; 3] = ["plain", "decl_or_loop", "variant_b"];
+
+const STAT_BASE: usize = 24;
+const STAT_SLOTS: usize = STAT_BASE + 4 * REFUSALS;
 static STATS_TOTAL: [AtomicU64; STAT_SLOTS] = [const { AtomicU64::new(0) }; STAT_SLOTS];
 
 fn stats_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| std::env::var("GOPORT_FLOWSKIP_STATS").ok())
         .as_deref()
+}
+
+/// Whether `GOPORT_FLOWSKIP_STATS` is set (the walks are then timed).
+fn stats_on() -> bool {
+    stats_path().is_some()
 }
 
 impl FlowSkipStats {
@@ -188,7 +263,20 @@ impl FlowSkipStats {
         s[3] = self.built;
         s[4] = self.built_nodes;
         s[5] = self.build_ns;
-        s[6..].copy_from_slice(&self.refused);
+        s[6] = self.test_ns;
+        s[7] = self.skipped_m;
+        s[8] = self.skipped_b;
+        s[9] = self.skipped_loop;
+        s[10] = self.dry_runs;
+        s[11] = self.dry_ns;
+        s[12..15].copy_from_slice(&self.skip_count);
+        s[15..18].copy_from_slice(&self.skip_test_ns);
+        s[18..21].copy_from_slice(&self.skip_walk_ns);
+        let r = STAT_BASE;
+        s[r..r + REFUSALS].copy_from_slice(&self.refused);
+        s[r + REFUSALS..r + 2 * REFUSALS].copy_from_slice(&self.refused_ns);
+        s[r + 2 * REFUSALS..r + 3 * REFUSALS].copy_from_slice(&self.refused_decl);
+        s[r + 3 * REFUSALS..r + 4 * REFUSALS].copy_from_slice(&self.refused_decl_ns);
         s
     }
 
@@ -217,10 +305,42 @@ impl FlowSkipStats {
             total[4],
             total[5] / 1_000_000
         );
+        let r = STAT_BASE;
         for (i, name) in REFUSAL_NAMES.iter().enumerate() {
-            text.push_str(&format!(" {name} {}", total[6 + i]));
+            text.push_str(&format!(" {name} {}", total[r + i]));
         }
-        text.push('\n');
+        text.push_str(&format!(
+            "\ntest_ms {} skipped_m {} skipped_b {} skipped_loop {} dry_runs {} dry_ms {}\n",
+            total[6] / 1_000_000,
+            total[7],
+            total[8],
+            total[9],
+            total[10],
+            total[11] / 1_000_000
+        ));
+        // Per skip kind: skips, ms of their tests, ms of Go's walks of them
+        // (verify mode only).
+        for (i, name) in CATEGORY_NAMES.iter().enumerate() {
+            text.push_str(&format!(
+                "skip {name}: walks {} test_ms {:.1} walk_ms {:.1}\n",
+                total[12 + i],
+                total[15 + i] as f64 / 1e6,
+                total[18 + i] as f64 / 1e6
+            ));
+        }
+        // Per refusal: walks, ms of Go's walk, walks with the declared
+        // result, their ms.
+        for (i, name) in REFUSAL_NAMES.iter().enumerate() {
+            if total[r + i] != 0 || total[r + REFUSALS + i] != 0 {
+                text.push_str(&format!(
+                    "{name}: walks {} ms {:.1} decl_walks {} decl_ms {:.1}\n",
+                    total[r + i],
+                    total[r + REFUSALS + i] as f64 / 1e6,
+                    total[r + 2 * REFUSALS + i],
+                    total[r + 3 * REFUSALS + i] as f64 / 1e6
+                ));
+            }
+        }
         let _ = std::fs::write(path, text);
     }
 }
@@ -240,14 +360,23 @@ pub struct FlowSkip {
     /// steps per flow node, so a file with few or short walks would lose).
     /// Such files pay only the sample.
     pub build_steps: u32,
-    /// A walk with fewer loop turns to its root (and no move to an outer
-    /// function there) is not tested: Go's walk is cheaper than the test.
+    /// A walk with fewer loop turns to its end (no move to an outer
+    /// function, no loop entry) is not tested: Go's walk is cheaper than
+    /// the test.
     pub min_steps: u32,
-    files: FxHashMap<u32, FileState>,
+    /// The same for a walk that ends at M, whose test also reads the
+    /// declaration and dry-runs `isReachableFlowNode`.
+    pub min_steps_m: u32,
+    /// Per file index (PERF, go-model-2.md 5.2: a `Vec`, not a hash map).
+    files: Vec<FileState>,
     /// Port counter of effect sites, read by verify mode: effects signature
     /// misses, `ensureAssignmentsMarked` writes, `isExhaustiveSwitchStatement`
-    /// and `isReachableFlowNode` calls, entity-name key resolutions.
+    /// computes, entity-name key resolutions.
     pub effects: u64,
+    /// `isReachableFlowNode` calls at another node than `reach_target`
+    /// (verify mode sets the target to the M that the skip planned).
+    pub reach_off_target: u64,
+    pub reach_target: FlowNodeId,
     /// Verify mode: set while Go's walk of a skipped reference runs.
     pub recording: Option<Box<FlowSkipRecording>>,
     pub stats: FlowSkipStats,
@@ -256,6 +385,55 @@ pub struct FlowSkip {
     pub trace: Option<Vec<(Node, bool)>>,
     /// Final answers of `isConstantReference` for identifier symbols.
     constant_references: FxHashMap<SymbolId, bool>,
+    /// The writes that the last passing test planned (scratch).
+    plan: Plan,
+    /// Scratch of the `isReachableFlowNode` dry run.
+    dry_overlay: FxHashMap<FlowNodeId, bool>,
+}
+
+/// What Go's walk writes that the skip must write too, planned by a test
+/// that passed (go-model-2.md 2.2 and 3).
+#[derive(Default)]
+struct Plan {
+    /// The M that the walk reaches, or nil: Go's `isReachableFlowNode(M)`
+    /// sets `lastFlowNode = M` and `lastFlowNodeReachable = true`.
+    m: FlowNodeId,
+    /// The `flowNodeReachable` entries that the dry run at M adds.
+    reachable: Vec<(FlowNodeId, bool)>,
+    /// The `flowLoopCache` keys that get the declared type.
+    loops: Vec<FlowLoopKey>,
+    /// The segments of the path, start and end (verify mode visits them
+    /// in order).
+    path_ends: Vec<(u32, u32)>,
+    /// The nest sum of the path.
+    nest: u32,
+    /// The steps of the path (stats).
+    steps: u32,
+    /// Variant B (an identifier whose initial type is not declared).
+    variant_b: bool,
+}
+
+impl Plan {
+    /// The skip kind for the stats (`CATEGORY_NAMES`).
+    fn category(&self) -> usize {
+        if self.variant_b {
+            2
+        } else if self.m.is_some() || !self.loops.is_empty() {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn clear(&mut self) {
+        self.m = FlowNodeId::NIL;
+        self.reachable.clear();
+        self.loops.clear();
+        self.path_ends.clear();
+        self.nest = 0;
+        self.steps = 0;
+        self.variant_b = false;
+    }
 }
 
 impl Default for FlowSkip {
@@ -269,13 +447,18 @@ impl Default for FlowSkip {
                 if mode == FlowSkipMode::Verify { 0 } else { 16 },
             ),
             min_steps: tuning("GOPORT_FLOWSKIP_MIN_STEPS", 8),
-            files: FxHashMap::default(),
+            min_steps_m: tuning("GOPORT_FLOWSKIP_MIN_STEPS_M", 16),
+            files: Vec::new(),
             effects: 0,
+            reach_off_target: 0,
+            reach_target: FlowNodeId::NIL,
             recording: None,
             stats: FlowSkipStats::default(),
             stats_flushed: FlowSkipStats::default(),
             trace: None,
             constant_references: FxHashMap::default(),
+            plan: Plan::default(),
+            dry_overlay: FxHashMap::default(),
         }
     }
 }
@@ -290,8 +473,8 @@ impl std::fmt::Debug for FlowSkip {
 }
 
 enum FileState {
-    /// Walks so far, and the estimated sum of their path lengths (every
-    /// `SAMPLE_EVERY`th walk is measured, at most `DRY_CAP` steps).
+    /// Walks so far, and the estimated sum of their path lengths (one walk
+    /// in `sample_every(walks)` is measured, at most `DRY_CAP` steps).
     Counting {
         walks: u32,
         steps: u64,
@@ -303,10 +486,24 @@ enum FileState {
 
 /// A measured walk counts at most this many steps.
 const DRY_CAP: u32 = 256;
-/// One walk in this many is measured.
+/// One walk in this many is measured, and after `SAMPLE_BACKOFF` walks of
+/// a file that is still below the build threshold, one in
+/// `SAMPLE_EVERY_LATE` (go-model-2.md 5.2).
 const SAMPLE_EVERY: u32 = 4;
+const SAMPLE_BACKOFF: u32 = 4096;
+const SAMPLE_EVERY_LATE: u32 = 32;
 
-/// Steps of pi(u) to its root (no move to an outer function), at most
+/// The sample step after `walks` walks of a file.
+fn sample_every(walks: u32) -> u32 {
+    if walks < SAMPLE_BACKOFF {
+        SAMPLE_EVERY
+    } else {
+        SAMPLE_EVERY_LATE
+    }
+}
+
+/// Steps of pi(u) to its root (no move to an outer function; a 2+ loop
+/// label ends it, as its cache ends most of Go's walks there), at most
 /// `DRY_CAP`: the length of Go's walk when nothing narrows.
 fn dry_steps(flows: &[FlowNode], file: usize, u: usize) -> u32 {
     let mut x = u;
@@ -319,6 +516,14 @@ fn dry_steps(flows: &[FlowNode], file: usize, u: usize) -> u32 {
         steps += 1;
     }
     steps
+}
+
+/// The entry (`antecedents[0]`) of the 2+ loop label `x`, when it is in
+/// the file.
+fn loop_entry(flows: &[FlowNode], file: usize, x: usize) -> Option<u32> {
+    let id = *flows[x].antecedents.first()?;
+    (id.is_some() && id.file_index() == file && id.local_index() < flows.len())
+        .then_some(id.local_index() as u32)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -926,8 +1131,11 @@ struct FileIndex {
     parent: Vec<u32>,
     root_kind: Vec<u8>,
     nest: Vec<u32>,
+    /// 2+ branch labels on the path from each node to its root.
+    labels: Vec<u32>,
     steps: Vec<u32>,
     tin: Vec<u32>,
+    tout: Vec<u32>,
     stop: Vec<u32>,
     /// The root of each reached node's tree.
     root_of: Vec<u32>,
@@ -942,6 +1150,17 @@ struct FileIndex {
     mention_range: FxHashMap<u64, (u32, u32)>,
     /// Chain sites sorted by key, then tin: key, tin, tout, root.
     chain_sites: Vec<(u64, u32, u32, Node)>,
+    /// `chain_range[key]`: the part of `chain_sites` with `key`.
+    chain_range: FxHashMap<u64, (u32, u32)>,
+    /// The nearest site of the same key that encloses each site, or NONE.
+    chain_up: Vec<u32>,
+    /// Per checker: a union-find over the sites. A site whose root was
+    /// found resolved points to `chain_up` (a resolved root stays
+    /// resolved); `chain_sites.len()` is "no site".
+    chain_skip: Vec<u32>,
+    /// The Assignment flow node of each VariableDeclaration or
+    /// BindingElement (NONE when two flow nodes have it).
+    decl_flow: FxHashMap<Node, u32>,
     classes: Vec<Option<Box<ClassState>>>,
 }
 
@@ -995,12 +1214,13 @@ fn next_of(flows: &[FlowNode], file: usize, flow: &FlowNode) -> Result<(u32, u32
             }
         }
     } else if flags.intersects(FlowFlags::LOOP_LABEL) {
-        // A loop label with 2+ antecedents writes `flowLoopCache`
-        // (flow.go:1325): not in v1.
-        if flow.antecedents.len() == 1 {
-            Ok((local(flow.antecedents[0])?, 0))
-        } else {
-            Err(ROOT_BLOCKED)
+        // A loop label with 2+ antecedents reads and writes `flowLoopCache`
+        // (flow.go:1325): a root of its own kind; the walk goes on at its
+        // entry when the cache misses.
+        match flow.antecedents.len() {
+            0 => Err(ROOT_BLOCKED),
+            1 => Ok((local(flow.antecedents[0])?, 0)),
+            _ => Err(ROOT_LOOP),
         }
     } else if flags.intersects(FlowFlags::ARRAY_MUTATION) {
         Ok((local(flow.antecedent)?, 0))
@@ -1017,6 +1237,35 @@ fn is_candidate(flags: FlowFlags) -> bool {
     // Same test order as `get_type_at_flow_node`.
     flags.intersects(FlowFlags::ASSIGNMENT | FlowFlags::CALL)
         || flags.intersects(FlowFlags::CONDITION | FlowFlags::SWITCH_CLAUSE)
+}
+
+/// The dry run of `isReachableFlowNode` aborts deeper than this.
+const MAX_DRY_DEPTH: u32 = 4096;
+
+/// A loop label read before the entry walk (flow.go:1336-1351).
+enum LoopRead {
+    /// The cache holds the declared type: the walk ends at the label.
+    Hit,
+    /// No entry and no stack entry with types: Go walks the entry and
+    /// writes the declared type.
+    Miss,
+}
+
+/// Go `isFalseExpression` (flow.go:2589), which reads only the tree.
+fn is_false_expression_pure(expr: Node) -> bool {
+    let node = skip_parentheses(expr);
+    if node.kind() == SyntaxKind::FalseKeyword {
+        return true;
+    }
+    if is_binary_expression(node) {
+        let operator = node.operator_token().kind();
+        return operator == SyntaxKind::AmpersandAmpersandToken
+            && (is_false_expression_pure(node.left()) || is_false_expression_pure(node.right()))
+            || operator == SyntaxKind::BarBarToken
+                && is_false_expression_pure(node.left())
+                && is_false_expression_pure(node.right());
+    }
+    false
 }
 
 impl FileIndex {
@@ -1072,6 +1321,9 @@ impl FileIndex {
         let mut tin = vec![NONE; n];
         let mut tout = vec![NONE; n];
         let mut nest = vec![0u32; n];
+        // 2+ branch labels on the path to the root (Variant B walks every
+        // antecedent there, so a path with none is the whole region).
+        let mut labels = vec![0u32; n];
         let mut steps = vec![0u32; n];
         let mut stop = vec![NONE; n];
         let mut root_of = vec![NONE; n];
@@ -1095,6 +1347,11 @@ impl FileIndex {
                     tin[c] = counter;
                     counter += 1;
                     nest[c] = nest_self[c] + nest[x as usize];
+                    labels[c] = labels[x as usize]
+                        + u32::from(
+                            flows[c].flags.intersects(FlowFlags::BRANCH_LABEL)
+                                && flows[c].antecedents.len() > 1,
+                        );
                     steps[c] = steps[x as usize] + 1;
                     stop[c] = if cand_of[c] != NONE {
                         c as u32
@@ -1111,6 +1368,21 @@ impl FileIndex {
         }
         drop(children);
         drop(child_start);
+        // The M node of each declaration (binder.go:2336-2357).
+        let mut decl_flow: FxHashMap<Node, u32> = FxHashMap::default();
+        for (i, flow) in flows.iter().enumerate() {
+            if flow.flags.intersects(FlowFlags::ASSIGNMENT)
+                && matches!(
+                    flow.node.kind(),
+                    SyntaxKind::VariableDeclaration | SyntaxKind::BindingElement
+                )
+            {
+                decl_flow
+                    .entry(flow.node)
+                    .and_modify(|m| *m = NONE)
+                    .or_insert(i as u32);
+            }
+        }
         // Events of the reached candidates.
         let mut res_pool = Vec::new();
         let mut alias_pool = Vec::new();
@@ -1185,15 +1457,45 @@ impl FileIndex {
         }
         let mention_in = mention_in.into_iter().map(|e| e.1).collect();
         let mention_out = mention_out.into_iter().map(|e| e.1).collect();
-        chain_sites.sort_unstable_by_key(|s| (s.0, s.1));
+        // Chain sites by key, then tin; per key the nearest enclosing site
+        // of the same key (one stack pass in tin order; on one flow node
+        // the earlier site encloses the later).
+        chain_sites.sort_unstable_by_key(|s: &(u64, u32, u32, Node)| (s.0, s.1));
+        let mut chain_range = FxHashMap::default();
+        let mut chain_up = vec![NONE; chain_sites.len()];
+        let mut open: Vec<u32> = Vec::new();
+        let mut start = 0;
+        while start < chain_sites.len() {
+            let key = chain_sites[start].0;
+            let mut end = start;
+            open.clear();
+            while end < chain_sites.len() && chain_sites[end].0 == key {
+                let site_tin = chain_sites[end].1;
+                while let Some(&top) = open.last() {
+                    if chain_sites[top as usize].2 <= site_tin {
+                        open.pop();
+                    } else {
+                        break;
+                    }
+                }
+                chain_up[end] = open.last().copied().unwrap_or(NONE);
+                open.push(end as u32);
+                end += 1;
+            }
+            chain_range.insert(key, (start as u32, end as u32));
+            start = end;
+        }
+        let chain_skip = (0..=chain_sites.len() as u32).collect();
         FileIndex {
             flows,
             file,
             parent,
             root_kind,
             nest,
+            labels,
             steps,
             tin,
+            tout,
             stop,
             root_of,
             cand_of,
@@ -1204,8 +1506,17 @@ impl FileIndex {
             mention_out,
             mention_range,
             chain_sites,
+            chain_range,
+            chain_up,
+            chain_skip,
+            decl_flow,
             classes: (0..CLASSES).map(|_| None).collect(),
         }
+    }
+
+    /// Whether `a` is an ancestor of `b` or `b` itself in the forest.
+    fn encloses(&self, a: usize, b: usize) -> bool {
+        self.tin[a] <= self.tin[b] && self.tin[b] < self.tout[a]
     }
 
     /// Nodes on the path from the node with entry number `p` to its root
@@ -1244,6 +1555,8 @@ fn find(next: &mut [u32], mut x: u32) -> u32 {
 /// The keys of a reference that the index compares.
 struct RefKeys {
     kind: u8,
+    /// The root identifier (or `this`).
+    root: Node,
     /// Mention keys: a node that mentions one of them may match R.
     mentions: SmallVec<[u64; 8]>,
     /// Chain-site keys: a site with one of them needs a resolved root.
@@ -1261,7 +1574,8 @@ enum Settle {
 // Checker side
 // ──────────────────────────────────────────────────────────────────────
 
-/// Values that a skipped walk must not change (verify mode).
+/// Values that a skipped walk must not change, other than the planned
+/// writes (verify mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Snapshot {
     types: u32,
@@ -1270,12 +1584,15 @@ struct Snapshot {
     diagnostics: i32,
     suggestions: i32,
     union_of_unions: usize,
+    assignment_reduced: usize,
     flow_loop_cache: usize,
     last_flow_node: FlowNodeId,
+    last_flow_node_reachable: bool,
     flow_node_reachable: usize,
     flow_analysis_disabled: bool,
     flow_invocation_count: i32,
     effects: u64,
+    reach_off_target: u64,
     resolve_names: u64,
 }
 
@@ -1306,6 +1623,7 @@ impl Checker {
                 }
                 Some(RefKeys {
                     kind: K_IDENT,
+                    root: reference,
                     mentions,
                     chains,
                 })
@@ -1317,6 +1635,7 @@ impl Checker {
                 }
                 Some(RefKeys {
                     kind: K_THIS,
+                    root: reference,
                     mentions,
                     chains,
                 })
@@ -1358,6 +1677,7 @@ impl Checker {
                 } else {
                     K_ACC_THIS
                 };
+                let root_node = root;
                 let root = root_text(root);
                 mentions.push(chain_key(F_ACC, &names, root));
                 if union {
@@ -1377,6 +1697,7 @@ impl Checker {
                 }
                 Some(RefKeys {
                     kind,
+                    root: root_node,
                     mentions,
                     chains,
                 })
@@ -1449,59 +1770,197 @@ impl Checker {
         }
     }
 
-    /// The flow skip test (go-model.md 4.4 with go-model-fix.md): true when
-    /// Go's walk of `reference` from `flow` visits only inert nodes and
-    /// returns `declared_type`. The caller has checked P1 (no explicit flow
-    /// node) and P3 (declared == initial, not auto). Returns the nesting
-    /// count of the path for verify mode.
-    pub(crate) fn flow_skip_test(
+    /// Entry from `get_flow_type_of_reference_ex` after `flowInvocationCount++`
+    /// (flow.go:97): Go's walk of `reference`, skipped when the test passes.
+    /// Out of line, so the caller stays small (go-model-2.md 5.2). The
+    /// caller has checked P1 (no explicit flow node) and that declared is
+    /// not auto (flow.go:232).
+    #[inline(never)]
+    pub(crate) fn flow_skip_walk(
         &mut self,
         reference: Node,
         declared_type: TypeId,
+        initial_type: TypeId,
         flow_container: Node,
         flow: FlowNodeId,
-    ) -> Option<u32> {
+    ) -> TypeId {
+        // Go `f.initialType = Coalesce(initialType, declaredType)` (flow.go:94,
+        // CE3). Variant A: equal to declared. Variant B: an identifier only.
+        let initial = if initial_type.is_nil() {
+            declared_type
+        } else {
+            initial_type
+        };
+        if initial != declared_type && reference.kind() != SyntaxKind::Identifier {
+            if stats_on() {
+                return self.flow_skip_timed_walk(
+                    Refusal::Initial,
+                    reference,
+                    declared_type,
+                    initial_type,
+                    flow_container,
+                    flow,
+                );
+            }
+            return self.flow_walk(reference, declared_type, initial_type, flow_container, flow);
+        }
+        let start = stats_on().then(std::time::Instant::now);
+        let result = self.flow_skip_test(reference, declared_type, initial, flow_container, flow);
+        if let Some(start) = start {
+            let ns = start.elapsed().as_nanos() as u64;
+            let stats = &mut self.flow_skip.stats;
+            stats.test_ns += ns;
+            if result.is_ok() {
+                let category = self.flow_skip.plan.category();
+                stats.skip_count[category] += 1;
+                stats.skip_test_ns[category] += ns;
+            }
+        }
+        match result {
+            Ok(()) => {
+                if self.flow_skip.mode == FlowSkipMode::Verify {
+                    self.flow_skip_verify(
+                        reference,
+                        declared_type,
+                        initial_type,
+                        flow_container,
+                        flow,
+                    )
+                } else {
+                    self.flow_skip_commit(declared_type);
+                    declared_type
+                }
+            }
+            Err(why) => {
+                if stats_on() {
+                    return self.flow_skip_timed_walk(
+                        why,
+                        reference,
+                        declared_type,
+                        initial_type,
+                        flow_container,
+                        flow,
+                    );
+                }
+                self.flow_walk(reference, declared_type, initial_type, flow_container, flow)
+            }
+        }
+    }
+
+    /// Stats mode: Go's walk after refusal `why`, timed, and whether it
+    /// gave the declared type.
+    #[cold]
+    #[inline(never)]
+    fn flow_skip_timed_walk(
+        &mut self,
+        why: Refusal,
+        reference: Node,
+        declared_type: TypeId,
+        initial_type: TypeId,
+        flow_container: Node,
+        flow: FlowNodeId,
+    ) -> TypeId {
+        let start = std::time::Instant::now();
+        let result = self.flow_walk(reference, declared_type, initial_type, flow_container, flow);
+        let ns = start.elapsed().as_nanos() as u64;
+        let stats = &mut self.flow_skip.stats;
+        let i = why as usize;
+        if matches!(why, Refusal::Initial) {
+            stats.refused[i] += 1;
+        }
+        stats.refused_ns[i] += ns;
+        if result == declared_type {
+            stats.refused_decl[i] += 1;
+            stats.refused_decl_ns[i] += ns;
+        }
+        result
+    }
+
+    /// Writes what Go's walk would write (the plan of the test that passed).
+    fn flow_skip_commit(&mut self, declared_type: TypeId) {
+        let plan = std::mem::take(&mut self.flow_skip.plan);
+        for &(flow, reachable) in &plan.reachable {
+            self.flow_node_reachable.insert(flow, reachable);
+        }
+        if plan.m.is_some() {
+            self.last_flow_node = plan.m;
+            self.last_flow_node_reachable = true;
+        }
+        for &key in &plan.loops {
+            self.flow_loop_cache.insert(key, declared_type);
+        }
+        self.flow_skip.plan = plan;
+    }
+
+    /// The flow skip test: true when Go's walk of `reference` from `flow`
+    /// visits only inert nodes, returns `declared_type`, and writes only
+    /// what `self.flow_skip.plan` holds after the test.
+    fn flow_skip_test(
+        &mut self,
+        reference: Node,
+        declared_type: TypeId,
+        initial_type: TypeId,
+        flow_container: Node,
+        flow: FlowNodeId,
+    ) -> Result<(), Refusal> {
         self.flow_skip.stats.tested += 1;
         if self.flow_skip.stats.tested & 255 == 0 {
             let mut flushed = self.flow_skip.stats_flushed;
             self.flow_skip.stats.flush(&mut flushed);
             self.flow_skip.stats_flushed = flushed;
         }
-        let result = self.flow_skip_test_worker(reference, declared_type, flow_container, flow);
+        let result = self.flow_skip_test_worker(
+            reference,
+            declared_type,
+            initial_type,
+            flow_container,
+            flow,
+        );
         if let Some(trace) = self.flow_skip.trace.as_mut() {
             trace.push((reference, result.is_ok()));
         }
         match result {
-            Ok(nest) => {
-                self.flow_skip.stats.skipped += 1;
-                Some(nest)
+            Ok(()) => {
+                let stats = &mut self.flow_skip.stats;
+                let plan = &self.flow_skip.plan;
+                stats.skipped += 1;
+                stats.skipped_m += u64::from(plan.m.is_some());
+                stats.skipped_b += u64::from(plan.variant_b);
+                stats.skipped_loop += u64::from(!plan.loops.is_empty());
             }
-            Err(why) => {
-                self.flow_skip.stats.refused[why as usize] += 1;
-                None
-            }
+            Err(why) => self.flow_skip.stats.refused[why as usize] += 1,
         }
+        result
     }
 
     fn flow_skip_test_worker(
         &mut self,
         reference: Node,
         declared_type: TypeId,
+        initial_type: TypeId,
         flow_container: Node,
         flow: FlowNodeId,
-    ) -> Result<u32, Refusal> {
+    ) -> Result<(), Refusal> {
         if self.inline_level != 0 {
             return Err(Refusal::Inline);
         }
         let file = flow.file_index();
+        if file >= self.flow_skip.files.len() {
+            self.flow_skip
+                .files
+                .resize_with(file + 1, || FileState::Counting { walks: 0, steps: 0 });
+        }
         let build_steps = self.flow_skip.build_steps;
-        let state = self
-            .flow_skip
-            .files
-            .entry(file as u32)
-            .or_insert(FileState::Counting { walks: 0, steps: 0 });
+        let state = &mut self.flow_skip.files[file];
         match state {
             FileState::Unsupported => return Err(Refusal::File),
+            // A Variant B walk does not count toward the build (flowskip1
+            // counted only Variant A walks, and gate projects then pay only
+            // that sample, go-model-2.md 5.2). Verify mode (no threshold)
+            // builds on any walk.
+            FileState::Counting { .. } if initial_type != declared_type && build_steps > 0 => {
+                return Err(Refusal::Counting);
+            }
             FileState::Counting { walks, steps } => {
                 // Only a static file (the CLI case) is indexed: its flow
                 // nodes live for the process.
@@ -1510,57 +1969,83 @@ impl Checker {
                     return Err(Refusal::File);
                 };
                 *walks += 1;
-                if *walks % SAMPLE_EVERY == 0 {
+                let every = sample_every(*walks);
+                if *walks % every == 0 {
                     let u = flow.local_index();
                     if u < flows.len() {
-                        *steps += u64::from(dry_steps(flows, file, u) * SAMPLE_EVERY);
+                        *steps += u64::from(dry_steps(flows, file, u) * every);
                     }
                 }
                 if *steps < u64::from(build_steps) * flows.len() as u64 {
                     return Err(Refusal::Counting);
                 }
-                let start = std::time::Instant::now();
-                let index = FileIndex::build(file, flows.as_slice(), self.strict_null_checks);
-                *state = FileState::Built(Box::new(index));
-                let stats = &mut self.flow_skip.stats;
-                stats.built += 1;
-                stats.built_nodes += flows.len() as u64;
-                stats.build_ns += start.elapsed().as_nanos() as u64;
+                let index = self.flow_skip_build(file, flows.as_slice());
+                self.flow_skip.files[file] = FileState::Built(index);
             }
             FileState::Built(_) => {}
         }
         let mut files = std::mem::take(&mut self.flow_skip.files);
-        let Some(FileState::Built(index)) = files.get_mut(&(file as u32)) else {
+        let FileState::Built(index) = &mut files[file] else {
             unreachable!("the file index was built above");
         };
-        let result = self.flow_skip_check(index, reference, declared_type, flow_container, flow);
+        self.flow_skip.plan.clear();
+        let result = self.flow_skip_check(
+            index,
+            reference,
+            declared_type,
+            initial_type,
+            flow_container,
+            flow,
+        );
         if result.is_ok() {
-            self.flow_skip.stats.skipped_steps += u64::from(index.steps[flow.local_index()]);
+            self.flow_skip.stats.skipped_steps += u64::from(self.flow_skip.plan.steps);
         }
         self.flow_skip.files = files;
         result
     }
 
-    /// Follows pi(u) through the index: first the static tests of every
-    /// segment (mentions, chain sites, depth, roots), then the candidates of
-    /// the class (go-model.md 4.4).
+    /// Builds the index of a file (once per checker and file).
+    #[cold]
+    #[inline(never)]
+    fn flow_skip_build(&mut self, file: usize, flows: &'static [FlowNode]) -> Box<FileIndex> {
+        let start = std::time::Instant::now();
+        let index = FileIndex::build(file, flows, self.strict_null_checks);
+        let stats = &mut self.flow_skip.stats;
+        stats.built += 1;
+        stats.built_nodes += flows.len() as u64;
+        stats.build_ns += start.elapsed().as_nanos() as u64;
+        Box::new(index)
+    }
+
+    /// Follows pi(u) through the index (go-model-2.md 2.3 and 3 with
+    /// go-model-2-fix.md). First the static tests of every segment
+    /// (mentions, chain sites, depth) and its end (M, a root, a loop label
+    /// with its cache), then the candidates of the class, then the rule at
+    /// M and the dry run of `isReachableFlowNode(M)`. Variant B takes only a
+    /// path with no 2+ branch label: Go's walk is then that path too.
     fn flow_skip_check(
         &mut self,
         index: &mut FileIndex,
         reference: Node,
         declared_type: TypeId,
+        initial_type: TypeId,
         flow_container: Node,
         flow: FlowNodeId,
-    ) -> Result<u32, Refusal> {
+    ) -> Result<(), Refusal> {
         let u = flow.local_index();
         if u >= index.flows.len() || index.tin[u] == NONE {
             return Err(Refusal::Unreached);
         }
         if index.steps[u] < self.flow_skip.min_steps {
-            // A short walk: test it only when its root may move to the
-            // containing function.
+            // A short walk: test it only when its root may go on (a move to
+            // the containing function, or a loop entry).
             let root = index.root_of[u] as usize;
-            if index.root_kind[root] != ROOT_START || index.flows[root].node.is_nil() {
+            let goes_on = match index.root_kind[root] {
+                ROOT_START => index.flows[root].node.is_some(),
+                ROOT_LOOP => true,
+                _ => false,
+            };
+            if !goes_on {
                 return Err(Refusal::Short);
             }
         }
@@ -1568,41 +2053,91 @@ impl Checker {
         let Some(keys) = self.flow_skip_ref_keys(reference, union) else {
             return Err(Refusal::Kind);
         };
-        let mut segments: SmallVec<[u32; 4]> = SmallVec::new();
+        let m = self.flow_skip_m(index, &keys);
+        if m != NONE
+            && index.encloses(m as usize, u)
+            && index.steps[u] - index.steps[m as usize] < self.flow_skip.min_steps_m
+        {
+            // A short walk to M.
+            return Err(Refusal::Short);
+        }
+        // Variant B (an identifier whose initial type is not declared): the
+        // walk must end at M, at Unreachable or at a loop hit (a Start gives
+        // the initial type). getUnionOrEvolvingArrayType([declared]) is
+        // declared except for unknownUnionType (checker.go:31685), and
+        // isTypeSubsetOf(declared, initial) reads a declared type for a
+        // non-union enum-like type (relater.go:2876).
+        let variant_b = initial_type != declared_type;
+        if variant_b {
+            let flags = self.ty(declared_type).flags;
+            if keys.kind != K_IDENT
+                || m == NONE
+                || declared_type == self.unknown_union_type
+                || flags.intersects(TypeFlags::ENUM_LIKE) && !flags.intersects(TypeFlags::UNION)
+            {
+                return Err(Refusal::Region);
+            }
+        }
+        let mut segments: SmallVec<[(u32, u32); 4]> = SmallVec::new();
+        let mut loops: SmallVec<[FlowLoopKey; 2]> = SmallVec::new();
+        let mut ref_key: Option<CacheHashKey> = None;
+        let mut reached_m = false;
         let mut seg = u;
         let mut total_nest = 0u32;
+        let mut total_steps = 0u32;
         loop {
             let p = index.tin[seg];
             if p == NONE {
                 return Err(Refusal::Unreached);
             }
+            // M on this segment: the walk ends there (flow.go:224).
+            let at_m = m != NONE && index.encloses(m as usize, seg);
+            let limit = if at_m { index.tin[m as usize] } else { NONE };
             for &key in &keys.mentions {
-                if index.mentions_on_path(key, p) > 0 {
+                let mut count = index.mentions_on_path(key, p);
+                if at_m {
+                    // M itself mentions R; nodes at M or above are not visited.
+                    count -= index.mentions_on_path(key, limit);
+                }
+                if count > 0 {
                     return Err(Refusal::Mention);
                 }
             }
             for &key in &keys.chains {
-                let first = index.chain_sites.partition_point(|s| s.0 < key);
-                for &(k, site_tin, site_tout, root) in &index.chain_sites[first..] {
-                    if k != key || site_tin > p {
-                        break;
-                    }
-                    if site_tout > p && !self.flow_skip_resolved(root) {
-                        return Err(Refusal::Chain);
-                    }
+                if !self.flow_skip_chain_ok(index, key, p, limit) {
+                    return Err(Refusal::Chain);
                 }
             }
+            if variant_b && index.labels[seg] != if at_m { index.labels[m as usize] } else { 0 } {
+                // A 2+ branch label: Go walks all its antecedents there.
+                // That region case is not skipped (go-model-2-fix.md
+                // "Variant B region": a search cost about as much as Go's
+                // walk on T3 Code server).
+                return Err(Refusal::Region);
+            }
+            if at_m {
+                total_nest += index.nest[seg] - index.nest[m as usize];
+                if total_nest >= MAX_NEST {
+                    return Err(Refusal::Depth);
+                }
+                total_steps += index.steps[seg] - index.steps[m as usize] + 1;
+                segments.push((seg as u32, m));
+                reached_m = true;
+                break;
+            }
+            total_steps += index.steps[seg];
             total_nest += index.nest[seg];
-            if total_nest >= 2000 {
+            if total_nest >= MAX_NEST {
                 return Err(Refusal::Depth);
             }
-            segments.push(seg as u32);
             let root = index.root_of[seg] as usize;
+            segments.push((seg as u32, root as u32));
             match index.root_kind[root] {
                 ROOT_UNREACHABLE => break,
+                ROOT_START if variant_b => return Err(Refusal::Region),
                 ROOT_START => {
                     // Go's rule for moving to the containing function
-                    // (flow.go:189).
+                    // (flow.go:185-191).
                     let container = index.flows[root].node;
                     let crosses = container.is_some()
                         && container != flow_container
@@ -1623,65 +2158,515 @@ impl Checker {
                     }
                     seg = outer.local_index();
                 }
+                ROOT_LOOP => {
+                    // flow.go:1325-1400 with an inert entry path.
+                    let key = match ref_key {
+                        Some(key) => key,
+                        None => {
+                            let key = self.flow_skip_ref_key(
+                                reference,
+                                declared_type,
+                                initial_type,
+                                flow_container,
+                            )?;
+                            ref_key = Some(key);
+                            key
+                        }
+                    };
+                    let loop_key = FlowLoopKey {
+                        flow_node: FlowNodeId::new(index.file, root),
+                        ref_key: key,
+                    };
+                    match self.flow_skip_loop(loop_key, declared_type)? {
+                        LoopRead::Hit => break,
+                        LoopRead::Miss => {}
+                    }
+                    if loops.contains(&loop_key) {
+                        return Err(Refusal::Root);
+                    }
+                    loops.push(loop_key);
+                    // The entry nests (flow.go:1362).
+                    total_nest += 1;
+                    if total_nest >= MAX_NEST {
+                        return Err(Refusal::Depth);
+                    }
+                    seg = loop_entry(index.flows, index.file, root).ok_or(Refusal::Root)? as usize;
+                }
                 _ => return Err(Refusal::Root),
             }
         }
+        if total_steps
+            < if reached_m {
+                self.flow_skip.min_steps_m
+            } else {
+                self.flow_skip.min_steps
+            }
+        {
+            return Err(Refusal::Short);
+        }
+        let class = self.flow_skip_class(reference, keys.kind, union);
+        let last = segments.len() - 1;
+        for (i, &(seg, _)) in segments.iter().enumerate() {
+            // Candidates on the segment, through the joined ones; in the
+            // segment of M, only those below M.
+            let limit = if reached_m && i == last {
+                index.tin[m as usize]
+            } else {
+                NONE
+            };
+            let mut s = find(&mut index.class_state(class).next, seg);
+            loop {
+                if limit != NONE && index.tin[s as usize] <= limit {
+                    break;
+                }
+                let ci = index.cand_of[s as usize];
+                if ci == NONE {
+                    break;
+                }
+                self.flow_skip_candidate(index, ci, s, class, &keys)?;
+                let parent = index.parent[s as usize];
+                s = find(&mut index.class_state(class).next, parent);
+            }
+        }
+        if reached_m {
+            self.flow_skip_at_m(index, m, &keys, declared_type)?;
+        }
+        let plan = &mut self.flow_skip.plan;
+        plan.loops.extend_from_slice(&loops);
+        plan.path_ends.extend_from_slice(&segments);
+        plan.nest = total_nest;
+        plan.steps = total_steps;
+        plan.variant_b = variant_b;
+        Ok(())
+    }
+
+    /// The class of a reference (kind x union declared type x constant
+    /// reference, go-model-fix.md "Class").
+    fn flow_skip_class(&mut self, reference: Node, kind: u8, union: bool) -> Class {
         let cr = match self.flow_skip_constant_reference_cached(reference) {
             Some(false) => 0,
             Some(true) => 1,
             None => 2,
         };
-        let class = Class {
-            kind: keys.kind,
-            union,
-            cr,
-        };
-        for &seg in &segments {
-            // Candidates on the path, through the joined ones.
-            let mut s = find(&mut index.class_state(class).next, seg);
-            loop {
-                let ci = index.cand_of[s as usize];
-                if ci == NONE {
-                    break;
+        Class { kind, union, cr }
+    }
+
+    /// Settles candidate `ci` (node `s`) for `class` and checks its
+    /// extras against R's keys; a candidate that has nothing to check per
+    /// walk is joined to its parent.
+    fn flow_skip_candidate(
+        &mut self,
+        index: &mut FileIndex,
+        ci: u32,
+        s: u32,
+        class: Class,
+        keys: &RefKeys,
+    ) -> Result<(), Refusal> {
+        let st = index.class_state(class).state[ci as usize];
+        match st {
+            S_BLOCKED => Err(Refusal::Blocked),
+            S_EXTRAS => {
+                let state = index.class_state(class);
+                let extras = &state.extras[&ci];
+                if self.flow_skip_extras_ok(extras, keys) {
+                    Ok(())
+                } else {
+                    Err(Refusal::Extras)
                 }
-                let st = index.class_state(class).state[ci as usize];
-                match st {
-                    S_BLOCKED => return Err(Refusal::Blocked),
-                    S_EXTRAS => {
-                        let state = index.class_state(class);
-                        let extras = &state.extras[&ci];
-                        if !self.flow_skip_extras_ok(extras, &keys) {
-                            return Err(Refusal::Extras);
-                        }
-                    }
-                    _ => match self.flow_skip_settle(index, ci, class) {
-                        Settle::Joined => {
-                            let parent = index.parent[s as usize];
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_JOINED;
-                            state.next[s as usize] = parent;
-                        }
-                        Settle::Extras(extras) => {
-                            let ok = self.flow_skip_extras_ok(&extras, &keys);
-                            let state = index.class_state(class);
-                            state.state[ci as usize] = S_EXTRAS;
-                            state.extras.insert(ci, extras);
-                            if !ok {
-                                return Err(Refusal::Extras);
-                            }
-                        }
-                        Settle::Unsettled => return Err(Refusal::Unsettled),
-                        Settle::Blocked => {
-                            index.class_state(class).state[ci as usize] = S_BLOCKED;
-                            return Err(Refusal::Blocked);
-                        }
-                    },
+            }
+            S_JOINED => Ok(()),
+            _ => match self.flow_skip_settle(index, ci, class) {
+                Settle::Joined => {
+                    let parent = index.parent[s as usize];
+                    let state = index.class_state(class);
+                    state.state[ci as usize] = S_JOINED;
+                    state.next[s as usize] = parent;
+                    Ok(())
                 }
-                let parent = index.parent[s as usize];
-                s = find(&mut index.class_state(class).next, parent);
+                Settle::Extras(extras) => {
+                    let ok = self.flow_skip_extras_ok(&extras, keys);
+                    let state = index.class_state(class);
+                    state.state[ci as usize] = S_EXTRAS;
+                    state.extras.insert(ci, extras);
+                    if ok { Ok(()) } else { Err(Refusal::Extras) }
+                }
+                Settle::Unsettled => Err(Refusal::Unsettled),
+                Settle::Blocked => {
+                    index.class_state(class).state[ci as usize] = S_BLOCKED;
+                    Err(Refusal::Blocked)
+                }
+            },
+        }
+    }
+
+    /// Go `getFlowReferenceKey` (flow.go:1657) for a reference of the
+    /// index's kinds: the root symbol is cached (P2) and the names are
+    /// literals, so the call reads only. The initial type is coalesced
+    /// (CE3).
+    fn flow_skip_ref_key(
+        &mut self,
+        reference: Node,
+        declared_type: TypeId,
+        initial_type: TypeId,
+        flow_container: Node,
+    ) -> Result<CacheHashKey, Refusal> {
+        let mut b = KeyBuilder::default();
+        if !self.write_flow_cache_key(
+            &mut b,
+            reference,
+            declared_type,
+            initial_type,
+            flow_container,
+        ) {
+            return Err(Refusal::Kind);
+        }
+        let key = b.hash();
+        if key == *NON_DOTTED_NAME_CACHE_KEY {
+            return Err(Refusal::Kind);
+        }
+        Ok(key)
+    }
+
+    /// Go's loop label steps before the entry walk (flow.go:1336-1351):
+    /// a cached declared type ends the walk there; another cached type,
+    /// or the key on `flowLoopStack` with types, refuses.
+    fn flow_skip_loop(&self, key: FlowLoopKey, declared_type: TypeId) -> Result<LoopRead, Refusal> {
+        if let Some(&cached) = self.flow_loop_cache.get(&key)
+            && cached.is_some()
+        {
+            return if cached == declared_type {
+                Ok(LoopRead::Hit)
+            } else {
+                Err(Refusal::LoopOther)
+            };
+        }
+        if self
+            .flow_loop_stack
+            .iter()
+            .any(|info| info.key == key && !info.types.is_empty())
+        {
+            return Err(Refusal::LoopStack);
+        }
+        Ok(LoopRead::Miss)
+    }
+
+    /// The local index of M, the one Assignment flow node of a declaration
+    /// of R's root symbol in this file (go-model-2-fix.md "At M"), or NONE
+    /// (then the full mention test refuses a walk that meets one).
+    fn flow_skip_m(&self, index: &FileIndex, keys: &RefKeys) -> u32 {
+        if keys.kind != K_IDENT && keys.kind != K_ACC_IDENT {
+            return NONE;
+        }
+        let symbol = self
+            .symbol_node_links
+            .try_get(keys.root)
+            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        if symbol.is_nil() {
+            return NONE;
+        }
+        let mut found = NONE;
+        for &declaration in &self.sym(symbol).declarations {
+            if let Some(&m) = index.decl_flow.get(&declaration) {
+                if m == NONE || found != NONE {
+                    return NONE;
+                }
+                found = m;
             }
         }
-        Ok(total_nest)
+        found
+    }
+
+    /// The walk at M (go-model-2-fix.md "At M"): the match is the one
+    /// Go finds (flow.go:1613-1614, 1841-1848), the result is the declared
+    /// type with no query (flow.go:228-249, 259-266), and the dry run of
+    /// `isReachableFlowNode(M)` (flow.go:225, 256) completes with true. Its
+    /// writes go to the plan.
+    fn flow_skip_at_m(
+        &mut self,
+        index: &FileIndex,
+        m: u32,
+        keys: &RefKeys,
+        declared_type: TypeId,
+    ) -> Result<(), Refusal> {
+        let node = index.flows[m as usize].node;
+        if !self.flow_skip_m_rule(node, keys, declared_type) {
+            return Err(Refusal::DeclRule);
+        }
+        let m_id = FlowNodeId::new(index.file, m as usize);
+        let start = stats_on().then(std::time::Instant::now);
+        let mut overlay = std::mem::take(&mut self.flow_skip.dry_overlay);
+        overlay.clear();
+        let reachable =
+            self.flow_skip_reach_dry(index.flows, index.file, m_id, false, &mut overlay, 0);
+        if let Some(start) = start {
+            self.flow_skip.stats.dry_runs += 1;
+            self.flow_skip.stats.dry_ns += start.elapsed().as_nanos() as u64;
+        }
+        let ok = reachable == Some(true);
+        if ok {
+            let plan = &mut self.flow_skip.plan;
+            plan.m = m_id;
+            plan.reachable.extend(overlay.iter().map(|(&f, &r)| (f, r)));
+        }
+        self.flow_skip.dry_overlay = overlay;
+        if ok { Ok(()) } else { Err(Refusal::DeclReach) }
+    }
+
+    /// The match at M and its result, for the declared type, with reads
+    /// only.
+    fn flow_skip_m_rule(&self, node: Node, keys: &RefKeys, declared_type: TypeId) -> bool {
+        // isMatchingReference(root, M.node): the export symbol of the
+        // resolved root against getSymbolOfDeclaration (pure for a symbol
+        // that is not a late-bound class member).
+        let root_symbol = self
+            .symbol_node_links
+            .try_get(keys.root)
+            .map_or(SymbolId::NIL, |links| links.resolved_symbol);
+        let declaration_symbol = node.symbol();
+        if root_symbol.is_nil()
+            || declaration_symbol.is_nil()
+            || self
+                .sym(declaration_symbol)
+                .flags
+                .intersects(SymbolFlags::CLASS_MEMBER)
+            || self.get_export_symbol_of_value_symbol_if_exported(root_symbol)
+                != self.get_merged_symbol(declaration_symbol)
+        {
+            return false;
+        }
+        if keys.kind == K_ACC_IDENT {
+            // containsMatchingReference: an expando on a function
+            // expression nests on the antecedent (flow.go:259-264).
+            if is_variable_declaration(node) && (is_in_js_file(node) || is_var_const_like(node)) {
+                let initializer = node.initializer();
+                if initializer.is_some() && is_function_expression_or_arrow_function(initializer) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        // A declaration is never a compound assignment target, and declared
+        // is not auto (flow.go:228-243).
+        if !self.ty(declared_type).flags.intersects(TypeFlags::UNION) {
+            return true;
+        }
+        // getAssignmentReducedType(declared, getInitialOrAssignedType)
+        // (flow.go:246, 276, 2244-2270, 2399-2413) with no query: the
+        // initializer's cached type, which getNarrowableTypeForReference
+        // keeps (no instantiable part, checker.go:31975-32008), and a result
+        // that is declared with no new cache entry.
+        if !is_variable_declaration(node) {
+            return false;
+        }
+        let initializer = node.initializer();
+        if initializer.is_nil() {
+            return false;
+        }
+        let initial = self
+            .type_node_links
+            .try_get(initializer)
+            .map_or(TypeId::NIL, |links| links.resolved_type);
+        if initial.is_nil() || self.flow_skip_has_instantiable(initial) {
+            return false;
+        }
+        if initial == declared_type {
+            return true;
+        }
+        if self.ty(initial).flags.intersects(TypeFlags::NEVER) {
+            return false;
+        }
+        let key = AssignmentReducedKey {
+            id1: self.ty(declared_type).id,
+            id2: self.ty(initial).id,
+        };
+        self.assignment_reduced_types.get(&key) == Some(&declared_type)
+    }
+
+    /// Whether `t` or a union or intersection member at any depth is
+    /// instantiable (getNarrowableTypeForReference queries a constraint
+    /// only there; a NoInfer type is a substitution type).
+    fn flow_skip_has_instantiable(&self, t: TypeId) -> bool {
+        let ty = self.ty(t);
+        if ty.flags.intersects(TypeFlags::INSTANTIABLE) {
+            return true;
+        }
+        if ty
+            .flags
+            .intersects(TypeFlags::UNION | TypeFlags::INTERSECTION)
+        {
+            return ty
+                .types()
+                .iter()
+                .any(|&member| self.flow_skip_has_instantiable(member));
+        }
+        false
+    }
+
+    /// Dry run of Go `isReachableFlowNodeWorker` (flow.go:2522-2587) on the
+    /// current caches: the same reads in the same order, with the
+    /// `flowNodeReachable` writes kept in `overlay`. `None` when Go's call
+    /// would make or compute something (an effects signature, predicate,
+    /// return type or exhaustive state that is not cached), meets a reduce
+    /// label (it clears `lastFlowNode`), or nests too deep.
+    fn flow_skip_reach_dry(
+        &self,
+        flows: &[FlowNode],
+        file: usize,
+        flow: FlowNodeId,
+        no_cache_check: bool,
+        overlay: &mut FxHashMap<FlowNodeId, bool>,
+        depth: u32,
+    ) -> Option<bool> {
+        if depth > MAX_DRY_DEPTH {
+            return None;
+        }
+        let mut flow = flow;
+        let mut no_cache_check = no_cache_check;
+        loop {
+            if flow == self.last_flow_node {
+                return Some(self.last_flow_node_reachable);
+            }
+            // The walk stays in the file of M (antecedents of a static file).
+            if flow.is_nil() || flow.file_index() != file {
+                return None;
+            }
+            let flow_data = flows.get(flow.local_index())?;
+            let flags = flow_data.flags;
+            if flags.intersects(FlowFlags::SHARED) {
+                if !no_cache_check {
+                    if let Some(&reachable) = overlay.get(&flow) {
+                        return Some(reachable);
+                    }
+                    if let Some(&reachable) = self.flow_node_reachable.get(&flow) {
+                        return Some(reachable);
+                    }
+                    let reachable =
+                        self.flow_skip_reach_dry(flows, file, flow, true, overlay, depth + 1)?;
+                    overlay.insert(flow, reachable);
+                    return Some(reachable);
+                }
+                no_cache_check = false;
+            }
+            if flags.intersects(
+                FlowFlags::ASSIGNMENT | FlowFlags::CONDITION | FlowFlags::ARRAY_MUTATION,
+            ) {
+                flow = flow_data.antecedent;
+            } else if flags.intersects(FlowFlags::CALL) {
+                let signature = self
+                    .signature_links
+                    .try_get(flow_data.node)?
+                    .effects_signature;
+                if signature.is_nil() {
+                    return None;
+                }
+                if signature != self.unknown_signature {
+                    let predicate = self.sig(signature).resolved_type_predicate;
+                    if predicate.is_nil() {
+                        return None;
+                    }
+                    if predicate != self.no_type_predicate
+                        && self.pred(predicate).kind == TypePredicateKind::ASSERTS_IDENTIFIER
+                        && self.pred(predicate).t.is_nil()
+                    {
+                        let arguments = flow_data.node.arguments();
+                        let parameter_index = self.pred(predicate).parameter_index;
+                        if parameter_index >= 0
+                            && (parameter_index as usize) < arguments.len()
+                            && is_false_expression_pure(arguments.get(parameter_index as usize))
+                        {
+                            return Some(false);
+                        }
+                    }
+                    let return_type = self.sig(signature).resolved_return_type;
+                    if return_type.is_nil() {
+                        return None;
+                    }
+                    if self.ty(return_type).flags.intersects(TypeFlags::NEVER) {
+                        return Some(false);
+                    }
+                }
+                flow = flow_data.antecedent;
+            } else if flags.intersects(FlowFlags::BRANCH_LABEL) {
+                // No reduce labels here: the run aborts at one.
+                for &antecedent in &flow_data.antecedents {
+                    if self.flow_skip_reach_dry(
+                        flows,
+                        file,
+                        antecedent,
+                        false,
+                        overlay,
+                        depth + 1,
+                    )? {
+                        return Some(true);
+                    }
+                }
+                return Some(false);
+            } else if flags.intersects(FlowFlags::LOOP_LABEL) {
+                if flow_data.antecedents.is_empty() {
+                    return Some(false);
+                }
+                flow = flow_data.antecedents[0];
+            } else if flags.intersects(FlowFlags::SWITCH_CLAUSE) {
+                let data = flow_data.as_flow_switch_clause_data();
+                if data.clause_start == data.clause_end {
+                    let state = self
+                        .switch_statement_links
+                        .try_get(data.switch_statement)
+                        .map_or(ExhaustiveState::UNKNOWN, |links| links.exhaustive_state);
+                    if state == ExhaustiveState::TRUE {
+                        return Some(false);
+                    }
+                    if state != ExhaustiveState::FALSE {
+                        return None;
+                    }
+                }
+                flow = flow_data.antecedent;
+            } else if flags.intersects(FlowFlags::REDUCE_LABEL) {
+                return None;
+            } else {
+                return Some(!flags.intersects(FlowFlags::UNREACHABLE));
+            }
+        }
+    }
+
+    /// Whether every chain site of names key `key` that encloses the node
+    /// with entry number `p`, strictly below the node with entry number
+    /// `limit` (NONE: no limit), has a resolved root (go-model-fix.md
+    /// item 7, go-model-2-fix.md correction 14).
+    fn flow_skip_chain_ok(&self, index: &mut FileIndex, key: u64, p: u32, limit: u32) -> bool {
+        let Some(&(a, b)) = index.chain_range.get(&key) else {
+            return true;
+        };
+        let (a, b) = (a as usize, b as usize);
+        let last = a + index.chain_sites[a..b].partition_point(|site| site.1 <= p);
+        if last == a {
+            return true;
+        }
+        // The deepest site that encloses p is `last - 1` or one of the sites
+        // that enclose it.
+        let mut x = (last - 1) as u32;
+        while index.chain_sites[x as usize].2 <= p {
+            x = index.chain_up[x as usize];
+            if x == NONE {
+                return true;
+            }
+        }
+        let none = index.chain_sites.len() as u32;
+        loop {
+            x = find(&mut index.chain_skip, x);
+            if x == none {
+                return true;
+            }
+            let (_, site_tin, _, root) = index.chain_sites[x as usize];
+            if limit != NONE && site_tin <= limit {
+                return true;
+            }
+            if !self.flow_skip_resolved(root) {
+                return false;
+            }
+            let up = index.chain_up[x as usize];
+            index.chain_skip[x as usize] = if up == NONE { none } else { up };
+        }
     }
 
     /// `flow_skip_constant_reference` with the answer for an identifier
@@ -1913,12 +2898,15 @@ impl Checker {
             diagnostics: self.diagnostics.count,
             suggestions: self.suggestion_diagnostics.count,
             union_of_unions: self.union_of_union_types.len(),
+            assignment_reduced: self.assignment_reduced_types.len(),
             flow_loop_cache: self.flow_loop_cache.len(),
             last_flow_node: self.last_flow_node,
+            last_flow_node_reachable: self.last_flow_node_reachable,
             flow_node_reachable: self.flow_node_reachable.len(),
             flow_analysis_disabled: self.flow_analysis_disabled,
             flow_invocation_count: self.flow_invocation_count,
             effects: self.flow_skip.effects,
+            reach_off_target: self.flow_skip.reach_off_target,
             resolve_names,
         }
     }
@@ -1932,53 +2920,40 @@ impl Checker {
         }
     }
 
-    /// pi(u) as Go's walk visits it (verify mode).
-    fn flow_skip_path(
-        &self,
-        reference: Node,
-        flow_container: Node,
-        flow: FlowNodeId,
-    ) -> Vec<FlowNodeId> {
-        let file = flow.file_index();
-        let Some(FileState::Built(index)) = self.flow_skip.files.get(&(file as u32)) else {
+    /// The nodes that a planned Variant A walk visits, in order: each
+    /// segment from its start through its parents to its end (verify mode).
+    fn flow_skip_plan_path(&self, file: usize, plan: &Plan) -> Vec<FlowNodeId> {
+        let Some(FileState::Built(index)) = self.flow_skip.files.get(file) else {
             return Vec::new();
         };
         let mut path = Vec::new();
-        let mut x = flow.local_index();
-        loop {
-            path.push(FlowNodeId::new(file, x));
-            if index.root_kind[x] == 0 {
-                x = index.parent[x] as usize;
-                continue;
-            }
-            if index.root_kind[x] == ROOT_START {
-                let container = index.flows[x].node;
-                let kind = reference.kind();
-                if container.is_some()
-                    && container != flow_container
-                    && kind != SyntaxKind::PropertyAccessExpression
-                    && kind != SyntaxKind::ElementAccessExpression
-                    && !(kind == SyntaxKind::ThisKeyword && !is_arrow_function(container))
-                {
-                    x = container.flow_node().local_index();
-                    continue;
+        for &(start, end) in &plan.path_ends {
+            let mut x = start;
+            loop {
+                path.push(FlowNodeId::new(file, x as usize));
+                if x == end || index.parent[x as usize] == NONE {
+                    break;
                 }
+                x = index.parent[x as usize];
             }
-            return path;
         }
+        path
     }
 
     /// Verify mode: runs Go's walk of a reference that the test skips and
-    /// panics when the walk does anything that the skip leaves out.
+    /// panics when the walk does anything that the skip leaves out or
+    /// writes anything other than the plan.
     pub(crate) fn flow_skip_verify(
         &mut self,
         reference: Node,
         declared_type: TypeId,
+        initial_type: TypeId,
         flow_container: Node,
         flow: FlowNodeId,
-        nest: u32,
     ) -> TypeId {
-        let path = self.flow_skip_path(reference, flow_container, flow);
+        let plan = std::mem::take(&mut self.flow_skip.plan);
+        let file = flow.file_index();
+        let expected_nodes = self.flow_skip_plan_path(file, &plan);
         let calls = Rc::new(Cell::new(0u64));
         let resolve_name = self.resolve_name.clone();
         {
@@ -1992,21 +2967,45 @@ impl Checker {
             );
         }
         let before = self.flow_skip_snapshot(0);
+        let absent_before = plan
+            .reachable
+            .iter()
+            .all(|(f, _)| !self.flow_node_reachable.contains_key(f))
+            && plan
+                .loops
+                .iter()
+                .all(|k| self.flow_loop_cache.get(k).is_none_or(|t| t.is_nil()));
+        let outer_target = std::mem::replace(&mut self.flow_skip.reach_target, plan.m);
         // A walk that is not inert can start other walks, which a nested
         // verify records on its own.
         let outer = self.flow_skip.recording.replace(Box::default());
-        let result = self.flow_walk(
-            reference,
-            declared_type,
-            declared_type,
-            flow_container,
-            flow,
-        );
+        let start = stats_on().then(std::time::Instant::now);
+        let result = self.flow_walk(reference, declared_type, initial_type, flow_container, flow);
+        if let Some(start) = start {
+            self.flow_skip.stats.skip_walk_ns[plan.category()] += start.elapsed().as_nanos() as u64;
+        }
         let recording = std::mem::replace(&mut self.flow_skip.recording, outer)
             .expect("the recording of this walk");
+        self.flow_skip.reach_target = outer_target;
         let after = self.flow_skip_snapshot(calls.get());
         self.resolve_name = resolve_name;
-        let expected = before;
+        // What Go's walk must have written: the plan.
+        let mut expected = before;
+        expected.flow_loop_cache += plan.loops.len();
+        expected.flow_node_reachable += plan.reachable.len();
+        if plan.m.is_some() {
+            expected.last_flow_node = plan.m;
+            expected.last_flow_node_reachable = true;
+        }
+        let writes_match = plan
+            .reachable
+            .iter()
+            .all(|(f, r)| self.flow_node_reachable.get(f) == Some(r))
+            && plan
+                .loops
+                .iter()
+                .all(|k| self.flow_loop_cache.get(k) == Some(&declared_type));
+        let visited = &recording.visited;
         let problem = if result != declared_type {
             let result_text = self.type_to_string(result);
             let declared_text = self.type_to_string(declared_type);
@@ -2015,32 +3014,36 @@ impl Checker {
                 self.ty(result).id,
                 self.ty(declared_type).id,
             ))
-        } else if after != expected {
+        } else if after != expected || !absent_before || !writes_match {
             Some(format!(
-                "the walk changed state: before {before:?} after {after:?}"
+                "the walk changed state other than the plan: before {before:?} after {after:?} expected {expected:?} (absent before {absent_before}, writes match {writes_match}, plan m {:?}, {} reachable, {} loops)",
+                plan.m,
+                plan.reachable.len(),
+                plan.loops.len()
             ))
-        } else if recording.visited != path {
-            let first = recording
-                .visited
+        } else if *visited != expected_nodes {
+            let first = visited
                 .iter()
-                .zip(path.iter())
+                .zip(expected_nodes.iter())
                 .position(|(a, b)| a != b)
-                .unwrap_or(recording.visited.len().min(path.len()));
+                .unwrap_or(visited.len().min(expected_nodes.len()));
             Some(format!(
-                "visited {} nodes, the path has {}; first difference at {first}: walk {:?} path {:?}",
-                recording.visited.len(),
-                path.len(),
-                recording.visited.get(first).map(|f| f.get_flow().flags),
-                path.get(first).map(|f| f.get_flow().flags)
+                "visited {} nodes, the plan has {} (variant b {}); first difference at {first}: walk {:?} plan {:?}",
+                visited.len(),
+                expected_nodes.len(),
+                plan.variant_b,
+                visited.get(first).map(|f| f.get_flow().flags),
+                expected_nodes.get(first).map(|f| f.get_flow().flags)
             ))
-        } else if recording.max_depth != nest as i32 + 1 {
+        } else if recording.max_depth != plan.nest as i32 + 1 {
             Some(format!(
-                "maximum depth {} but the path nests {nest}",
-                recording.max_depth
+                "maximum depth {} but the plan nests {} (variant b {})",
+                recording.max_depth, plan.nest, plan.variant_b
             ))
         } else {
             None
         };
+        self.flow_skip.plan = plan;
         if let Some(problem) = problem {
             let source_file = get_source_file_of_node(reference);
             panic!(
@@ -2094,6 +3097,7 @@ mod tests {
             checker.flow_skip.mode = FlowSkipMode::Verify;
             checker.flow_skip.build_steps = 0;
             checker.flow_skip.min_steps = 0;
+            checker.flow_skip.min_steps_m = 0;
             checker.flow_skip.trace = Some(Vec::new());
             let ctx = crate::gostd::context::background();
             let codes: Vec<i32> = checker
@@ -2238,5 +3242,168 @@ mod tests {
         let (codes, trace) = check_with_skip("switch_true", source, r#""strict": true"#);
         assert_eq!(codes, Vec::<i32>::new());
         assert_eq!(skipped_at(&trace, source, "return x", "x"), vec![false]);
+    }
+
+    /// flowskip2 Variant A: a use in an arrow function of an outer const
+    /// walks into the outer function and ends at the declaration M
+    /// (flow.go:224); the skip dry-runs `isReachableFlowNode(M)`.
+    #[test]
+    fn declaration_on_path_is_skipped() {
+        let source = "declare const c: boolean;\n\
+            export function f() {\n\
+            const x = 1 + 2;\n\
+            if (c) {} if (c) {} if (c) {} if (c) {} if (c) {}\n\
+            const g = (): void => { if (c) {} if (c) {} x; };\n\
+            return g;\n\
+            }\n";
+        let (codes, trace) = check_with_skip("decl_a", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(skipped_at(&trace, source, "if (c) {} x", "x"), vec![true]);
+    }
+
+    /// flowskip2 Variant A at M with a union declared type: the
+    /// initializer's cached type is the declared type (flow.go:246).
+    #[test]
+    fn union_declaration_is_skipped() {
+        let source = "declare const c: boolean;\n\
+            declare function g(): string | number;\n\
+            export function f() {\n\
+            const w: string | number = g();\n\
+            if (c) {} if (c) {} if (c) {}\n\
+            const h = (): void => { if (c) {} w; };\n\
+            return h;\n\
+            }\n";
+        let (codes, trace) = check_with_skip("decl_union", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(skipped_at(&trace, source, "if (c) {} w", "w"), vec![true]);
+    }
+
+    /// flowskip2 Variant B: a strict local whose initial type is
+    /// `number | undefined`; the path to M has no 2+ branch label, so Go's
+    /// walk is that path and returns the declared type.
+    #[test]
+    fn variant_b_path_is_skipped() {
+        let source = "declare function g(): number;\n\
+            export function f() {\n\
+            let x = g();\n\
+            let a = g(); let b = g(); let c = g(); let d = g();\n\
+            x;\n\
+            return x + a + b + c + d;\n\
+            }\n";
+        let (codes, trace) = check_with_skip("path_b", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(skipped_at(&trace, source, "\nx", "x"), vec![true]);
+        assert_eq!(skipped_at(&trace, source, "return x", "x"), vec![true]);
+    }
+
+    /// Variant B with a 2+ branch label on the path: Go walks every
+    /// antecedent there (flow.go:1269 needs declared == initial). Not
+    /// skipped.
+    #[test]
+    fn variant_b_branch_is_not_skipped() {
+        let source = "declare const c: boolean;\n\
+            declare function g(): number;\n\
+            export function f() {\n\
+            let x = g();\n\
+            if (c) {} else {}\n\
+            x;\n\
+            }\n";
+        let (codes, trace) = check_with_skip("branch_b", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(skipped_at(&trace, source, "\nx", "x"), vec![false]);
+    }
+
+    /// flowskip2 loops: a parameter used in a loop body walks to the loop
+    /// label, misses the cache, goes on at the entry, and the skip writes
+    /// the loop cache entry as Go does (flow.go:1400); the next use hits it.
+    #[test]
+    fn loop_entry_is_skipped() {
+        let source = "declare const c: boolean;\n\
+            export function f(p: number) {\n\
+            for (let i = 0; i < 3; i++) {\n\
+            if (c) {} if (c) {}\n\
+            p;\n\
+            (p);\n\
+            }\n\
+            }\n";
+        let (codes, trace) = check_with_skip("loop_a", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(
+            skipped_at(&trace, source, "\np", "p"),
+            vec![true],
+            "trace {trace:?}"
+        );
+        assert_eq!(
+            skipped_at(&trace, source, "\n(p", "p"),
+            vec![true],
+            "trace {trace:?}"
+        );
+    }
+
+    /// Check CE3 of go-model-2.md: `this` walks with a nil initial type;
+    /// the loop key is built with Go's coalesced initial type (flow.go:94),
+    /// so verify mode finds Go's loop cache write equal to the plan.
+    #[test]
+    fn this_loop_key_uses_coalesced_initial() {
+        let source = "declare const c: boolean;\n\
+            export class A {\n\
+            m() {\n\
+            for (let i = 0; i < 2; i++) {\n\
+            if (c) {} if (c) {}\n\
+            this;\n\
+            }\n\
+            }\n\
+            }\n";
+        let (codes, trace) = check_with_skip("this_loop", source, r#""strict": true"#);
+        assert_eq!(codes, Vec::<i32>::new());
+        assert_eq!(
+            skipped_at(&trace, source, "\nthis", "this"),
+            vec![true],
+            "trace {trace:?}"
+        );
+    }
+
+    /// Check CE1 of go-model-2.md: the second use's Variant B region nests
+    /// past 2000 (TS2563 in Go). The skip must not fire for either use
+    /// (a region with 2+ branch labels is not skipped at all).
+    #[test]
+    fn deep_region_is_not_skipped() {
+        let mut source = String::from(
+            "declare function g(): number;\n\
+             export function f() {\n\
+             const x = g();\n",
+        );
+        // Each block's `k` walks one step to its own declaration, so only
+        // the two uses of `x` walk the 1,100 conditions (2 nest steps each
+        // in Variant B: the label, then the condition).
+        for _ in 0..700 {
+            source.push_str("{ const k = g(); if (k) {} }\n");
+        }
+        source.push_str("x;\n");
+        for _ in 0..400 {
+            source.push_str("{ const k = g(); if (k) {} }\n");
+        }
+        source.push_str("x; // u2\n}\n");
+        let (codes, trace) = check_with_skip("deep_b", &source, r#""strict": true"#);
+        assert!(codes.contains(&2563), "codes {codes:?}");
+        let u2_end = (source.find("x; // u2").unwrap() + 1) as i32;
+        let u2: Vec<bool> = trace
+            .iter()
+            .filter(|(t, e, _)| t == "x" && *e == u2_end)
+            .map(|r| r.2)
+            .collect();
+        let xs: Vec<_> = trace.iter().filter(|r| r.0 == "x").collect();
+        assert_eq!(
+            u2,
+            vec![false],
+            "codes {codes:?} x walks {xs:?} u2 end {u2_end}"
+        );
+        let u1_end = (source.find("x;\n").unwrap() + 1) as i32;
+        let u1: Vec<bool> = trace
+            .iter()
+            .filter(|(t, e, _)| t == "x" && *e == u1_end)
+            .map(|r| r.2)
+            .collect();
+        assert_eq!(u1, vec![false]);
     }
 }

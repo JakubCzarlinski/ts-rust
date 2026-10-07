@@ -159,22 +159,22 @@ impl Checker {
             }
         }
         self.flow_invocation_count += 1;
-        // flowskip1: a walk that can only return the declared type and
-        // makes nothing is skipped (flow_skip.rs). P1: no explicit flow node.
-        // P3: declared == initial, not auto (go-model.md 2.4).
+        // flowskip1, flowskip2: a walk that can only return the declared
+        // type, and whose only lasting writes are known, is skipped
+        // (flow_skip.rs, out of line). P1: no explicit flow node. Declared
+        // is not auto (flow.go:232).
         let evolved_type = if self.flow_skip.mode != FlowSkipMode::Off
             && !explicit_flow_node
-            && (initial_type.is_nil() || initial_type == declared_type)
             && declared_type != self.auto_type
             && declared_type != self.auto_array_type
-            && let Some(nest) =
-                self.flow_skip_test(reference, declared_type, flow_container, flow_node)
         {
-            if self.flow_skip.mode == FlowSkipMode::Verify {
-                self.flow_skip_verify(reference, declared_type, flow_container, flow_node, nest)
-            } else {
-                declared_type
-            }
+            self.flow_skip_walk(
+                reference,
+                declared_type,
+                initial_type,
+                flow_container,
+                flow_node,
+            )
         } else {
             self.flow_walk(
                 reference,
