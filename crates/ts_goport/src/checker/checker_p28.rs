@@ -1272,19 +1272,22 @@ impl Checker {
             let mut reduced_types: Vec<TypeId> = Vec::new();
             // Go: checker/checker.go:26175 `containsType(u.Types(), t)` for
             // each `t` and named union `u`, until one contains `t`.
-            // PERF: unionsort1. The keys of each named union's types are read
-            // once, when it is first searched, and the key of each `t` once.
-            // The keyed searches make Go's comparisons (`search_keyed_types`).
-            // Before, these searches made most of the union comparisons.
-            let mut named_keys: Vec<Vec<(u128, TypeId)>> = vec![Vec::new(); named_unions.len()];
+            // PERF: unionsort1, sortkey2. The entries of each named union's
+            // types are made once, when it is first searched, and the entry of
+            // each `t` once. Before, these searches made most of the union
+            // comparisons. The entry searches make Go's comparisons
+            // (`search_union_entries`), and an entry keeps what the
+            // comparisons of tied keys read (`UnionSearchEntry`).
+            let mut named_keys: Vec<Vec<UnionSearchEntry>> =
+                named_unions.iter().map(|_| Vec::new()).collect();
             for &t in &type_set {
-                let key = self.union_sort_key(t);
+                let entry = self.union_search_entry(t);
                 let mut in_named = false;
                 for (i, &u) in named_unions.iter().enumerate() {
                     if named_keys[i].is_empty() {
-                        named_keys[i] = self.union_sort_keys(self.ty(u).types());
+                        named_keys[i] = self.union_search_entries(self.ty(u).types());
                     }
-                    if self.search_keyed_types(&named_keys[i], key, t).1 {
+                    if self.search_union_entries(&named_keys[i], &entry).1 {
                         in_named = true;
                         break;
                     }

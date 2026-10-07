@@ -1307,6 +1307,160 @@ impl LargeSortEntry {
     }
 }
 
+/// A type of a union in the named-union loop of `get_union_type`, or the
+/// type that it searches for (`search_union_entries`, sortkey2): its key,
+/// and for an unnamed intersection of 2 to 254 members what Go reads of its
+/// first two members (`TieData`), read at the entry's first tie. The loop
+/// keeps the entries of each union for all its searches (types repeat in
+/// them: on vue-macros and eslint-plugin-svelte most comparisons are of
+/// such intersections whose keys tie). Nothing in the loop changes a type,
+/// so an entry holds what Go reads at each comparison of the loop.
+pub(crate) struct UnionSearchEntry {
+    key: u128,
+    t: TypeId,
+    tie: std::cell::OnceCell<Option<Box<TieData>>>,
+}
+
+/// What Go `CompareTypes` reads of a member of an intersection
+/// (`TieMember`) or of an alias argument of a member: the type, its key,
+/// its name symbol (`getTypeNameSymbol`), and `tie_suffix` of the text whose
+/// first 11 Go bytes the key holds (the name of a named type, the value of
+/// an unnamed string literal), else `NO_SUFFIX`.
+#[derive(Clone, Copy, Default)]
+struct TieItem {
+    t: TypeId,
+    key: u128,
+    suffix: u64,
+    name: SymbolId,
+}
+
+/// A member of an intersection (`TieData`): its item, and the length and the
+/// first item of its alias argument list.
+#[derive(Clone, Copy, Default)]
+struct TieMember {
+    item: TieItem,
+    alias_len: u32,
+    alias_first: TieItem,
+}
+
+/// The first two members of an unnamed intersection of 2 to 254 members.
+struct TieData {
+    members: [TieMember; 2],
+}
+
+impl TieItem {
+    /// The sign of Go `CompareTypes(self.t, other.t)` for two different
+    /// types when the items tell it (sortkey2). Different keys tell it (the
+    /// PERF note above). Equal keys mean the same sort flags, so the same arm,
+    /// and both named or both unnamed, with the same first 11 Go bytes of the
+    /// names (or of the values of two unnamed string literals). Then Go
+    /// compares:
+    /// - two different name symbols: the name texts (utilities.go:644), whose
+    ///   suffixes tell their order when they differ;
+    /// - two unnamed types: no alias arguments, then for the string literal
+    ///   arm the values (:555), whose suffixes tell their order (other arms
+    ///   have no suffix);
+    /// - the same name symbol: the alias arguments (`TieMember::order`).
+    ///
+    /// Go returns at those steps with no effect: they come before every lazy
+    /// symbol id.
+    #[inline]
+    fn order(&self, other: &Self) -> Option<i32> {
+        if self.key != other.key {
+            return Some(if self.key < other.key { -1 } else { 1 });
+        }
+        if self.name == other.name && self.name.is_some() {
+            return None;
+        }
+        if self.suffix == NO_SUFFIX || other.suffix == NO_SUFFIX || self.suffix == other.suffix {
+            return None;
+        }
+        Some(if self.suffix < other.suffix { -1 } else { 1 })
+    }
+}
+
+impl TieMember {
+    /// `TieItem::order`, and for two types with the same name symbol and
+    /// equal keys Go `compareTypeLists` of their alias arguments
+    /// (utilities.go:636): different lengths tell it, and when the first
+    /// arguments differ, Go's result is their comparison (the items tell
+    /// it or not).
+    #[inline]
+    fn order(&self, other: &Self) -> Option<i32> {
+        let (a, b) = (&self.item, &other.item);
+        if a.key != b.key || a.name != b.name || a.name.is_nil() {
+            return a.order(b);
+        }
+        if self.alias_len != other.alias_len {
+            return Some(if self.alias_len < other.alias_len {
+                -1
+            } else {
+                1
+            });
+        }
+        let (x, y) = (&self.alias_first, &other.alias_first);
+        // No arguments, or the same first argument: Go goes on.
+        if x.t == y.t {
+            return None;
+        }
+        x.order(y)
+    }
+}
+
+impl TieData {
+    /// The sign of Go `CompareTypes` of two different unnamed intersections
+    /// with equal keys, when the data tells it. Go reaches `compareTypeLists`
+    /// of the members (utilities.go:543) with equal lengths (the keys hold
+    /// them). The first pair of different members decides, with Go's result
+    /// for that pair: the members before it are the same type, which Go
+    /// compares as 0 with no effect, and Go returns the pair's nonzero result
+    /// unchanged.
+    #[inline]
+    fn order(&self, other: &Self) -> Option<i32> {
+        let [a0, a1] = &self.members;
+        let [b0, b1] = &other.members;
+        if a0.item.t != b0.item.t {
+            return a0.order(b0);
+        }
+        if a1.item.t != b1.item.t {
+            return a1.order(b1);
+        }
+        None
+    }
+}
+
+/// `tie_suffix` of a text whose first 11 bytes are not all ASCII. Never a
+/// suffix: those hold ASCII bytes, or 0x80 and zeros.
+const NO_SUFFIX: u64 = u64::MAX;
+
+/// The 8 Go bytes of `s` after its first 11, in the `go_bytes_prefix` form
+/// (big-endian, ASCII bytes kept, 0x80 at the first non-ASCII byte and
+/// zeros after it, zero padded), or `NO_SUFFIX` when a byte of the first 11
+/// is not ASCII. Two texts with equal `go_bytes_prefix` values have the same
+/// first 11 bytes (a short text is padded with zeros), so when their
+/// suffixes differ, the suffix order is Go `strings.Compare` order (the rule
+/// of `go_bytes_prefix`).
+#[inline]
+fn tie_suffix(s: &str) -> u64 {
+    let b = s.as_bytes();
+    if !b[..b.len().min(11)].is_ascii() {
+        return NO_SUFFIX;
+    }
+    // Byte 11 starts a unit: the bytes before it are ASCII.
+    let rest = b.get(11..).unwrap_or_default();
+    let n = rest.len().min(8);
+    let mut buf = [0u8; 8];
+    buf[..n].copy_from_slice(&rest[..n]);
+    let x = u64::from_be_bytes(buf);
+    let high = x & 0x8080_8080_8080_8080;
+    if high == 0 {
+        return x;
+    }
+    // Byte `i` (from the left) is the first byte of 0x80 or more.
+    let i = high.leading_zeros() / 8;
+    (x & !(u64::MAX >> (8 * i))) | (0x80u64 << (56 - 8 * i))
+}
+
 impl Checker {
     /// The union sort key of `t` (see the PERF note above).
     #[inline]
@@ -1493,21 +1647,137 @@ impl Checker {
         types.iter().map(|&t| (self.union_sort_key(t), t)).collect()
     }
 
-    /// Go `slices.BinarySearchFunc(types, t, CompareTypes)` on the key pairs
-    /// of sorted types (`union_sort_keys`); `key` is the key of `t`. The
-    /// keyed comparisons have Go's signs and effects, so the search makes
-    /// Go's comparisons and gives Go's result: the index where `t` is or
-    /// would be, and whether it is there.
+    /// The entries of `types` (`union_search_entry`), in order, for
+    /// `search_union_entries`.
+    pub(crate) fn union_search_entries(&self, types: &[TypeId]) -> Vec<UnionSearchEntry> {
+        types.iter().map(|&t| self.union_search_entry(t)).collect()
+    }
+
+    /// Go `slices.BinarySearchFunc(types, t, CompareTypes)` on the entries
+    /// of sorted types (`union_search_entries`); `target` is the entry of `t`. The
+    /// keyed comparisons (`compare_search_entries`) have Go's signs and
+    /// effects, so the search makes Go's comparisons and gives Go's result:
+    /// the index where `t` is or would be, and whether it is there.
     // Go: slices/sort.go:152 BinarySearchFunc
-    pub(crate) fn search_keyed_types(
+    pub(crate) fn search_union_entries(
         &self,
-        keyed: &[(u128, TypeId)],
-        key: u128,
-        t: TypeId,
+        entries: &[UnionSearchEntry],
+        target: &UnionSearchEntry,
     ) -> (usize, bool) {
-        crate::gostd::slices::binary_search_func(keyed, (key, t), |&(k1, t1), &(k2, t2)| {
-            self.compare_keyed_types(k1, t1, k2, t2)
+        crate::gostd::slices::binary_search_func(entries, target, |probe, target| {
+            self.compare_search_entries(probe, target)
         })
+    }
+
+    /// The entry of `t` for `search_union_entries` (`UnionSearchEntry`).
+    pub(crate) fn union_search_entry(&self, t: TypeId) -> UnionSearchEntry {
+        UnionSearchEntry {
+            key: self.union_sort_key(t),
+            t,
+            tie: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Go `CompareTypes(x.t, y.t)` with the entries: the keys, the same
+    /// type, the entries' tie data (sortkey2), else `compare_types`. Each
+    /// early answer has Go's sign, and Go returns at that step with no
+    /// effect.
+    #[inline]
+    fn compare_search_entries(&self, x: &UnionSearchEntry, y: &UnionSearchEntry) -> i32 {
+        if x.key != y.key {
+            return if x.key < y.key { -1 } else { 1 };
+        }
+        if x.t == y.t {
+            return 0;
+        }
+        if let (Some(a), Some(b)) = (self.entry_tie_data(x), self.entry_tie_data(y))
+            && let Some(c) = a.order(b)
+        {
+            debug_assert_eq!(
+                c,
+                self.compare_types(x.t, y.t).signum(),
+                "tie data of {:?} {:?}",
+                x.t,
+                y.t
+            );
+            return c;
+        }
+        self.compare_types(x.t, y.t)
+    }
+
+    /// The tie data of an entry, read at its first tie.
+    #[inline]
+    fn entry_tie_data<'a>(&self, entry: &'a UnionSearchEntry) -> Option<&'a TieData> {
+        entry.tie.get_or_init(|| self.tie_data(entry.t)).as_deref()
+    }
+
+    /// `TieData` of `t` when it is an unnamed intersection of 2 to 254
+    /// members (the key holds the member count only below 255).
+    fn tie_data(&self, t: TypeId) -> Option<Box<TieData>> {
+        let ty = self.ty(t);
+        if !ty.flags.intersects(TypeFlags::INTERSECTION) || type_name_symbol(ty).is_some() {
+            return None;
+        }
+        let members = ty.types();
+        if !(2..255).contains(&members.len()) {
+            return None;
+        }
+        Some(Box::new(TieData {
+            members: [self.tie_member(members[0]), self.tie_member(members[1])],
+        }))
+    }
+
+    /// `TieMember` of `t`.
+    fn tie_member(&self, t: TypeId) -> TieMember {
+        let args = self.ty(t).alias.type_arguments();
+        TieMember {
+            item: self.tie_item(t),
+            alias_len: args.len() as u32,
+            alias_first: args
+                .first()
+                .map_or(TieItem::default(), |&a| self.tie_item(a)),
+        }
+    }
+
+    /// `TieItem` of `t`. The suffix is read from the text that the key's
+    /// value holds: the name of a named type, the value of an unnamed type
+    /// that takes the string literal arm of `compare_types`.
+    fn tie_item(&self, t: TypeId) -> TieItem {
+        let ty = self.ty(t);
+        let name = type_name_symbol(ty);
+        let suffix = if name.is_some() {
+            tie_suffix(&self.sym(name).name)
+        } else if !ty.flags.intersects(
+            TypeFlags::ANY
+                | TypeFlags::UNKNOWN
+                | TypeFlags::STRING
+                | TypeFlags::NUMBER
+                | TypeFlags::BOOLEAN
+                | TypeFlags::BIG_INT
+                | TypeFlags::ES_SYMBOL
+                | TypeFlags::VOID
+                | TypeFlags::UNDEFINED
+                | TypeFlags::NULL
+                | TypeFlags::NEVER
+                | TypeFlags::NON_PRIMITIVE
+                | TypeFlags::OBJECT
+                | TypeFlags::UNION
+                | TypeFlags::INTERSECTION
+                | TypeFlags::ENUM
+                | TypeFlags::ENUM_LITERAL
+                | TypeFlags::UNIQUE_ES_SYMBOL,
+        ) && ty.flags.intersects(TypeFlags::STRING_LITERAL)
+        {
+            tie_suffix(literal_string_value(ty))
+        } else {
+            NO_SUFFIX
+        };
+        TieItem {
+            t,
+            key: self.union_sort_key(t),
+            suffix,
+            name,
+        }
     }
 
     /// Go `slices.BinarySearchFunc(types, t, CompareTypes)`: the index where
@@ -2497,11 +2767,15 @@ type T72 = { x: 1 } | { y: 2 } | ReturnType<typeof f<string>> | ReturnType<typeo
                 sort_stable_func(&mut go, |&a, &b| c.compare_types(a, b));
                 assert_eq!(keyed, go, "round {round}");
                 go.dedup();
-                let pairs = c.union_sort_keys(&go);
+                let entries = c.union_search_entries(&go);
                 for &t in types {
                     let want = binary_search_func(&go[..], t, |&a, &b| c.compare_types(a, b));
-                    let key = c.union_sort_key(t);
-                    assert_eq!(c.search_keyed_types(&pairs, key, t), want, "round {round}");
+                    let target = c.union_search_entry(t);
+                    assert_eq!(
+                        c.search_union_entries(&entries, &target),
+                        want,
+                        "round {round}"
+                    );
                     assert_eq!(c.search_union_types(&go, t), want, "round {round}");
                 }
             }
@@ -2571,5 +2845,190 @@ type U1 = (A | SvelteProgram) & (B | Box<string>) & ({ p: 1 } | SvelteShorthandA
                 assert_eq!(large, go, "n {n}");
             }
         });
+    }
+
+    /// `tie_suffix`: when two texts have equal `go_bytes_prefix` values and
+    /// different suffixes, the suffix order is Go `strings.Compare` order. A
+    /// text with a non-ASCII byte in its first 11 has no suffix.
+    #[test]
+    fn tie_suffix_keeps_go_string_order() {
+        let mut v: Vec<String> = Vec::new();
+        for head in [
+            "abcdefghijk",
+            "abcdefghij",
+            "abc",
+            "",
+            "abcdefghijé",
+            "éabcdefghij",
+        ] {
+            for tail in strings() {
+                v.push(format!("{head}{tail}"));
+            }
+        }
+        let mut decided = 0;
+        for a in &v {
+            for b in &v {
+                let (x, y) = (tie_suffix(a), tie_suffix(b));
+                if go_bytes_prefix(a) != go_bytes_prefix(b)
+                    || x == NO_SUFFIX
+                    || y == NO_SUFFIX
+                    || x == y
+                {
+                    continue;
+                }
+                decided += 1;
+                assert_eq!(x.cmp(&y), compare_go_strings(a, b), "{a:?} {b:?}");
+            }
+        }
+        assert!(decided > 500, "{decided}");
+        assert_eq!(tie_suffix("abcdefghijé1"), NO_SUFFIX);
+        assert_eq!(tie_suffix("abcdefghijk"), 0);
+        assert_eq!(tie_suffix("abcdefghijkl"), u64::from(b'l') << 56);
+    }
+
+    /// Intersections like the ones that the named-union loop of vue-macros
+    /// and eslint-plugin-svelte searches: string literals crossed with a
+    /// deferred conditional alias (`Exclude`) whose first arguments share 11
+    /// or more bytes; interfaces and string literals that share 11 bytes;
+    /// names that are not ASCII in their first 11 bytes; one name in two
+    /// namespaces; instantiation expression types.
+    const TIE_SOURCE: &str = r#"
+type Props = "scrollPaddingInline" | "scrollPaddingInlineEnd" | "positionTry" | "zoom" | "boxSizing" | "borderBlockStartColor" | "borderBlockStart";
+type Pseudo = "::-webkit-scrollbar-button" | "::-webkit-scrollbar-track" | "::cue";
+type V0<X> = Pseudo & Exclude<Props, X>;
+type V1 = ("abcdefghijklmnop1" | "abcdefghijklmnop2" | "abc") & (SvelteShorthandAttribute | SvelteShorthandDirective | { q: 1 });
+interface Éabcdefghijk1 { e: 1 }
+interface Éabcdefghijk2 { e: 2 }
+type V2 = (Éabcdefghijk1 | Éabcdefghijk2) & (A | B);
+type V3 = (N1.Same | N2.Same) & (A | B);
+type V4 = (typeof f<string> | typeof f<number>) & (A | B);
+"#;
+
+    /// The types of the aliases of `source` and the members of the union
+    /// aliases, sorted by id, without repeats.
+    fn tie_types(c: &Checker, aliases: &[TypeId]) -> Vec<TypeId> {
+        let mut types = aliases.to_vec();
+        for &t in aliases {
+            if c.ty(t).flags.intersects(TypeFlags::UNION) {
+                types.extend_from_slice(c.ty(t).types());
+            }
+        }
+        types.sort_unstable();
+        types.dedup();
+        types
+    }
+
+    /// `TieData::order` never contradicts `compare_types`, reads no symbol
+    /// id, and each of its rules decides pairs of `TIE_SOURCE`: the key of
+    /// the first or second member, their name or value suffix, and the first
+    /// alias argument of a member with the same name symbol.
+    #[test]
+    fn tie_data_agrees_with_compare_types() {
+        with_alias_types(
+            &format!("{SOURCE}{LARGE_SOURCE}{TIE_SOURCE}"),
+            |c, aliases| {
+                let types = tie_types(c, aliases);
+                let entries = c.union_search_entries(&types);
+                // All answers before any `compare_types` call.
+                let ids = crate::ast::next_ids();
+                let mut answers = Vec::new();
+                for x in &entries {
+                    for y in &entries {
+                        if x.t == y.t || x.key != y.key {
+                            continue;
+                        }
+                        if let (Some(a), Some(b)) = (c.entry_tie_data(x), c.entry_tie_data(y)) {
+                            // The member pair that decides, and the rule.
+                            let j = usize::from(a.members[0].item.t == b.members[0].item.t);
+                            let (m, n) = (&a.members[j], &b.members[j]);
+                            let rule = if m.item.key != n.item.key {
+                                "key"
+                            } else if m.item.name == n.item.name && m.item.name.is_some() {
+                                "alias"
+                            } else {
+                                "suffix"
+                            };
+                            answers.push((x.t, y.t, a.order(b), j, rule));
+                        }
+                    }
+                }
+                assert_eq!(crate::ast::next_ids(), ids, "tie data read a symbol id");
+                let mut decided: std::collections::BTreeMap<(usize, &str), usize> =
+                    std::collections::BTreeMap::new();
+                let mut ties = 0;
+                for (a, b, order, j, rule) in answers {
+                    match order {
+                        Some(o) => {
+                            assert_eq!(o, c.compare_types(a, b).signum(), "{a:?} {b:?} {rule}");
+                            *decided.entry((j, rule)).or_default() += 1;
+                        }
+                        None => ties += 1,
+                    }
+                }
+                let by_rule = |rule: &str| -> usize {
+                    decided
+                        .iter()
+                        .filter(|((_, r), _)| *r == rule)
+                        .map(|(_, n)| n)
+                        .sum()
+                };
+                assert!(
+                    by_rule("key") > 100 && by_rule("suffix") > 20 && by_rule("alias") > 20,
+                    "{decided:?}"
+                );
+                assert!(
+                    decided.keys().any(|&(j, _)| j == 0) && decided.keys().any(|&(j, _)| j == 1),
+                    "{decided:?}"
+                );
+                assert!(ties > 0, "{ties}");
+            },
+        );
+    }
+
+    /// The entry search makes Go's comparisons: on two fresh programs (each
+    /// with its own checker), searches of every type in every union of the
+    /// source give the same answers with the entries as with Go's search
+    /// (`gostd` with `compare_types`), and the symbols get the same lazy ids
+    /// in the same order.
+    #[test]
+    fn entry_search_keeps_go_answers_and_symbol_ids() {
+        let run = |entries_search: bool| {
+            with_alias_types(
+                &format!("{SOURCE}{LARGE_SOURCE}{TIE_SOURCE}"),
+                move |c, aliases| {
+                    let start = crate::ast::next_ids().1;
+                    let types = tie_types(c, aliases);
+                    let mut answers = Vec::new();
+                    for &u in &types {
+                        if !c.ty(u).flags.intersects(TypeFlags::UNION) {
+                            continue;
+                        }
+                        let members = c.ty(u).types().to_vec();
+                        let entries = c.union_search_entries(&members);
+                        for &t in &types {
+                            answers.push(if entries_search {
+                                c.search_union_entries(&entries, &c.union_search_entry(t))
+                            } else {
+                                binary_search_func(&members[..], t, |&a, &b| c.compare_types(a, b))
+                            });
+                        }
+                    }
+                    let searched = crate::ast::next_ids().1 - start;
+                    // The ids of the types' symbols, read in one order after the
+                    // searches: an id given in a search is below the first id
+                    // given here.
+                    let ids: Vec<u64> = types
+                        .iter()
+                        .flat_map(|&t| [c.ty(t).symbol, type_name_symbol(c.ty(t))])
+                        .filter(|s| s.is_some())
+                        .map(|s| get_symbol_id(&c.symbols, s).saturating_sub(start))
+                        .collect();
+                    (answers, searched, ids)
+                },
+            )
+        };
+        let (go, entries) = (run(false), run(true));
+        assert!(go.0.len() > 1000, "{}", go.0.len());
+        assert_eq!(entries, go);
     }
 }
