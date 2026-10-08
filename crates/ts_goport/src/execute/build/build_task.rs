@@ -587,10 +587,6 @@ struct PendingCompile {
     deferred_writes: Option<DeferredWrites>,
     // `incremental_program.start_emit` ran (see `compile_and_emit_start`).
     emit_started: bool,
-    // `start_emit_after_check` ran.
-    check_ended: bool,
-    // The panic of `start_emit_after_check`, for `compile_and_emit_finish`.
-    panic_after_check: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl BuildTask {
@@ -806,50 +802,16 @@ impl BuildTask {
         false
     }
 
-    /// PORT: not in Go (perf). After `build_project_start` returned true,
-    /// or `start_emit_after_check` returned true: sends values that `signal`
-    /// makes behind the check and emit jobs that the task's program started
-    /// (`program::send_checker_barrier`), and returns how many there are.
-    /// When all have dropped, those jobs are done. 0 when the program has
-    /// no checker pool, so no job runs (no check and no early emit started).
+    /// PORT: not in Go (perf). After `build_project_start` returned true:
+    /// sends values that `signal` makes behind the check and emit jobs that
+    /// the task's program started (`program::send_checker_barrier`), and
+    /// returns how many there are. When all have dropped, those jobs are
+    /// done. 0 when the program has no checker pool, so no job runs (no
+    /// check and no early emit started).
     pub fn notify_when_compiled<T: Send + 'static>(&self, signal: impl Fn() -> T) -> usize {
         let compile = self.compile.as_ref().expect("compile_and_emit_start ran");
         let _scope = crate::core::enter_program(Some(compile.program));
         crate::program::send_checker_barrier(signal)
-    }
-
-    /// PORT: not in Go (perf). The orchestrator calls it once when the
-    /// check and emit that `compile_and_emit_start` started have ended,
-    /// before `build_project_finish`. A `noEmitOnError` task has no early
-    /// emit there, because the emit needs every diagnostic first. Its Go
-    /// builder emits right after its check, and writes when that emit ends.
-    /// So this starts the emit now, with its writes kept for
-    /// `compile_and_emit_finish` (`IncrementalProgram::start_emit_after_check`
-    /// inside `buffer_early_emit_writes`). True when it started: then the
-    /// orchestrator waits for it (`notify_when_compiled`) before it finishes
-    /// the task. Outside tests only, as the early emit.
-    pub fn start_emit_after_check(&mut self) -> bool {
-        let compile = self.compile.as_mut().expect("compile_and_emit_start ran");
-        if !compile.emit_started || std::mem::replace(&mut compile.check_ended, true) {
-            return false;
-        }
-        let _scope = crate::core::enter_program(Some(compile.program));
-        let options = EmitOptions {
-            write_file: Some(compile.write_file.clone()),
-            ..EmitOptions::default()
-        };
-        let incremental_program = &compile.incremental_program;
-        let mut started = false;
-        // A panic here is a panic of the task's emit: the finish goes on
-        // with it (see `build_project_finish`).
-        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            buffer_early_emit_writes(|| {
-                started = incremental_program.start_emit_after_check(options);
-            });
-        })) {
-            compile.panic_after_check = Some(payload);
-        }
-        started
     }
 
     // Go: build/buildtask.go:145 (*BuildTask).buildProject, from the emit
@@ -1095,17 +1057,15 @@ impl BuildTask {
             // while other tasks make their programs and emit. Here the
             // check starts on this program's checker threads now, and so
             // does the emit, behind the check, as in `tsc -p` (when the
-            // rules of `Program::start_emit` allow it; a `noEmitOnError`
-            // task starts it when its check has ended,
-            // `start_emit_after_check`; a project that is not
+            // rules of `Program::start_emit` allow it; a project that is not
             // `incremental` or `composite` emits its whole program; else the
-            // emit runs in `compile_and_emit_finish`). A task that checks nothing
-            // (cached semantic diagnostics, `noCheck`, or syntactic, program
-            // or global diagnostics) starts its emit there too, so it ends
-            // when its emit ends, as its Go goroutine does. The emit keeps
-            // its writes until `compile_and_emit_finish`, which writes them
-            // first (`buffer_early_emit_writes`). So the task writes when
-            // the orchestrator finishes it (in the order the checks and
+            // emit runs in `compile_and_emit_finish`). A task that checks
+            // nothing (cached semantic diagnostics, `noCheck`, or syntactic,
+            // program or global diagnostics) starts its emit there too, so it
+            // ends when its emit ends, as its Go goroutine does. The emit
+            // keeps its writes until `compile_and_emit_finish`, which writes
+            // them first (`buffer_early_emit_writes`). So the task writes
+            // when the orchestrator finishes it (in the order the checks and
             // emits end, or in build order when tasks share outputs, see
             // `build_all_tasks`), and a task that runs beside others reads
             // the file system before they write. The statistics' check time
@@ -1137,8 +1097,6 @@ impl BuildTask {
             written_build_info,
             deferred_writes,
             emit_started,
-            check_ended: false,
-            panic_after_check: None,
         });
         true
     }
@@ -1158,12 +1116,7 @@ impl BuildTask {
             written_build_info,
             deferred_writes,
             emit_started,
-            check_ended: _,
-            panic_after_check,
         } = self.compile.take().expect("compile_and_emit_start ran");
-        if let Some(payload) = panic_after_check {
-            std::panic::resume_unwind(payload);
-        }
         let sys = orchestrator.sys();
         let host = orchestrator.host();
         let resolved = self.resolved().clone();

@@ -23,9 +23,8 @@
 //! started tasks work at the same time, as the Go goroutines do. Each
 //! checker emits when its check ends (a task that checks nothing, as with
 //! cached semantic diagnostics, `noCheck` or a syntax error, emits at
-//! once; a `noEmitOnError` task emits when its whole check has ended,
-//! `BuildTask::start_emit_after_check`; a task without the incremental
-//! state emits its whole program), and the emit keeps its writes in
+//! once; a task without the incremental state emits its whole program),
+//! and the emit keeps its writes in
 //! memory. The started tasks write their outputs one at a time
 //! (`build_project_finish`), in the order their check and emit end, as each
 //! Go builder writes when its own task ends. PORT (determinism): when tasks
@@ -1041,19 +1040,6 @@ impl Orchestrator {
             };
             let task = self.get_task(&paths[index]);
             let mut task = task.borrow_mut();
-            // A `noEmitOnError` task starts its emit now that its check has
-            // ended, and finishes when that emit ends, as its Go builder
-            // writes (`BuildTask::start_emit_after_check`).
-            if task.start_emit_after_check() {
-                signals[index] = task.notify_when_compiled(|| ReadySignal {
-                    index,
-                    ready: ready.clone(),
-                });
-                if signals[index] == 0 {
-                    compiled.push_back(index);
-                }
-                continue;
-            }
             task.build_project_finish(self, &paths[index]);
             states[index] = State::Done;
             self.task_built(&mut task);

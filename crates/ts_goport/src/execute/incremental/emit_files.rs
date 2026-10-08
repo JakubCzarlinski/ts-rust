@@ -698,29 +698,19 @@ pub(crate) fn buffer_early_emit_writes(start: impl FnOnce()) {
 /// The most threads that `flush_writes` writes on.
 const MAX_FLUSH_THREADS: usize = 8;
 
-/// Writes the `writes` of an early emit of the `files` (their paths, in the
-/// order of the emit) with `write_file` (`write_output`). Go writes each
-/// file's outputs on the goroutine that emits it: the source map, then the
-/// JS, then the declaration map, then the declaration. Here the files'
-/// outputs go in that order, the files in `files` order, on up to
-/// `MAX_FLUSH_THREADS` threads. False when a write failed; the later writes
-/// are left out.
-fn flush_writes<'a>(
-    mut writes: Vec<BufferedWrite>,
-    files: impl Iterator<Item = &'a Path>,
-    write_file: Option<&WriteFile>,
-) -> bool {
-    let order: FxHashMap<&Path, usize> = files
-        .enumerate()
-        .map(|(index, path)| (path, index))
-        .collect();
-    // A file's JS and declaration can emit on two threads, each in order.
-    let key = |write: &BufferedWrite| {
-        let output = write.file_name.as_str();
-        let declaration = is_declaration_file_name(output.strip_suffix(".map").unwrap_or(output));
-        (order.get(&write.source).copied(), declaration)
-    };
-    crate::gostd::slices::stable_sort_by(&mut writes, |a, b| key(a).cmp(&key(b)));
+/// Writes the `writes` of an early emit with `write_file` (`write_output`),
+/// in the order the emit made them, on up to `MAX_FLUSH_THREADS` threads.
+/// Go writes each file's outputs on the goroutine that emits it, when that
+/// emit ends: the source map, then the JS, then the declaration map, then
+/// the declaration. The emit jobs add their writes to the buffer in that
+/// order (a file's JS and declaration can emit on two threads, each in
+/// order), and the caller writes the build info after this, as Go does. So
+/// the outputs that Go writes first are written first here too. Their
+/// modified times still come closer together than Go's, whose writes spread
+/// over the emit (the oldest output that `--verbose` names for a project
+/// that is not `incremental` can differ, PORTING.md K2). False when a
+/// write failed; the later writes are left out.
+fn flush_writes(mut writes: Vec<BufferedWrite>, write_file: Option<&WriteFile>) -> bool {
     let files: Vec<&mut [BufferedWrite]> =
         writes.chunk_by_mut(|a, b| a.source == b.source).collect();
     let threads = MAX_FLUSH_THREADS
@@ -971,18 +961,7 @@ pub(crate) fn finish_emit_files(
     let mut results = started.batch.wait();
     if let Some(buffer) = started.buffer {
         let writes = std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
-        let written = match &started.queued {
-            Some(queued) => flush_writes(
-                writes,
-                queued.iter().map(|(path, ..)| path),
-                options.write_file.as_ref(),
-            ),
-            None => {
-                let files: Vec<Path> = source_files().into_iter().map(path_of).collect();
-                flush_writes(writes, files.iter(), options.write_file.as_ref())
-            }
-        };
-        if !written {
+        if !flush_writes(writes, options.write_file.as_ref()) {
             // The callbacks of the buffered emit filled `shared`.
             *handler.shared.lock().expect("emit files lock") = EmitFilesShared::default();
             results = match &started.queued {

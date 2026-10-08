@@ -147,22 +147,17 @@ pub fn emit_file_results(options: EmitOptions) -> Vec<EmitResult> {
 /// and returns. `wait` gives the result of `emit_file_results`. `tsc -b`
 /// starts the emit of a program without the incremental state this way
 /// (`execute::incremental::emit_files::start_emit_files`), behind its
-/// check, as `start_emit_batch_with` does for the incremental emit. With
-/// `noEmitOnError` or `noEmit` it emits before it returns, as
-/// `start_emit_batch_with` does. Not with `--singleThreaded` (Go runs the
+/// check, as `start_emit_batch_with` does for the incremental emit. Only
+/// when the early emit rules allow it (`early_emit_options_allow`): not
+/// with `noEmit` or `noEmitOnError` (then `handle_no_emit_options` would
+/// run first, see `emit_results_with`), `--singleThreaded` (Go runs the
 /// emits last-queued-first, `run_emit_jobs`) or a trace (its emit event
-/// ends with the emit): the early emit rules refuse both
-/// (`late_emit_options_allow`).
+/// ends with the emit).
 pub fn start_emit_file_results(emit_options: EmitOptions) -> PendingEmitBatch {
     debug_assert!(
-        !single_threaded() && crate::tracing::get().is_none(),
-        "start_emit_file_results with --singleThreaded or a trace"
+        early_emit_options_allow(),
+        "start_emit_file_results: the early emit rules refuse it"
     );
-    if options().no_emit_on_error.is_true() || options().no_emit.is_true() {
-        return PendingEmitBatch(PendingBatch::Done(emit_file_results(emit_options)));
-    }
-    // Without `noEmit` and `noEmitOnError`, `handle_no_emit_options`
-    // returns None (see `emit_results_with`).
     let target = EmitterOptions::of(&emit_options);
     let source_files = get_source_files_to_emit(
         emit_options.target_source_files.as_deref(),
@@ -459,28 +454,20 @@ pub fn emit_can_start_with_check() -> bool {
 }
 
 /// The option part of `emit_can_start_with_check`. False with `noEmit`,
-/// `noEmitOnError` (the emit needs every diagnostic first),
-/// `--singleThreaded`, a trace, `preserveSymlinks` (F4), `outFile`, and
-/// `GOPORT_EARLY_EMIT=0`. Then `tsc -p` keeps Go's order exactly: it does
+/// `--listFilesOnly` (Go emits nothing with either), `noEmitOnError` (the
+/// emit needs every diagnostic first), `--singleThreaded`, a trace,
+/// `preserveSymlinks` (F4), `outFile`, and `GOPORT_EARLY_EMIT=0`. Then `tsc -p` keeps Go's order exactly: it does
 /// not start the check early either. `tsc -b` starts each check early in
 /// any case. When these rules and `check_cannot_see_outputs` allow it, it
 /// also starts the emit behind the check and keeps the writes until the
 /// task finishes (`buffer_early_emit_writes`); else it emits in Go's order.
 #[must_use]
 pub fn early_emit_options_allow() -> bool {
-    !options().no_emit_on_error.is_true() && late_emit_options_allow()
-}
-
-/// PORT: not in Go (perf). `early_emit_options_allow` without its
-/// `noEmitOnError` rule. `tsc -b` starts the emit of a `noEmitOnError` task
-/// when its check has ended (`Program::start_emit_after_check` in
-/// execute/incremental/program.rs), where Go's `HandleNoEmitOptions` has all
-/// the diagnostics it needs; the other rules still hold there.
-#[must_use]
-pub fn late_emit_options_allow() -> bool {
     let options = options();
     early_emit_enabled()
         && !options.no_emit.is_true()
+        && !options.list_files_only.is_true()
+        && !options.no_emit_on_error.is_true()
         && !single_threaded()
         && crate::tracing::get().is_none()
         && !options.preserve_symlinks.is_true()

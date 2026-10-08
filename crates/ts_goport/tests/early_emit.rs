@@ -25,9 +25,11 @@
 //! `noCheck`, or a syntax error) must emit on its checker threads too, so it
 //! finishes when its own emit ends, as a Go builder does. The global
 //! diagnostics test makes its own project there too. So do the k2gaps1
-//! tests: a `noEmitOnError` task, and a task without the incremental state
-//! (a project that is not `incremental` or `composite`), writes when its
-//! emit ends, and `tsc -p --listFilesOnly` emits nothing.
+//! tests: a task without the incremental state (a project that is not
+//! `incremental` or `composite`) writes when its emit ends, a task finishes
+//! only when its emit pool and d.ts twin jobs have ended, `tsc -p
+//! --listFilesOnly` emits nothing, and `tsc -b` of two small projects runs
+//! without a panic (also in the dev profile).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -268,84 +270,12 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
     }
 }
 
-/// k2gaps1 (G3): as `build_emit_only_task_finishes_when_its_emit_ends`,
-/// with `noEmitOnError` in p1. Go's p1 checks (every file cached), reads
-/// the diagnostics again in `HandleNoEmitOptions` with the declaration
-/// diagnostics pass, then emits, and writes when that emit ends. So p2
-/// ends first: exit 0, no output (Go N gives that). The port starts p1's
-/// emit when its check has ended (`BuildTask::start_emit_after_check`).
-/// Before, p1 finished when its check ended and emitted then, so its
-/// builder took p3 before p2 wrote (TS2305).
-#[test]
-fn build_no_emit_on_error_task_finishes_when_its_emit_ends() {
-    assert_eq!(
-        build_emit_only_solution(r#", "noEmitOnError": true"#, &[], 0),
-        (Some(0), String::new()),
-        "p2 finishes before p1, so p3 loads after p2 wrote v2"
-    );
-}
-
-/// k2gaps1 (G3): the other way round. p1 is the big `noEmitOnError` writer
-/// (3,000 modules), whose new output adds `v2`; p2 only emits a smaller
-/// file (600 modules); p3 reads `v2` from p1's output without a reference
-/// (`--builders 2`). Go's p1 writes when its emit ends, after p2 ended and
-/// its builder took p3, so p3 loads before p1 writes: TS2305 (Go N gives
-/// that, also with 16 copies at once). Before, the port emitted p1 and
-/// wrote its outputs as soon as p1's check ended, so p3 saw `v2` (exit 0).
-#[test]
-fn build_no_emit_on_error_writer_writes_when_its_emit_ends() {
-    let solution = Solution::new();
-    solution.write("tsconfig.json", SOLUTION);
-    solution.write(
-        "p1/tsconfig.json",
-        &project_config(r#", "noEmitOnError": true"#),
-    );
-    for project in ["p2", "p3"] {
-        solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
-    }
-    solution.write(
-        "p1/src/index.ts",
-        &(big_module("v1", 3000) + "export const v1 = 1;\n"),
-    );
-    solution.write("p2/src/index.ts", "export const s = 1;\n");
-    solution.write("p2/src/mid.ts", &big_module("m1", 600));
-    solution.write(
-        "p3/src/a.ts",
-        "import { v1, v2 } from \"../../p1/dist/index\";\nexport const a = v1 + v2;\n",
-    );
-    solution.build(&["tsconfig.json"]);
-    solution.write(
-        "p1/src/index.ts",
-        &(big_module("v2", 3000) + "export const v1 = 1;\nexport const v2 = 2;\n"),
-    );
-    solution.write(
-        "p2/src/index.ts",
-        "export const s = 1;\nexport const t = 2;\n",
-    );
-    solution.write("p2/src/mid.ts", &big_module("m2", 600));
-    for project in ["p1", "p2"] {
-        assert_eq!(
-            solution.build(&[project, "--noEmit"]),
-            (Some(0), String::new()),
-            "tsc -b {project} --noEmit"
-        );
-    }
-    assert_eq!(
-        solution.build(&["tsconfig.json", "--builders", "2"]),
-        (
-            Some(2),
-            "p3/src/a.ts(1,14): error TS2305: Module '\"../../p1/dist/index\"' has no exported member 'v2'.\n"
-                .to_owned()
-        ),
-        "p2 finishes first, so p3 loads before p1 wrote v2"
-    );
-    solution.remove();
-}
-
 /// k2gaps1 (M6): `tsc -p --listFilesOnly` on an incremental project lists
 /// the program files, exits 0 and writes nothing (Go N gives that). The
-/// program reaches the early emit (`start_check_and_emit`), whose rules
-/// must refuse `--listFilesOnly`.
+/// early emit rules refuse `--listFilesOnly` (`early_emit_options_allow`;
+/// `rules_keep_the_barrier_when_a_check_could_see_the_outputs` checks the
+/// rule). An emit that started anyway would write only when it ended
+/// before the process exits.
 #[test]
 fn tsc_p_list_files_only_writes_no_output() {
     let root = scratch_dir();
@@ -473,6 +403,118 @@ fn build_non_incremental_writer_writes_when_its_emit_ends() {
     solution.remove();
 }
 
+/// k2gaps1 (C1): five composite projects with the default builders. p1 is
+/// big and `noCheck`, p2 big with a syntax error, p3 big with a missing
+/// root file (TS6053): each of them only emits. p4 is a small writer
+/// whose new output adds `v2` (its check is cached), and p5 reads `v2`
+/// from p4's output without a reference. Go's p4 ends long before the big
+/// emits, its builder takes p5, and p5 loads after p4 wrote: only the
+/// errors of p2 and p3 (Go N gives that). With the emit pool on, the JS
+/// parts of the big files run on the pool and their d.ts parts on the d.ts
+/// twins, after the checker jobs have ended. A task must finish only when
+/// those jobs have ended too (`program::send_checker_barrier`). Without
+/// that, p1 to p3 finished first, and p5 loaded before p4 wrote (TS2305).
+/// `GOPORT_EMIT_THREADS=2` turns the pool on, and `GOMAXPROCS=4` gives the
+/// same 4 checkers on any host. Release builds only: in the dev profile the
+/// three big loads on the one loading thread take longer than p1's emit,
+/// so p1 ends first there (PORTING.md, K2 gaps, G2), and p5 gives TS2305.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "timing: release builds only")]
+fn build_task_finishes_when_its_emit_pool_and_twins_end() {
+    let solution = Solution::new();
+    solution.write(
+        "tsconfig.json",
+        r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}, {"path": "./p3"}, {"path": "./p4"}, {"path": "./p5"}]}"#,
+    );
+    solution.write("p1/tsconfig.json", &project_config(NO_CHECK));
+    solution.write(
+        "p3/tsconfig.json",
+        r#"{"compilerOptions": {"composite": true, "strict": true, "target": "es2022",
+  "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
+  "skipLibCheck": true}, "files": ["src/index.ts", "src/missing.ts"]}"#,
+    );
+    for project in ["p2", "p4", "p5"] {
+        solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
+    }
+    for project in ["p1", "p2", "p3"] {
+        solution.write(&format!("{project}/src/index.ts"), &big_module("v1", 1500));
+    }
+    solution.write("p2/src/bad.ts", "export const bad = ;\n");
+    solution.write("p4/src/index.ts", "export const v1 = 1;\n");
+    solution.write(
+        "p5/src/a.ts",
+        "import { v1, v2 } from \"../../p4/dist/index\";\nexport const a = v1 + v2;\n",
+    );
+    let pool = [("GOPORT_EMIT_THREADS", "2"), ("GOMAXPROCS", "4")];
+    solution.build_with(&["tsconfig.json"], &pool);
+    for project in ["p1", "p2", "p3"] {
+        solution.write(&format!("{project}/src/index.ts"), &big_module("v2", 1500));
+    }
+    solution.write(
+        "p4/src/index.ts",
+        "export const v1 = 1;\nexport const v2 = 2;\n",
+    );
+    assert_eq!(
+        solution.build_with(&["p4", "--noEmit"], &pool),
+        (Some(0), String::new()),
+        "tsc -b p4 --noEmit"
+    );
+    assert_eq!(
+        solution.build_with(&["tsconfig.json"], &pool),
+        (
+            Some(2),
+            format!(
+                "p2/src/bad.ts(1,20): error TS1109: Expression expected.\n\
+                 error TS6053: File '{}/p3/src/missing.ts' not found.\n  \
+                 The file is in the program because:\n    \
+                 Part of 'files' list in tsconfig.json\n",
+                solution.root.display()
+            )
+        ),
+        "p4 finishes before p1 to p3, so p5 loads after p4 wrote v2"
+    );
+    solution.remove();
+}
+
+/// k2gaps1: `tsc -b` of two small composite projects (a cold build, then
+/// an edit) exits 0 and prints nothing. Run it in the dev profile too
+/// (`cargo test -p ts_goport --test early_emit`): there the
+/// `debug_assert!`s of the early emit run, and the release build of the
+/// protected tests leaves them out. In round 1 of k2gaps1 one of them
+/// fired in every dev-profile `tsc -b`.
+#[test]
+fn build_two_composite_projects_without_a_panic() {
+    let solution = Solution::new();
+    solution.write(
+        "tsconfig.json",
+        r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}]}"#,
+    );
+    solution.write("p1/tsconfig.json", &project_config(""));
+    solution.write(
+        "p2/tsconfig.json",
+        r#"{"compilerOptions": {"composite": true, "strict": true, "target": "es2022",
+  "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
+  "skipLibCheck": true}, "include": ["src"], "references": [{"path": "../p1"}]}"#,
+    );
+    solution.write("p1/src/index.ts", "export const v1 = 1;\n");
+    solution.write(
+        "p2/src/a.ts",
+        "import { v1 } from \"../../p1/src/index\";\nexport const a = v1;\n",
+    );
+    assert_eq!(
+        solution.build(&["tsconfig.json"]),
+        (Some(0), String::new()),
+        "the cold build"
+    );
+    solution.write("p1/src/index.ts", "export const v1 = 2;\n");
+    assert_eq!(
+        solution.build(&["tsconfig.json"]),
+        (Some(0), String::new()),
+        "the build after an edit"
+    );
+    solution.remove();
+}
+
 /// The `noCheck` option for `project_config` and `non_incremental_config`.
 const NO_CHECK: &str = r#", "noCheck": true"#;
 
@@ -503,12 +545,18 @@ impl Solution {
     /// Runs `tsgo -b` with `args` and `--pretty false`, and returns its exit
     /// code and stdout.
     fn build(&self, args: &[&str]) -> (Option<i32>, String) {
+        self.build_with(args, &[])
+    }
+
+    /// `build` with the environment variables `env` added.
+    fn build_with(&self, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
         let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
             .current_dir(&self.root)
             .arg("-b")
             .args(args)
             .args(["--pretty", "false"])
             .env("GOPORT_EARLY_EMIT", "1")
+            .envs(env.iter().copied())
             .output()
             .expect("run tsgo -b");
         (
@@ -647,6 +695,10 @@ fn rules_keep_the_barrier_when_a_check_could_see_the_outputs() {
     }));
     assert!(!can_start(|options| {
         options.single_threaded = Tristate::True;
+    }));
+    // k2gaps1 (M6): Go emits nothing with `--listFilesOnly`.
+    assert!(!can_start(|options| {
+        options.list_files_only = Tristate::True;
     }));
 }
 
