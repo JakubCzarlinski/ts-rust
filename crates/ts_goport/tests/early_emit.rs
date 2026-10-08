@@ -26,10 +26,11 @@
 //! finishes when its own emit ends, as a Go builder does. The global
 //! diagnostics test makes its own project there too. So do the k2gaps1
 //! tests: a task without the incremental state (a project that is not
-//! `incremental` or `composite`) writes when its emit ends, a task finishes
-//! only when its emit pool and d.ts twin jobs have ended, `tsc -p
+//! `incremental` or `composite`) writes when its emit ends, `tsc -p
 //! --listFilesOnly` emits nothing, and `tsc -b` of two small projects runs
-//! without a panic (also in the dev profile).
+//! without a panic (also in the dev profile). The barrier test loads the
+//! fixture and checks that `send_checker_barrier` waits for the emit pool
+//! and the d.ts twins.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -403,77 +404,96 @@ fn build_non_incremental_writer_writes_when_its_emit_ends() {
     solution.remove();
 }
 
-/// k2gaps1 (C1): five composite projects with the default builders. p1 is
-/// big and `noCheck`, p2 big with a syntax error, p3 big with a missing
-/// root file (TS6053): each of them only emits. p4 is a small writer
-/// whose new output adds `v2` (its check is cached), and p5 reads `v2`
-/// from p4's output without a reference. Go's p4 ends long before the big
-/// emits, its builder takes p5, and p5 loads after p4 wrote: only the
-/// errors of p2 and p3 (Go N gives that). With the emit pool on, the JS
-/// parts of the big files run on the pool and their d.ts parts on the d.ts
-/// twins, after the checker jobs have ended. A task must finish only when
-/// those jobs have ended too (`program::send_checker_barrier`). Without
-/// that, p1 to p3 finished first, and p5 loaded before p4 wrote (TS2305).
-/// `GOPORT_EMIT_THREADS=2` turns the pool on, and `GOMAXPROCS=4` gives the
-/// same 4 checkers on any host. Release builds only: in the dev profile the
-/// three big loads on the one loading thread take longer than p1's emit,
-/// so p1 ends first there (PORTING.md, K2 gaps, G2), and p5 gives TS2305.
+/// k2gaps1 (C1): `program::send_checker_barrier` makes one value per
+/// checker thread and one for the emit pool, and each drops only when the
+/// jobs sent before have ended: the checker thread's own jobs, the jobs of
+/// its d.ts twin (the d.ts prints, which wait for their JS parts on the
+/// pool) and the emit pool jobs. `tsc -b` finishes a task when all its
+/// values have dropped (`BuildTask::notify_when_compiled`), so a task with
+/// a long emit on the pool or a twin finishes when that emit ends, as its
+/// Go builder does. Here one twin job and one pool job wait on a gate, so
+/// two values must stay until their gates open. `send_emit_pool_jobs` and
+/// `send_dts_twin_job` make the pool and the twin at any core count.
 #[test]
-#[cfg_attr(debug_assertions, ignore = "timing: release builds only")]
-fn build_task_finishes_when_its_emit_pool_and_twins_end() {
-    let solution = Solution::new();
-    solution.write(
-        "tsconfig.json",
-        r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}, {"path": "./p3"}, {"path": "./p4"}, {"path": "./p5"}]}"#,
-    );
-    solution.write("p1/tsconfig.json", &project_config(NO_CHECK));
-    solution.write(
-        "p3/tsconfig.json",
-        r#"{"compilerOptions": {"composite": true, "strict": true, "target": "es2022",
-  "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
-  "skipLibCheck": true}, "files": ["src/index.ts", "src/missing.ts"]}"#,
-    );
-    for project in ["p2", "p4", "p5"] {
-        solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
+fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
+    use std::sync::mpsc::{Sender, channel};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+    use ts_goport::program::{
+        run_on_checker_threads_for_files, send_checker_barrier, send_dts_twin_job,
+        send_emit_pool_jobs, source_files,
+    };
+
+    /// A job waits in `pass` until `open` runs.
+    #[derive(Clone, Default)]
+    struct Gate(Arc<(Mutex<bool>, Condvar)>);
+    impl Gate {
+        fn pass(&self) {
+            let (open, changed) = &*self.0;
+            let mut open = open.lock().expect("gate lock");
+            while !*open {
+                open = changed.wait(open).expect("gate lock");
+            }
+        }
+        fn open(&self) {
+            *self.0.0.lock().expect("gate lock") = true;
+            self.0.1.notify_all();
+        }
     }
-    for project in ["p1", "p2", "p3"] {
-        solution.write(&format!("{project}/src/index.ts"), &big_module("v1", 1500));
+    /// Sends one `()` when the barrier drops it.
+    struct Dropped(Sender<()>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
     }
-    solution.write("p2/src/bad.ts", "export const bad = ;\n");
-    solution.write("p4/src/index.ts", "export const v1 = 1;\n");
-    solution.write(
-        "p5/src/a.ts",
-        "import { v1, v2 } from \"../../p4/dist/index\";\nexport const a = v1 + v2;\n",
-    );
-    let pool = [("GOPORT_EMIT_THREADS", "2"), ("GOMAXPROCS", "4")];
-    solution.build_with(&["tsconfig.json"], &pool);
-    for project in ["p1", "p2", "p3"] {
-        solution.write(&format!("{project}/src/index.ts"), &big_module("v2", 1500));
+    /// The values that drop within `wait`.
+    fn dropped(receiver: &std::sync::mpsc::Receiver<()>, wait: Duration) -> usize {
+        std::iter::from_fn(|| receiver.recv_timeout(wait).ok()).count()
     }
-    solution.write(
-        "p4/src/index.ts",
-        "export const v1 = 1;\nexport const v2 = 2;\n",
-    );
-    assert_eq!(
-        solution.build_with(&["p4", "--noEmit"], &pool),
-        (Some(0), String::new()),
-        "tsc -b p4 --noEmit"
-    );
-    assert_eq!(
-        solution.build_with(&["tsconfig.json"], &pool),
-        (
-            Some(2),
-            format!(
-                "p2/src/bad.ts(1,20): error TS1109: Expression expected.\n\
-                 error TS6053: File '{}/p3/src/missing.ts' not found.\n  \
-                 The file is in the program because:\n    \
-                 Part of 'files' list in tsconfig.json\n",
-                solution.root.display()
-            )
-        ),
-        "p4 finishes before p1 to p3, so p5 loads after p4 wrote v2"
-    );
-    solution.remove();
+
+    let program = try_load_version(CONFIG, |_| {})
+        .unwrap_or_else(|error| panic!("cannot load {CONFIG}: {error}"));
+    {
+        let _scope = enter_program(Some(program));
+        let twin_gate = Gate::default();
+        let pool_gate = Gate::default();
+        let file = *source_files().last().expect("a program file");
+        let gate = twin_gate.clone();
+        let twin_jobs = run_on_checker_threads_for_files(&[file], move |_| {
+            let gate = gate.clone();
+            send_dts_twin_job(move || gate.pass())
+        });
+        let gate = pool_gate.clone();
+        let pool_jobs = send_emit_pool_jobs(vec![move || gate.pass()]);
+        let (sender, receiver) = channel();
+        let values = send_checker_barrier(|| Dropped(sender.clone()));
+        drop(sender);
+        assert!(values >= 2, "one value per checker and one for the pool");
+
+        let short = Duration::from_millis(300);
+        assert_eq!(
+            dropped(&receiver, short),
+            values - 2,
+            "the values of the waiting twin and the waiting pool job stay"
+        );
+        twin_gate.open();
+        let long = Duration::from_secs(30);
+        receiver
+            .recv_timeout(long)
+            .expect("the twin's value drops when its job ends");
+        assert_eq!(
+            dropped(&receiver, short),
+            0,
+            "the pool's value stays while its job waits"
+        );
+        pool_gate.open();
+        receiver
+            .recv_timeout(long)
+            .expect("the pool's value drops when its job ends");
+        drop((twin_jobs, pool_jobs));
+    }
+    release_program(program);
 }
 
 /// k2gaps1: `tsc -b` of two small composite projects (a cold build, then
@@ -545,18 +565,12 @@ impl Solution {
     /// Runs `tsgo -b` with `args` and `--pretty false`, and returns its exit
     /// code and stdout.
     fn build(&self, args: &[&str]) -> (Option<i32>, String) {
-        self.build_with(args, &[])
-    }
-
-    /// `build` with the environment variables `env` added.
-    fn build_with(&self, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
         let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
             .current_dir(&self.root)
             .arg("-b")
             .args(args)
             .args(["--pretty", "false"])
             .env("GOPORT_EARLY_EMIT", "1")
-            .envs(env.iter().copied())
             .output()
             .expect("run tsgo -b");
         (
