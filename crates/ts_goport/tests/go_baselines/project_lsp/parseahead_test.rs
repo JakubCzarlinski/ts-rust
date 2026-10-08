@@ -79,7 +79,7 @@ os_child_test! {
         for (name, text) in FILES {
             write(&root.to_string_lossy(), name, text);
         }
-        let root = std::fs::canonicalize(&root)
+        let root = crate::support::eval_symlinks(&root)
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
@@ -153,7 +153,7 @@ fn counts_of_opens(
     for (file, text) in files {
         write(&dir.to_string_lossy(), file, text);
     }
-    let root = std::fs::canonicalize(&dir)
+    let root = crate::support::eval_symlinks(&dir)
         .unwrap()
         .to_string_lossy()
         .replace('\\', "/");

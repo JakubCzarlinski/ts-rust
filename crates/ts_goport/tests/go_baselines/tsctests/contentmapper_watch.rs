@@ -1115,7 +1115,7 @@ fn content_mapper_build_watch_reads_source_mtimes_after_a_mapper_error() {
                 std::env::temp_dir().join(format!("goport-mapper-mtimes-{}", std::process::id()));
             std::fs::create_dir_all(scratch.join("project")).expect("mkdir");
             // The watch paths are real paths (`getcwd`).
-            let root = scratch.join("project").canonicalize().expect("a real path");
+            let root = crate::support::eval_symlinks(scratch.join("project")).expect("a real path");
             let write = |name: &str, text: &str| {
                 let path = root.join(name);
                 std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");

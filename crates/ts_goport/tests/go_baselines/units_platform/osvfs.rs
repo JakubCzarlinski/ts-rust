@@ -18,27 +18,41 @@ fn normalize(p: &Path) -> String {
 
 // Go: helpers_test.go:12 mklink (the non-Windows branch)
 #[cfg(unix)]
-fn mklink(target: &Path, link: &Path) {
+#[must_use]
+fn mklink(target: &Path, link: &Path) -> bool {
     std::os::unix::fs::symlink(target, link).expect("symlink");
+    true
 }
 
 // Go: helpers_test.go:12 mklink (the Windows branch): a junction for a
 // directory, a symlink for a file.
 // PORT: Go skips the test when the file symlink needs elevation or developer
-// mode; libtest has no skip, so this panics with that text.
+// mode (ERROR_PRIVILEGE_NOT_HELD). libtest has no skip: this returns false
+// and the test returns. `mklink` takes no `/` separators, so the paths are
+// built again from their components.
 #[cfg(windows)]
-fn mklink(target: &Path, link: &Path) {
+#[must_use]
+fn mklink(target: &Path, link: &Path) -> bool {
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
     if target.is_dir() {
+        let native = |p: &Path| p.components().collect::<PathBuf>();
         let status = std::process::Command::new("cmd")
             .args(["/c", "mklink", "/J"])
-            .arg(link)
-            .arg(target)
+            .arg(native(link))
+            .arg(native(target))
             .stdout(std::process::Stdio::null())
             .status()
             .expect("run mklink");
         assert!(status.success(), "mklink /J");
-    } else {
-        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+        return true;
+    }
+    match std::os::windows::fs::symlink_file(target, link) {
+        Ok(()) => true,
+        Err(err) if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
+            eprintln!("skip: file symlink support is not enabled without elevation or developer mode: {err}");
+            false
+        }
+        Err(err) => panic!("symlink: {err}"),
     }
 }
 
@@ -81,7 +95,7 @@ fn setup_symlinks(tmp: &Path) -> (PathBuf, PathBuf) {
     let link_file = link.join("file");
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(&target_file, "hello").unwrap();
-    mklink(&target, &link);
+    assert!(mklink(&target, &link), "a directory link needs no privilege");
     (target_file, link_file)
 }
 
@@ -122,10 +136,13 @@ fn test_get_accessible_entries() {
     std::fs::create_dir_all(&target_dir1).unwrap();
     std::fs::create_dir_all(&target_dir2).unwrap();
 
-    mklink(&target_file1, &link.join("file1"));
-    mklink(&target_file2, &link.join("file2"));
-    mklink(&target_dir1, &link.join("dir1"));
-    mklink(&target_dir2, &link.join("dir2"));
+    if !(mklink(&target_file1, &link.join("file1"))
+        && mklink(&target_file2, &link.join("file2"))
+        && mklink(&target_dir1, &link.join("dir1"))
+        && mklink(&target_dir2, &link.join("dir2")))
+    {
+        return;
+    }
 
     let fs = osvfs_fs();
 

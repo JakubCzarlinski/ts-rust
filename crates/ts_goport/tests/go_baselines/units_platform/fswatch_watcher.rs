@@ -84,7 +84,7 @@ fn make_tmp_dir() -> TmpDir {
 /// report. Removed when the `TmpDir` drops.
 pub(crate) fn new_tmp_dir() -> (TmpDir, PathBuf) {
     let d = make_tmp_dir();
-    let resolved = d.0.canonicalize().expect("EvalSymlinks");
+    let resolved = crate::support::eval_symlinks(&d.0).expect("EvalSymlinks");
     (d, resolved)
 }
 
@@ -268,7 +268,7 @@ pub(crate) fn watcher_event_timeout_base(w: &Arc<dyn Watcher>) -> Duration {
 // Go: watcher_test.go:111 newTmpDir
 fn new_t_tmp_dir(t: &T) -> String {
     let d = t.temp_dir();
-    std::fs::canonicalize(&d)
+    crate::support::eval_symlinks(&d)
         .unwrap_or_else(|e| fatal(format!("EvalSymlinks: {e}")))
         .to_str()
         .unwrap()
@@ -296,8 +296,11 @@ fn sub_path(dir: &str) -> String {
 }
 
 /// Go `filepath.Join(dir, name)`.
+// PORT: the tests join clean paths, so Go's `Clean` is only the separator:
+// on Windows `Join` gives backslashes, also for a `/` inside `name`.
 fn join(dir: &str, name: &str) -> String {
-    format!("{dir}/{name}")
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    format!("{dir}{sep}{name}").replace('/', sep)
 }
 
 // Go: watcher_test.go:150 newDirectWatcher
@@ -1802,7 +1805,7 @@ fn test_rename_dir_out_of_tree_no_stale_events() {
         write_file(&moved_nested, "v2-longer");
 
         let extra = r.drain_quiet(ms(800));
-        let old_prefix = format!("{sub}/");
+        let old_prefix = format!("{sub}{}", std::path::MAIN_SEPARATOR);
         for e in &extra {
             if e.path == sub || e.path.starts_with(&old_prefix) {
                 fatal(format!(
@@ -2127,7 +2130,7 @@ fn nudge_until_update(
 ) -> Result<(), Vec<W>> {
     let deadline = Instant::now() + total;
     let mut all_seen = Vec::new();
-    let under = format!("{dir}/");
+    let under = format!("{dir}{}", std::path::MAIN_SEPARATOR);
     let mut attempt = 0;
     while Instant::now() < deadline {
         let f = join(dir, &format!("{prefix}-{attempt}.txt"));
