@@ -146,6 +146,12 @@
         "version": "Version 7.1.0-dev",
         "build": "CGO_ENABLED=0 GOAMD64=v1 go build ./cmd/tsc (in tsc/)"
       },
+      "typesymDumper": {
+        "path": "/home/theo/Code/sandbox/ts-rust/target/continuation-r97-goport/pins/fed0bf24149f/target/continuation-r97-goport/typesyms/typesymdump-go",
+        "sha256": "7b3c060c98cc8f4ec914a2ad8d0cb7265c04dc4c9b8712ec85a1b269aa68505b",
+        "go": "go1.27.1",
+        "build": "scripts/upstream/record.py typesyms: go build -overlay with typesyms/tools/typesymdump-main-fed0bf24149f.go (sha256 b9163914f101): the 16c25522e123 main for typed paths (#64159): NewCompilerHost without cwd, GetParsedCommandLineOfConfigFile with a RootedFilePath and the vfs.FS, PathKey and FileName().AsString(); module path rewritten to github.com/microsoft/TypeScript/tsc"
+      },
       "note": "Bump D target N': the gitHead of npm typescript@7.1.0-dev.20261008.1 (#64686). origin/main c0ca4744c917 adds only the API change #64681 (bump E). Not current yet."
     }
   }
