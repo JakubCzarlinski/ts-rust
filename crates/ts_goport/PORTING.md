@@ -620,11 +620,10 @@ The batch that adds it is not accepted until Theo approves.
   (`program::release_program_in_background`). So the pools of up to 4
   started projects work at the same time, like Go's goroutines. A
   project's emit starts behind its check when `Program::start_emit`
-  allows it (a project that is not `incremental` or `composite` has no
-  incremental state and emits its whole program, as Go's
-  `emitAllAffectedFiles` does), and its writes wait in a buffer
+  allows it, and its writes wait in a buffer
   (`buffer_early_emit_writes`) until the task finishes. A task finishes
-  when its check and emit have ended (the barrier jobs behind them also
+  when its check and its early emit (when it has one) have ended (the
+  barrier jobs behind them also
   wait for the d.ts twins and the emit pool,
   `program::send_checker_barrier`), in the order they end, or in build
   order when the outputs of the tasks overlap. A project's emit
@@ -645,13 +644,24 @@ The batch that adds it is not accepted until Theo approves.
     ends. Starting its emit when its check ends (k2gaps1 round 1) broke
     small shapes where Go and the port agreed (state note
     `k2gaps1-round2-2026-10-08`).
+  - G4: a project that is not `incremental` or `composite` has no
+    incremental state and no early emit. It finishes when its check ends,
+    then emits and writes on the loading thread; Go's builder emits the
+    whole program and writes when that emit ends. k2gaps1 rounds 1 and 2
+    gave it an early emit of the whole program with buffered writes. That
+    broke two things where Go and the port agreed (state note
+    `k2gaps1-round3-2026-10-08`):
+    - `--verbose` on a no-op build named another oldest output than Go:
+      the buffered writes fall within about a millisecond.
+    - Probe `inv_noeoe_noninc_m6` (`tsc -b p1 p2 p3 --builders 2`, none
+      `incremental`): p1 is a large `noEmitOnError` writer, p2 a checked
+      project, p3 reads p1's output without a reference. Go and the port
+      give TS2305: p2 finishes first. With G4 fixed and G3 not, p2 under
+      load finished after p1's check, so p3 read p1's new output. Fix G3
+      and G4 together.
   - A large `noEmitOnError` project with a syntax error (k2gaps1 probes
     `noeoe_syn_comp`, `noeoe_syn_inc`): it has no checker work, so it
     finishes at once, in start order. This is G1's family.
-  - `--verbose` on a no-op build of a project that is not `incremental`
-    can name another oldest output than Go. The buffer writes all outputs
-    after the emit, within about a millisecond, so their modified times
-    are equal; Go's writes spread over the emit.
 
 `program.rs` defines `SourceFileInfo`, `load`, `bind_all`, the Go
 `Program` methods as free functions with Go snake names (`get_resolved_module(file, name, mode)` ->

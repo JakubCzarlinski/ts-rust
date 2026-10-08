@@ -1057,16 +1057,16 @@ impl BuildTask {
             // while other tasks make their programs and emit. Here the
             // check starts on this program's checker threads now, and so
             // does the emit, behind the check, as in `tsc -p` (when the
-            // rules of `Program::start_emit` allow it; a project that is not
-            // `incremental` or `composite` emits its whole program; else the
-            // emit runs in `compile_and_emit_finish`). A task that checks
-            // nothing (cached semantic diagnostics, `noCheck`, or syntactic,
-            // program or global diagnostics) starts its emit there too, so it
-            // ends when its emit ends, as its Go goroutine does. The emit
-            // keeps its writes until `compile_and_emit_finish`, which writes
-            // them first (`buffer_early_emit_writes`). So the task writes
-            // when the orchestrator finishes it (in the order the checks and
-            // emits end, or in build order when tasks share outputs, see
+            // rules of `Program::start_emit` allow it; else the emit runs
+            // in `compile_and_emit_finish`). A task that checks nothing
+            // (cached semantic diagnostics, `noCheck`, or syntactic, program
+            // or global diagnostics) starts its emit there too, so it ends
+            // when its emit ends, as its Go goroutine does. The emit keeps
+            // its writes
+            // until `compile_and_emit_finish`, which writes them first
+            // (`buffer_early_emit_writes`). So the task writes when the
+            // orchestrator finishes it (in the order the checks and emits
+            // end, or in build order when tasks share outputs, see
             // `build_all_tasks`), and a task that runs beside others reads
             // the file system before they write. The statistics' check time
             // is the time of the wait for the check plus the time that

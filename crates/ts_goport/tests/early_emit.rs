@@ -25,12 +25,10 @@
 //! `noCheck`, or a syntax error) must emit on its checker threads too, so it
 //! finishes when its own emit ends, as a Go builder does. The global
 //! diagnostics test makes its own project there too. So do the k2gaps1
-//! tests: a task without the incremental state (a project that is not
-//! `incremental` or `composite`) writes when its emit ends, `tsc -p
-//! --listFilesOnly` emits nothing, and `tsc -b` of two small projects runs
-//! without a panic (also in the dev profile). The barrier test loads the
-//! fixture and checks that `send_checker_barrier` waits for the emit pool
-//! and the d.ts twins.
+//! tests: `tsc -p --listFilesOnly` emits nothing, and `tsc -b` of two small
+//! projects runs without a panic (also in the dev profile). The barrier
+//! test loads the fixture and checks that `send_checker_barrier` waits for
+//! the emit pool and the d.ts twins.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -107,61 +105,45 @@ fn early_emit_writes_what_the_barrier_writes() {
     fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
 }
 
-/// `tsc -b` of the fixture as a composite project, and (k2gaps1, G4) as a
-/// project that is not `incremental` or `composite`: it has no incremental
-/// state, so its early emit is the emit of the whole program
-/// (`start_emit_files`), with and without declarations (without them every
-/// JS part runs on the emit pool).
 #[test]
 fn build_early_emit_writes_what_the_barrier_writes() {
     let root = scratch_dir();
     let out = root.join("out");
-    let cases = [
-        ("composite", r#""composite": true,"#),
-        ("not incremental", ""),
-        (
-            "not incremental, js only",
-            r#""declaration": false, "declarationMap": false,"#,
-        ),
-    ];
-    for (case, options) in cases {
-        // The fixture with `options`, its outputs and build info in the
-        // scratch dir. The base config's `include` and `rootDir` stay
-        // relative to the fixture.
-        let config = root.join("tsconfig.json");
-        let text = format!(
-            r#"{{
+    // The fixture as a composite project, with its outputs and build info
+    // in the scratch dir. The base config's `include` and `rootDir` stay
+    // relative to the fixture.
+    let config = root.join("tsconfig.json");
+    let text = format!(
+        r#"{{
   "extends": "{FIXTURE}/tsconfig.json",
   "compilerOptions": {{
-    {options}
+    "composite": true,
     "outDir": "{out}",
     "tsBuildInfoFile": "{out}/tsconfig.tsbuildinfo"
   }}
 }}
 "#,
-            out = out.display()
-        );
-        fs::write(&config, text)
-            .unwrap_or_else(|error| panic!("write {}: {error}", config.display()));
-        let barrier = tsgo_build(&config, &out, false);
-        let early = tsgo_build(&config, &out, true);
-        assert_eq!(
-            barrier.status,
-            Some(0),
-            "{case}: the fixture must build without diagnostics, so the check is sent: {}",
-            barrier.stdout
-        );
-        assert!(
-            barrier.files.contains_key("tsconfig.tsbuildinfo")
-                && barrier.files.keys().any(|name| std::path::Path::new(name)
-                    .extension()
-                    .is_some_and(|e| e == "js")
-                    || name.ends_with(".d.ts")),
-            "{case}: the build must write outputs and build info: {:?}",
-            barrier.files.keys()
-        );
-        assert_eq!(early, barrier, "{case}: the early emit against the barrier");
-    }
+        out = out.display()
+    );
+    fs::write(&config, text).unwrap_or_else(|error| panic!("write {}: {error}", config.display()));
+    let barrier = tsgo_build(&config, &out, false);
+    let early = tsgo_build(&config, &out, true);
+    assert_eq!(
+        barrier.status,
+        Some(0),
+        "the fixture must build without diagnostics, so the check is sent: {}",
+        barrier.stdout
+    );
+    assert!(
+        barrier.files.contains_key("tsconfig.tsbuildinfo")
+            && barrier.files.keys().any(|name| std::path::Path::new(name)
+                .extension()
+                .is_some_and(|e| e == "js")
+                || name.ends_with(".d.ts")),
+        "the build must write outputs and build info: {:?}",
+        barrier.files.keys()
+    );
+    assert_eq!(early, barrier, "the early emit against the barrier");
     fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
 }
 
@@ -331,84 +313,6 @@ fn tsc_p_list_files_only_writes_no_output() {
     fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
 }
 
-/// k2gaps1 (G4): as `build_no_check_task_finishes_when_its_emit_ends`, with
-/// projects that are not `incremental` or `composite` (`tsc -b p1 p2 p3`,
-/// `--builders 2`): p1 big and `noCheck`, p2 a small `noCheck` writer
-/// whose new output adds `v2`, p3 its reader. They have no incremental
-/// state, so Go's task emits the whole program, and writes when that emit
-/// ends: p2 ends first, its builder takes p3, and p3 loads after p2 wrote.
-/// Exit 0, no output (Go N gives that). Before, such a task had no checker
-/// work and emitted on the loading thread when it finished, in build
-/// order, so p1 finished first and p3 loaded before p2 wrote (TS2305).
-#[test]
-fn build_non_incremental_task_finishes_when_its_emit_ends() {
-    let solution = Solution::new();
-    solution.write("p1/tsconfig.json", &non_incremental_config(NO_CHECK));
-    solution.write("p2/tsconfig.json", &non_incremental_config(NO_CHECK));
-    solution.write("p3/tsconfig.json", &non_incremental_config(""));
-    solution.write("p1/src/index.ts", &big_module("v1", 1500));
-    solution.write("p2/src/index.ts", "export const v1 = 1;\n");
-    solution.write(
-        "p3/src/a.ts",
-        "import { v1, v2 } from \"../../p2/dist/index\";\nexport const a = v1 + v2;\n",
-    );
-    solution.build(&["p1", "p2", "p3"]);
-    solution.write("p1/src/index.ts", &big_module("v2", 1500));
-    solution.write(
-        "p2/src/index.ts",
-        "export const v1 = 1;\nexport const v2 = 2;\n",
-    );
-    assert_eq!(
-        solution.build(&["p1", "p2", "p3", "--builders", "2"]),
-        (Some(0), String::new()),
-        "p2 finishes before p1, so p3 loads after p2 wrote v2"
-    );
-    solution.remove();
-}
-
-/// k2gaps1 (G4): the other way round. p1 is the big `noCheck` writer, whose
-/// new output adds `v2`; p2 only emits a small file; p3 reads `v2` from
-/// p1's output (`tsc -b p1 p2 p3 --builders 2`, not `incremental` or
-/// `composite`). Go's p1 writes when its emit ends, after p2 ended and its
-/// builder took p3, so p3 loads before p1 writes: TS2305 (Go N gives
-/// that). Before, the port emitted p1 and wrote its outputs as soon as it
-/// finished, first, so p3 saw `v2` (exit 0).
-#[test]
-fn build_non_incremental_writer_writes_when_its_emit_ends() {
-    let solution = Solution::new();
-    solution.write("p1/tsconfig.json", &non_incremental_config(NO_CHECK));
-    solution.write("p2/tsconfig.json", &non_incremental_config(NO_CHECK));
-    solution.write("p3/tsconfig.json", &non_incremental_config(""));
-    solution.write(
-        "p1/src/index.ts",
-        &(big_module("v1", 1500) + "export const v1 = 1;\n"),
-    );
-    solution.write("p2/src/index.ts", "export const s = 1;\n");
-    solution.write(
-        "p3/src/a.ts",
-        "import { v1, v2 } from \"../../p1/dist/index\";\nexport const a = v1 + v2;\n",
-    );
-    solution.build(&["p1", "p2", "p3"]);
-    solution.write(
-        "p1/src/index.ts",
-        &(big_module("v2", 1500) + "export const v1 = 1;\nexport const v2 = 2;\n"),
-    );
-    solution.write(
-        "p2/src/index.ts",
-        "export const s = 1;\nexport const t = 2;\n",
-    );
-    assert_eq!(
-        solution.build(&["p1", "p2", "p3", "--builders", "2"]),
-        (
-            Some(2),
-            "p3/src/a.ts(1,14): error TS2305: Module '\"../../p1/dist/index\"' has no exported member 'v2'.\n"
-                .to_owned()
-        ),
-        "p2 finishes first, so p3 loads before p1 wrote v2"
-    );
-    solution.remove();
-}
-
 /// k2gaps1 (C1): `program::send_checker_barrier` makes one value per
 /// checker thread and one for the emit pool, and each drops only when the
 /// jobs sent before have ended: the checker thread's own jobs, the jobs of
@@ -543,9 +447,6 @@ fn build_two_composite_projects_without_a_panic() {
     solution.remove();
 }
 
-/// The `noCheck` option for `project_config` and `non_incremental_config`.
-const NO_CHECK: &str = r#", "noCheck": true"#;
-
 /// The solution config of p1, p2 and p3.
 const SOLUTION: &str =
     r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}, {"path": "./p3"}]}"#;
@@ -604,23 +505,12 @@ fn project_config(extra: &str) -> String {
     )
 }
 
-/// The config of a project that is not `incremental` or `composite` (so
-/// `tsc -b` gives it no incremental state), with declarations and `extra`
-/// added to its compiler options.
-fn non_incremental_config(extra: &str) -> String {
-    format!(
-        r#"{{"compilerOptions": {{"declaration": true, "strict": true, "target": "es2022",
-  "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
-  "skipLibCheck": true{extra}}}, "include": ["src"]}}"#
-    )
-}
-
-/// The code of `count` modules in one file, with `tag` in each comment: its
+/// The code of 1,500 modules in one file, with `tag` in each comment: its
 /// load and emit take far longer than those of a small project.
-fn big_module(tag: &str, count: usize) -> String {
+fn big_module(tag: &str) -> String {
     use std::fmt::Write as _;
     let mut text = String::new();
-    for i in 0..count {
+    for i in 0..1500 {
         write!(
             text,
             "export interface I{i} {{ a: number; b: string; c{i}: boolean }}\n\
@@ -650,7 +540,7 @@ fn build_emit_only_solution(
         solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
     }
     // Its emit takes far longer than the load and emit of p2.
-    solution.write("p1/src/index.ts", &big_module("v1", 1500));
+    solution.write("p1/src/index.ts", &big_module("v1"));
     for (name, text) in p1_files {
         solution.write(&format!("p1/src/{name}"), text);
     }
@@ -663,7 +553,7 @@ fn build_emit_only_solution(
     );
     // The cold build: p3 cannot see `v2` yet.
     solution.build(&["tsconfig.json"]);
-    solution.write("p1/src/index.ts", &big_module("v2", 1500));
+    solution.write("p1/src/index.ts", &big_module("v2"));
     solution.write(
         "p2/src/index.ts",
         "export const v1 = 1;\nexport const v2 = 2;\n",

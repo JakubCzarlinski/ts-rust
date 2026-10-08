@@ -480,12 +480,6 @@ impl Program {
     /// when its own emit ends. Without it, the emit ran in
     /// `compile_and_emit_finish` and such tasks finished in build order.
     ///
-    /// A `tsc -b` project that is not `incremental` or `composite` has no
-    /// incremental state. Its Go task emits the whole program
-    /// (`emitAllAffectedFiles`) when its check ends, and writes when that
-    /// emit ends. So this sends that emit too (`start_emit_files`), and the
-    /// task finishes when it ends, as an incremental task does.
-    ///
     /// Go reads the global diagnostics before the emit whenever the
     /// syntactic diagnostics are empty, also with `noCheck` or program
     /// diagnostics, where `start_check` returns before it reads them. The
@@ -500,7 +494,10 @@ impl Program {
         );
         // The file rules read every program file: the checkers check
         // meanwhile (when a check started).
-        if !early_emit_options_allow() || !check_cannot_see_outputs() {
+        if !early_emit_options_allow()
+            || !self.snapshot.borrow().can_use_incremental_state()
+            || !check_cannot_see_outputs()
+        {
             return;
         }
         if self.started.borrow().global_diagnostics.is_none()

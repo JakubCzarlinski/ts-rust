@@ -8,9 +8,8 @@
 //! copied into it, and what it records (Go `signatures`, `emitSignatures`,
 //! `latestChangedDtsFiles` SyncMaps) goes to `EmitFilesShared` behind a
 //! mutex. Go `ctx` is dropped. `start_emit_files` and `finish_emit_files`
-//! split the emit of all affected files (or, without the incremental state,
-//! of the program) at the wait for the emit jobs, so `Program::start_emit`
-//! can send them behind the check.
+//! split the emit of all affected files at the wait for the emit jobs, so
+//! `Program::start_emit` can send them behind the check.
 
 use super::affected_files::collect_all_affected_files;
 use super::hash::FileInfo;
@@ -20,7 +19,7 @@ use super::snapshot::*;
 use crate::emitter::emitter::EmitOnly;
 use crate::emitter::program_emit::{
     EmitOptions, EmitResult, PendingEmitBatch, WriteFile, WriteFileData, combine_emit_results,
-    emit, start_emit_batch, start_emit_file_results,
+    emit, start_emit_batch,
 };
 use crate::frontend::prelude::*;
 use crate::program::source_file_may_be_emitted;
@@ -698,19 +697,29 @@ pub(crate) fn buffer_early_emit_writes(start: impl FnOnce()) {
 /// The most threads that `flush_writes` writes on.
 const MAX_FLUSH_THREADS: usize = 8;
 
-/// Writes the `writes` of an early emit with `write_file` (`write_output`),
-/// in the order the emit made them, on up to `MAX_FLUSH_THREADS` threads.
-/// Go writes each file's outputs on the goroutine that emits it, when that
-/// emit ends: the source map, then the JS, then the declaration map, then
-/// the declaration. The emit jobs add their writes to the buffer in that
-/// order (a file's JS and declaration can emit on two threads, each in
-/// order), and the caller writes the build info after this, as Go does. So
-/// the outputs that Go writes first are written first here too. Their
-/// modified times still come closer together than Go's, whose writes spread
-/// over the emit (the oldest output that `--verbose` names for a project
-/// that is not `incremental` can differ, PORTING.md K2). False when a
-/// write failed; the later writes are left out.
-fn flush_writes(mut writes: Vec<BufferedWrite>, write_file: Option<&WriteFile>) -> bool {
+/// Writes the `writes` of an early emit of the `queued` files with
+/// `write_file` (`write_output`). Go writes each file's outputs on the
+/// goroutine that emits it: the source map, then the JS, then the
+/// declaration map, then the declaration. Here the files' outputs go in
+/// that order, the files in `queued` order, on up to `MAX_FLUSH_THREADS`
+/// threads. False when a write failed; the later writes are left out.
+fn flush_writes(
+    mut writes: Vec<BufferedWrite>,
+    queued: &[QueuedEmit],
+    write_file: Option<&WriteFile>,
+) -> bool {
+    let order: FxHashMap<&Path, usize> = queued
+        .iter()
+        .enumerate()
+        .map(|(index, (path, ..))| (path, index))
+        .collect();
+    // A file's JS and declaration can emit on two threads, each in order.
+    let key = |write: &BufferedWrite| {
+        let output = write.file_name.as_str();
+        let declaration = is_declaration_file_name(output.strip_suffix(".map").unwrap_or(output));
+        (order.get(&write.source).copied(), declaration)
+    };
+    crate::gostd::slices::stable_sort_by(&mut writes, |a, b| key(a).cmp(&key(b)));
     let files: Vec<&mut [BufferedWrite]> =
         writes.chunk_by_mut(|a, b| a.source == b.source).collect();
     let threads = MAX_FLUSH_THREADS
@@ -845,10 +854,7 @@ pub fn emit_files(program: &Program, options: EmitOptions, is_for_dts_errors: bo
 pub(crate) struct StartedEmit {
     shared: Arc<Mutex<EmitFilesShared>>,
     deleted_pending_kinds: FxIndexSet<Path>,
-    /// The emitted files with the incremental state. None without it: then
-    /// the batch is the emit of the whole program
-    /// (`start_emit_file_results`), one result per file.
-    queued: Option<Vec<QueuedEmit>>,
+    queued: Vec<QueuedEmit>,
     batch: PendingEmitBatch,
     /// The `WriteFile` of the start. `finish_emit_files` must get the same.
     write_file: Option<WriteFile>,
@@ -868,12 +874,9 @@ pub(crate) struct StartedEmit {
 /// false)` for `Program::start_emit`: pass 1 of
 /// `emit_files_incremental`, then the emit jobs are sent without a wait.
 /// Each checker thread runs them after the jobs sent to it before (the
-/// check). `options` name no target file and emit all.
-///
-/// Without the incremental state (`tsc -b` of a project that is not
-/// `incremental` or `composite`), Go's `emitAllAffectedFiles` emits the
-/// whole program (`Program.Emit`) with the options of `getEmitOptions`.
-/// This sends that emit (`start_emit_file_results`).
+/// check). The caller has the
+/// incremental state (`can_use_incremental_state`), and `options` name no
+/// target file and emit all.
 ///
 /// Pass 1 reads the pending emit set, the file infos, the emit signatures
 /// and the options, and `get_emit_options` copies them into the write
@@ -885,19 +888,15 @@ pub(crate) struct StartedEmit {
 /// global diagnostics), the walk runs here first, as Go's runs in `Emit`.
 pub(crate) fn start_emit_files(program: &Program, options: EmitOptions) -> StartedEmit {
     debug_assert!(
-        options.target_source_files.is_none() && options.emit_only == EmitOnly::All,
+        program.snapshot.borrow().can_use_incremental_state()
+            && options.target_source_files.is_none()
+            && options.emit_only == EmitOnly::All,
         "start_emit_files: only the emit of all affected files starts early"
     );
     let mut handler = EmitFilesHandler::new(program, false);
     handler.buffer = BUFFER_EARLY_EMIT_WRITES.get().then(WriteBuffer::default);
-    let (queued, batch) = if program.snapshot.borrow().can_use_incremental_state() {
-        let queued = handler.queue_affected_files(&options);
-        let batch = handler.send_emit_batch(&queued, &options);
-        (Some(queued), batch)
-    } else {
-        let batch = start_emit_file_results(handler.get_emit_options(options.clone()));
-        (None, batch)
-    };
+    let queued = handler.queue_affected_files(&options);
+    let batch = handler.send_emit_batch(&queued, &options);
     StartedEmit {
         shared: handler.shared,
         deleted_pending_kinds: handler.deleted_pending_kinds,
@@ -915,8 +914,7 @@ pub(crate) fn start_emit_files(program: &Program, options: EmitOptions) -> Start
 /// PORT: not in Go (perf). The second half of `emit_files(program,
 /// options, false)` for the emit that `start_emit_files` sent: waits for
 /// the emit jobs, then does the rest of `emit_files_incremental` and
-/// `emitAllAffectedFiles` (the snapshot update and the build info; without
-/// the incremental state only the rest of `emitAllAffectedFiles`).
+/// `emitAllAffectedFiles` (the snapshot update and the build info).
 /// `options` must be the options of the start.
 ///
 /// With `buffer_early_emit_writes` it writes the emit's outputs first
@@ -961,23 +959,35 @@ pub(crate) fn finish_emit_files(
     let mut results = started.batch.wait();
     if let Some(buffer) = started.buffer {
         let writes = std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
-        if !flush_writes(writes, options.write_file.as_ref()) {
+        if !flush_writes(writes, &started.queued, options.write_file.as_ref()) {
             // The callbacks of the buffered emit filled `shared`.
             *handler.shared.lock().expect("emit files lock") = EmitFilesShared::default();
-            results = match &started.queued {
-                Some(queued) => handler.send_emit_batch(queued, options).wait(),
-                None => start_emit_file_results(handler.get_emit_options(options.clone())).wait(),
-            };
+            results = handler.send_emit_batch(&started.queued, options).wait();
         }
     }
-    let Some(queued) = started.queued else {
-        // Go `emitAllAffectedFiles` without the incremental state.
-        let mut result = combine_emit_results(results);
-        handler.update_has_emit_diagnostics(Some(&result));
-        handler.update_snapshot();
-        handler.emit_build_info(options, &mut result);
-        return result;
-    };
-    let results = handler.finish_emit_files_incremental(queued, results);
+    let results = handler.finish_emit_files_incremental(started.queued, results);
     handler.combine_results_and_emit_build_info(results, options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BUFFER_EARLY_EMIT_WRITES, buffer_early_emit_writes};
+
+    /// k2gaps1: a panic inside the buffered start ends the buffering. `tsc -b`
+    /// keeps a task's panic and goes on, so a flag left on would make every
+    /// later emit on this thread keep its writes in a buffer.
+    #[test]
+    fn buffer_early_emit_writes_ends_on_a_panic() {
+        let result = std::panic::catch_unwind(|| {
+            buffer_early_emit_writes(|| {
+                assert!(BUFFER_EARLY_EMIT_WRITES.get(), "the start buffers");
+                panic!("the start panics");
+            });
+        });
+        assert!(result.is_err(), "the panic reaches the caller");
+        assert!(
+            !BUFFER_EARLY_EMIT_WRITES.get(),
+            "the buffering ended with the panic"
+        );
+    }
 }

@@ -23,8 +23,7 @@
 //! started tasks work at the same time, as the Go goroutines do. Each
 //! checker emits when its check ends (a task that checks nothing, as with
 //! cached semantic diagnostics, `noCheck` or a syntax error, emits at
-//! once; a task without the incremental state emits its whole program),
-//! and the emit keeps its writes in
+//! once), and the emit keeps its writes in
 //! memory. The started tasks write their outputs one at a time
 //! (`build_project_finish`), in the order their check and emit end, as each
 //! Go builder writes when its own task ends. PORT (determinism): when tasks

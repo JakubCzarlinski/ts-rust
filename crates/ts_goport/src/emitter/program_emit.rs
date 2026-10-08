@@ -143,44 +143,6 @@ pub fn emit_file_results(options: EmitOptions) -> Vec<EmitResult> {
     emit_results_with(options, |emit_file| emit_file())
 }
 
-/// `emit_file_results` without the wait: sends the emit jobs of the files
-/// and returns. `wait` gives the result of `emit_file_results`. `tsc -b`
-/// starts the emit of a program without the incremental state this way
-/// (`execute::incremental::emit_files::start_emit_files`), behind its
-/// check, as `start_emit_batch_with` does for the incremental emit. Only
-/// when the early emit rules allow it (`early_emit_options_allow`): not
-/// with `noEmit` or `noEmitOnError` (then `handle_no_emit_options` would
-/// run first, see `emit_results_with`), `--singleThreaded` (Go runs the
-/// emits last-queued-first, `run_emit_jobs`) or a trace (its emit event
-/// ends with the emit).
-pub fn start_emit_file_results(emit_options: EmitOptions) -> PendingEmitBatch {
-    debug_assert!(
-        early_emit_options_allow(),
-        "start_emit_file_results: the early emit rules refuse it"
-    );
-    let target = EmitterOptions::of(&emit_options);
-    let source_files = get_source_files_to_emit(
-        emit_options.target_source_files.as_deref(),
-        target.force_dts_emit(),
-        target.force_js_emit(),
-    );
-    let files = match start_emit_files_with_pool(
-        &source_files,
-        |_| target.clone(),
-        |emit_file| emit_file(),
-    ) {
-        Some(pool) => PendingFiles::Pool(pool),
-        None => PendingFiles::Checkers(send_on_checker_threads_for_files(
-            &source_files,
-            move |source_file| emit_source_file(source_file, &target),
-        )),
-    };
-    PendingEmitBatch(PendingBatch::Sent {
-        has_file: vec![true; source_files.len()],
-        files,
-    })
-}
-
 /// `emit_with` before it combines the results (`emit_file_results`).
 fn emit_results_with(
     options: EmitOptions,
@@ -456,8 +418,9 @@ pub fn emit_can_start_with_check() -> bool {
 /// The option part of `emit_can_start_with_check`. False with `noEmit`,
 /// `--listFilesOnly` (Go emits nothing with either), `noEmitOnError` (the
 /// emit needs every diagnostic first), `--singleThreaded`, a trace,
-/// `preserveSymlinks` (F4), `outFile`, and `GOPORT_EARLY_EMIT=0`. Then `tsc -p` keeps Go's order exactly: it does
-/// not start the check early either. `tsc -b` starts each check early in
+/// `preserveSymlinks` (F4), `outFile`, and `GOPORT_EARLY_EMIT=0`. Then
+/// `tsc -p` keeps Go's order exactly: it does not start the check early
+/// either. `tsc -b` starts each check early in
 /// any case. When these rules and `check_cannot_see_outputs` allow it, it
 /// also starts the emit behind the check and keeps the writes until the
 /// task finishes (`buffer_early_emit_writes`); else it emits in Go's order.
