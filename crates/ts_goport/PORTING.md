@@ -621,10 +621,14 @@ The batch that adds it is not accepted until Theo approves.
   started projects work at the same time, like Go's goroutines. A
   project's emit starts behind its check when `Program::start_emit`
   allows it (a `noEmitOnError` project's emit starts when its check has
-  ended, `Program::start_emit_after_check`), and its writes wait in a
-  buffer (`buffer_early_emit_writes`) until the task finishes. A task
-  finishes when its check and emit have ended, in the order they end, or
-  in build order when the outputs of the tasks overlap. A project's emit
+  ended, `Program::start_emit_after_check`; a project that is not
+  `incremental` or `composite` has no incremental state and emits its
+  whole program, as Go's `emitAllAffectedFiles` does), and its writes wait
+  in a buffer (`buffer_early_emit_writes`) until the task finishes. A task
+  finishes when its check and emit have ended (the barrier jobs behind them
+  also wait for the d.ts twins and the emit pool,
+  `program::send_checker_barrier`), in the order they end, or in build
+  order when the outputs of the tasks overlap. A project's emit
   runs on its own checker threads and its own emit pool
   (see Threads): the emit resolver needs the file's checker, which lives
   on its worker thread, and synthetic nodes are thread-local

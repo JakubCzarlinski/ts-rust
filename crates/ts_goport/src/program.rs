@@ -433,7 +433,17 @@ struct EmitPool {
     released: Arc<std::sync::atomic::AtomicBool>,
     /// The jobs sent so far (`emit_pool_job_count`).
     jobs: usize,
+    /// Each job holds a clone of this token until it ends.
+    /// `send_checker_barrier` puts a value in it and takes a new token, so
+    /// the value drops when the jobs sent before have ended.
+    token: Arc<PoolToken>,
 }
+
+/// The values that `send_checker_barrier` keeps until the emit pool jobs
+/// that hold this token have ended (`EmitPool::token`).
+#[cfg(not(target_family = "wasm"))]
+#[derive(Default)]
+struct PoolToken(Mutex<Vec<Box<dyn Send>>>);
 
 #[cfg(not(target_family = "wasm"))]
 impl EmitPool {
@@ -536,6 +546,7 @@ fn create_emit_pool(count: usize) -> EmitPool {
         threads,
         released,
         jobs: 0,
+        token: Arc::default(),
     }
 }
 
@@ -709,9 +720,11 @@ pub fn send_emit_pool_jobs<R: Send + 'static>(
         jobs.into_iter()
             .map(|f| {
                 let (sender, receiver) = std::sync::mpsc::channel();
+                let token = Arc::clone(&emit.token);
                 let job: Job = Box::new(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
                     let _ = sender.send(result);
+                    drop(token);
                 });
                 emit.queue.send(job).expect("emit thread stopped");
                 EmitPoolJob(receiver)
@@ -3523,28 +3536,54 @@ impl WorkerIds {
 
 /// PORT: not in Go (perf). Sends each checker thread of the current
 /// program a job that borrows no checker and drops a value that `signal`
-/// makes. It runs after the jobs sent to that thread before, so when every
-/// value has dropped, those jobs are done; a value also drops when its job
-/// can no longer run (the thread ended). Returns how many it sent: 0 when
-/// the program has no checker pool on this thread. `tsc -b` learns this way
+/// makes. It runs after the jobs sent to that thread before. When the
+/// thread has a d.ts twin, the job sends the value on to the twin, which
+/// drops it after its own jobs (the prints of the emit parts, which wait for
+/// their JS parts on the emit pool). When the program has an emit pool, one
+/// more value drops when the pool jobs sent before have ended
+/// (`EmitPool::token`). So when every value has dropped, the check and emit
+/// jobs sent before are done; a value also drops when its job can no longer
+/// run (the thread ended). Returns how many values it made: 0 when the
+/// program has no checker pool on this thread. `tsc -b` learns this way
 /// that the check and emit that a task started are done
 /// (build/orchestrator.rs `build_all_tasks`).
 #[cfg(not(target_family = "wasm"))]
 pub fn send_checker_barrier<T: Send + 'static>(signal: impl Fn() -> T) -> usize {
     let id = prog().id;
     POOLS.with(|pools| {
-        let pools = pools.borrow();
-        let Some(pool) = pools.get(&id) else {
+        let mut pools = pools.borrow_mut();
+        let Some(pool) = pools.get_mut(&id) else {
             return 0;
         };
         for worker in &pool.workers {
             let value = signal();
             worker
-                .send(Box::new(move || drop(value)))
+                .send(Box::new(move || drop_after_dts_twin(value)))
                 .expect("checker thread stopped");
         }
-        pool.workers.len()
+        let Some(emit) = &mut pool.emit else {
+            return pool.workers.len();
+        };
+        let token = std::mem::take(&mut emit.token);
+        token
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Box::new(signal()));
+        pool.workers.len() + 1
     })
+}
+
+/// Drops `value` on the d.ts twin of this checker worker after the jobs
+/// sent to the twin before, or at once when the worker has no twin or its
+/// twin stopped.
+#[cfg(not(target_family = "wasm"))]
+fn drop_after_dts_twin<T: Send + 'static>(value: T) {
+    DTS_TWIN.with(|twin| match twin.borrow().as_ref() {
+        // A failed send drops the job, and the value with it.
+        Some(twin) => drop(twin.queue.send(Box::new(move || drop(value)))),
+        None => drop(value),
+    });
 }
 
 /// wasm: every job already ran when it was sent (`send_thread_job`), so

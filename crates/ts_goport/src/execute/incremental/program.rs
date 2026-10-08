@@ -484,6 +484,12 @@ impl Program {
     /// when its own emit ends. Without it, the emit ran in
     /// `compile_and_emit_finish` and such tasks finished in build order.
     ///
+    /// A `tsc -b` project that is not `incremental` or `composite` has no
+    /// incremental state. Its Go task emits the whole program
+    /// (`emitAllAffectedFiles`) when its check ends, and writes when that
+    /// emit ends. So this sends that emit too (`start_emit_files`), and the
+    /// task finishes when it ends, as an incremental task does.
+    ///
     /// Go reads the global diagnostics before the emit whenever the
     /// syntactic diagnostics are empty, also with `noCheck` or program
     /// diagnostics, where `start_check` returns before it reads them. The
@@ -557,13 +563,13 @@ impl Program {
     }
 
     /// The rules of `start_emit` after the options: Go emits (no
-    /// `--listFilesOnly`; `tsc -p` reaches here with it), the program has
-    /// the incremental state, and the check cannot see the outputs
-    /// (`check_cannot_see_outputs`).
+    /// `--listFilesOnly`; `tsc -p` reaches here with it), and the check
+    /// cannot see the outputs (`check_cannot_see_outputs`). A program
+    /// without the incremental state (`tsc -b` of a project that is not
+    /// `incremental` or `composite`) starts the emit of the whole program,
+    /// as Go's `emitAllAffectedFiles` emits it (`start_emit_files`).
     fn emit_can_start(&self) -> bool {
-        !self.options().list_files_only.is_true()
-            && self.snapshot.borrow().can_use_incremental_state()
-            && check_cannot_see_outputs()
+        !self.options().list_files_only.is_true() && check_cannot_see_outputs()
     }
 
     /// The first global read of `EmitFilesAndReportErrors` before an early

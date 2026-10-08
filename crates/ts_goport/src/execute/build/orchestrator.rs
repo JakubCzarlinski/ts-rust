@@ -24,7 +24,8 @@
 //! checker emits when its check ends (a task that checks nothing, as with
 //! cached semantic diagnostics, `noCheck` or a syntax error, emits at
 //! once; a `noEmitOnError` task emits when its whole check has ended,
-//! `BuildTask::start_emit_after_check`), and the emit keeps its writes in
+//! `BuildTask::start_emit_after_check`; a task without the incremental
+//! state emits its whole program), and the emit keeps its writes in
 //! memory. The started tasks write their outputs one at a time
 //! (`build_project_finish`), in the order their check and emit end, as each
 //! Go builder writes when its own task ends. PORT (determinism): when tasks

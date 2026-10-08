@@ -1097,8 +1097,9 @@ impl BuildTask {
             // does the emit, behind the check, as in `tsc -p` (when the
             // rules of `Program::start_emit` allow it; a `noEmitOnError`
             // task starts it when its check has ended,
-            // `start_emit_after_check`; else the emit runs in
-            // `compile_and_emit_finish`). A task that checks nothing
+            // `start_emit_after_check`; a project that is not
+            // `incremental` or `composite` emits its whole program; else the
+            // emit runs in `compile_and_emit_finish`). A task that checks nothing
             // (cached semantic diagnostics, `noCheck`, or syntactic, program
             // or global diagnostics) starts its emit there too, so it ends
             // when its emit ends, as its Go goroutine does. The emit keeps

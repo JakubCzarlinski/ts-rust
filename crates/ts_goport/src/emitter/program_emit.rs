@@ -143,6 +143,49 @@ pub fn emit_file_results(options: EmitOptions) -> Vec<EmitResult> {
     emit_results_with(options, |emit_file| emit_file())
 }
 
+/// `emit_file_results` without the wait: sends the emit jobs of the files
+/// and returns. `wait` gives the result of `emit_file_results`. `tsc -b`
+/// starts the emit of a program without the incremental state this way
+/// (`execute::incremental::emit_files::start_emit_files`), behind its
+/// check, as `start_emit_batch_with` does for the incremental emit. With
+/// `noEmitOnError` or `noEmit` it emits before it returns, as
+/// `start_emit_batch_with` does. Not with `--singleThreaded` (Go runs the
+/// emits last-queued-first, `run_emit_jobs`) or a trace (its emit event
+/// ends with the emit): the early emit rules refuse both
+/// (`late_emit_options_allow`).
+pub fn start_emit_file_results(emit_options: EmitOptions) -> PendingEmitBatch {
+    debug_assert!(
+        !single_threaded() && crate::tracing::get().is_none(),
+        "start_emit_file_results with --singleThreaded or a trace"
+    );
+    if options().no_emit_on_error.is_true() || options().no_emit.is_true() {
+        return PendingEmitBatch(PendingBatch::Done(emit_file_results(emit_options)));
+    }
+    // Without `noEmit` and `noEmitOnError`, `handle_no_emit_options`
+    // returns None (see `emit_results_with`).
+    let target = EmitterOptions::of(&emit_options);
+    let source_files = get_source_files_to_emit(
+        emit_options.target_source_files.as_deref(),
+        target.force_dts_emit(),
+        target.force_js_emit(),
+    );
+    let files = match start_emit_files_with_pool(
+        &source_files,
+        |_| target.clone(),
+        |emit_file| emit_file(),
+    ) {
+        Some(pool) => PendingFiles::Pool(pool),
+        None => PendingFiles::Checkers(send_on_checker_threads_for_files(
+            &source_files,
+            move |source_file| emit_source_file(source_file, &target),
+        )),
+    };
+    PendingEmitBatch(PendingBatch::Sent {
+        has_file: vec![true; source_files.len()],
+        files,
+    })
+}
+
 /// `emit_with` before it combines the results (`emit_file_results`).
 fn emit_results_with(
     options: EmitOptions,
