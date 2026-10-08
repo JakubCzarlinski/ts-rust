@@ -691,15 +691,41 @@ fn remove_all(p: &str) {
     }
 }
 
+#[cfg(unix)]
 fn symlink(target: &str, link: &str) {
     std::os::unix::fs::symlink(target, link)
         .unwrap_or_else(|e| fatal(format!("Symlink {link}: {e}")));
 }
 
+// Go: os/file_windows.go:392 Symlink (a directory link when the target is
+// a directory).
+#[cfg(windows)]
+fn symlink(target: &str, link: &str) {
+    let result = if std::fs::metadata(target).is_ok_and(|m| m.is_dir()) {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    };
+    result.unwrap_or_else(|e| fatal(format!("Symlink {link}: {e}")));
+}
+
+#[cfg(unix)]
 fn chmod(p: &str, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode))
         .unwrap_or_else(|e| fatal(format!("Chmod {p}: {e}")));
+}
+
+// Go: os/file_posix.go:60 syscallMode and syscall_windows.go Chmod: on
+// Windows only the owner write bit counts; it clears or sets read-only.
+#[cfg(windows)]
+fn chmod(p: &str, mode: u32) {
+    let result = std::fs::metadata(p).and_then(|m| {
+        let mut permissions = m.permissions();
+        permissions.set_readonly(mode & 0o200 == 0);
+        std::fs::set_permissions(p, permissions)
+    });
+    result.unwrap_or_else(|e| fatal(format!("Chmod {p}: {e}")));
 }
 
 fn ms(n: u64) -> Duration {

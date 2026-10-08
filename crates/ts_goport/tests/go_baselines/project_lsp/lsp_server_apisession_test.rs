@@ -3,7 +3,11 @@
 //! handleInitializeAPISession`).
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as ApiStream;
+// The API pipe is a named pipe on Windows; a client opens it as a file.
+#[cfg(windows)]
+use std::fs::File as ApiStream;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Mutex};
@@ -108,16 +112,27 @@ fn init_api_session(client: &LspClient) -> PathBuf {
 
 /// A connected API client.
 struct ApiClient {
-    stream: UnixStream,
-    reader: BufReader<UnixStream>,
+    stream: ApiStream,
+    reader: BufReader<ApiStream>,
 }
 
 impl ApiClient {
     fn connect(pipe: &PathBuf) -> Self {
-        let stream = UnixStream::connect(pipe).expect("connect to the API pipe");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .expect("set a read timeout");
+        #[cfg(unix)]
+        let stream = {
+            let stream = ApiStream::connect(pipe).expect("connect to the API pipe");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(60)))
+                .expect("set a read timeout");
+            stream
+        };
+        // A pipe handle has no read timeout.
+        #[cfg(windows)]
+        let stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe)
+            .expect("connect to the API pipe");
         let reader = BufReader::new(stream.try_clone().expect("clone the API socket"));
         Self { stream, reader }
     }

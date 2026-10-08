@@ -17,8 +17,29 @@ fn normalize(p: &Path) -> String {
 }
 
 // Go: helpers_test.go:12 mklink (the non-Windows branch)
+#[cfg(unix)]
 fn mklink(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).expect("symlink");
+}
+
+// Go: helpers_test.go:12 mklink (the Windows branch): a junction for a
+// directory, a symlink for a file.
+// PORT: Go skips the test when the file symlink needs elevation or developer
+// mode; libtest has no skip, so this panics with that text.
+#[cfg(windows)]
+fn mklink(target: &Path, link: &Path) {
+    if target.is_dir() {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "mklink /J");
+    } else {
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
 }
 
 // Go: os_test.go:17 TestOS
