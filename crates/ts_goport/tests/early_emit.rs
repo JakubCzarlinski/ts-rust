@@ -106,7 +106,7 @@ fn build_early_emit_writes_what_the_barrier_writes() {
     let config = root.join("tsconfig.json");
     let text = format!(
         r#"{{
-  "extends": "{FIXTURE}/tsconfig.json",
+  "extends": "{fixture}/tsconfig.json",
   "compilerOptions": {{
     "composite": true,
     "outDir": "{out}",
@@ -114,7 +114,8 @@ fn build_early_emit_writes_what_the_barrier_writes() {
   }}
 }}
 "#,
-        out = out.display()
+        fixture = norm_str(FIXTURE),
+        out = norm(&out)
     );
     fs::write(&config, text).unwrap_or_else(|error| panic!("write {}: {error}", config.display()));
     let barrier = tsgo_build(&config, &out, false);
@@ -221,7 +222,7 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
         fs::write(root.join("src/a.ts"), "export function* g() { yield 1; }\n")
             .expect("write a.ts");
         let expected = expected.map_or_else(String::new, |text| {
-            text.replace("{root}", &root.display().to_string())
+            text.replace("{root}", &norm(&root))
         });
         let status = if expected.is_empty() { 0 } else { 2 };
         for args in [
@@ -344,6 +345,7 @@ fn rules_keep_the_barrier_when_a_check_could_see_the_outputs() {
         .join("goport-early-emit-rules")
         .to_string_lossy()
         .into_owned();
+    let out_dir = norm_str(&out_dir);
     // As in `early_emit_writes_what_the_barrier_writes`.
     let out = out_dir.clone();
     assert!(
@@ -358,10 +360,10 @@ fn rules_keep_the_barrier_when_a_check_could_see_the_outputs() {
     }));
     // F2: the program files are inside the outDir or declarationDir.
     assert!(!can_start_with(RULES_CONFIG, |options| {
-        options.out_dir = format!("{FIXTURE}/src");
+        options.out_dir = format!("{}/src", norm_str(FIXTURE));
     }));
     assert!(!can_start_with(RULES_CONFIG, |options| {
-        options.declaration_dir = FIXTURE.to_string();
+        options.declaration_dir = norm_str(FIXTURE);
     }));
     // F3: an output directory under `node_modules`.
     let under_node_modules = format!("{out_dir}/node_modules/out");
@@ -388,7 +390,8 @@ fn can_start(edit: impl FnOnce(&mut CompilerOptions)) -> bool {
 
 /// `can_start` with the fixture config `config`.
 fn can_start_with(config: &str, edit: impl FnOnce(&mut CompilerOptions)) -> bool {
-    let program = try_load_version(config, edit)
+    let config = norm_str(config);
+    let program = try_load_version(&config, edit)
         .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
     let can_start = {
         let _scope = enter_program(Some(program));
@@ -407,10 +410,10 @@ fn tsgo(out: &Path, extra: &[&str], early: bool) -> Run {
         fs::remove_dir_all(out).unwrap_or_else(|error| panic!("remove {}: {error}", out.display()));
     }
     let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
-        .args(["-p", CONFIG, "--incremental", "--outDir"])
-        .arg(out)
+        .args(["-p", &norm_str(CONFIG), "--incremental", "--outDir"])
+        .arg(norm(out))
         .arg("--tsBuildInfoFile")
-        .arg(out.join("tsconfig.tsbuildinfo"))
+        .arg(norm(&out.join("tsconfig.tsbuildinfo")))
         .args(["--listEmittedFiles", "--pretty", "false"])
         .args(extra)
         .env("GOPORT_EMIT_THREADS", "2")
@@ -437,7 +440,7 @@ fn tsgo_build(config: &Path, out: &Path, early: bool) -> Run {
     }
     let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
         .arg("-b")
-        .arg(config)
+        .arg(norm(config))
         .args(["--listEmittedFiles", "--pretty", "false"])
         .env("GOPORT_EMIT_THREADS", "2")
         .env("GOPORT_EARLY_EMIT", if early { "1" } else { "0" })
@@ -484,5 +487,25 @@ fn scratch_dir() -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("goport-early-emit-{}-{nanos}", std::process::id()));
     fs::create_dir(&dir).unwrap_or_else(|error| panic!("create {}: {error}", dir.display()));
-    fs::canonicalize(&dir).expect("canonical scratch dir")
+    let real = fs::canonicalize(&dir).expect("canonical scratch dir");
+    // On Windows the real path is verbatim (`\\?\C:\...`), which the program
+    // does not take as a cwd or in an argument.
+    #[cfg(windows)]
+    let real = PathBuf::from(real.to_string_lossy().trim_start_matches("\\\\?\\"));
+    real
+}
+
+/// `text` as the program names a path: with `/` separators and no verbatim
+/// prefix (`C:/Users/x/y` on Windows). The identity on Unix.
+fn norm_str(text: &str) -> String {
+    #[cfg(windows)]
+    let text = text.trim_start_matches("\\\\?\\").replace('\\', "/");
+    #[cfg(not(windows))]
+    let text = text.to_owned();
+    text
+}
+
+/// `norm_str` of a path.
+fn norm(path: &Path) -> String {
+    norm_str(&path.to_string_lossy())
 }
