@@ -12,11 +12,12 @@
 #      revoke command (it does not revoke by itself).
 # npm drops a new trust that publishes nothing in 2 days. So run this shortly before the first tag.
 # The first publish binds a trust to the repo's GitHub ID, not only its name. After the repo is
-# recreated (as on 2026-10-07), run it with --relink: it revokes every trust of each package first.
+# recreated, run it with --relink: it revokes every trust of each package first. The 2026-10-07
+# recreation needs no relink: v0.1.0 already published from the new repo.
 #
 # usage: npm/trust-setup.sh [--relink]    needs npm 11.15.0 or later (npm trust)
 set -euo pipefail
-[[ ${1:-} != help ]] || { sed -n '2,17p' "$0" >&2; exit 2; }
+[[ ${1:-} != help ]] || { sed -n '2,18p' "$0" >&2; exit 2; }
 relink=0
 [[ ${1:-} != --relink ]] || relink=1
 repo=pingdotgg/ts-rust
