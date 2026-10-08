@@ -62,7 +62,7 @@ npx tsc-rs -p tsconfig.json
 with the `typescript` package. Each [release](https://github.com/pingdotgg/ts-rust/releases) also
 has a standalone archive per platform: the `tsc` binary with the lib files next to it.
 
-Platforms: Linux x64 (static, any distribution) and macOS arm64. Windows and Linux arm64 are not
+Platforms: Linux x64 and arm64 (static, any distribution) and macOS arm64. Windows is not
 available yet.
 
 To use it in VS Code, see the [npm package README](npm/tsc-rs-readme.md#vs-code).

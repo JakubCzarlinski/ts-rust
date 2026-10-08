@@ -103,6 +103,9 @@ jobs:
           if [[ $RUNNER_OS == Linux ]]; then
             target=${{ matrix.target }}
             export "CC_${target//-/_}=musl-gcc"
+            # jemalloc stops at start when the kernel page is bigger than its build page. arm64 kernels
+            # use 4, 16 or 64 KiB pages; 2^16 covers all three.
+            [[ $target != aarch64-* ]] || export JEMALLOC_SYS_WITH_LG_PAGE=16
             export RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=static"
             JEMALLOC_SYS_WITH_MALLOC_CONF=$(sed -n 's/^const JEMALLOC_CONF: &str = "\([^"]*\)";$/\1/p' crates/ts_goport/src/bin/tsgo.rs | head -1)
             [[ -n $JEMALLOC_SYS_WITH_MALLOC_CONF ]] || { echo "::error::no JEMALLOC_CONF in bin/tsgo.rs"; exit 1; }
