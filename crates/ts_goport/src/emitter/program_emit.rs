@@ -425,10 +425,19 @@ pub fn emit_can_start_with_check() -> bool {
 /// task finishes (`buffer_early_emit_writes`); else it emits in Go's order.
 #[must_use]
 pub fn early_emit_options_allow() -> bool {
+    !options().no_emit_on_error.is_true() && late_emit_options_allow()
+}
+
+/// PORT: not in Go (perf). `early_emit_options_allow` without its
+/// `noEmitOnError` rule. `tsc -b` starts the emit of a `noEmitOnError` task
+/// when its check has ended (`Program::start_emit_after_check` in
+/// execute/incremental/program.rs), where Go's `HandleNoEmitOptions` has all
+/// the diagnostics it needs; the other rules still hold there.
+#[must_use]
+pub fn late_emit_options_allow() -> bool {
     let options = options();
     early_emit_enabled()
         && !options.no_emit.is_true()
-        && !options.no_emit_on_error.is_true()
         && !single_threaded()
         && crate::tracing::get().is_none()
         && !options.preserve_symlinks.is_true()

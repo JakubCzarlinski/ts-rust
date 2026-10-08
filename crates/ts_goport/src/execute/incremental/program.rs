@@ -24,6 +24,7 @@ use super::snapshot_to_build_info::snapshot_to_build_info;
 use crate::emitter::emitter::EmitOnly;
 use crate::emitter::program_emit::{
     EmitOptions, EmitResult, WriteFileData, check_cannot_see_outputs, early_emit_options_allow,
+    late_emit_options_allow,
 };
 use crate::execute::tsc::emit::ProgramLike;
 use crate::frontend::prelude::*;
@@ -83,6 +84,9 @@ struct StartedCheck {
     /// The emit of the affected files, sent behind the check. `emit` takes
     /// it.
     emit: Option<StartedEmit>,
+    /// The `HandleNoEmitOptions` result of `start_emit_after_check`. `emit`
+    /// takes it.
+    no_emit: Option<Option<EmitResult>>,
 }
 
 // Go: incremental/program.go:48 NewProgram
@@ -485,8 +489,8 @@ impl Program {
     /// diagnostics, where `start_check` returns before it reads them. The
     /// affected-file walk and the emit can add global diagnostics (Go's
     /// "incidental signature-generation globals"), so this reads them
-    /// first, after the program diagnostics, as `start_check` does. The
-    /// next `get_global_diagnostics` call takes them.
+    /// first (`read_first_global_diagnostics`). The next
+    /// `get_global_diagnostics` call takes them.
     pub fn start_emit(&self, options: EmitOptions) {
         debug_assert!(
             self.started.borrow().emit.is_none(),
@@ -494,32 +498,104 @@ impl Program {
         );
         // The file rules read every program file: the checkers check
         // meanwhile (when a check started).
-        if !early_emit_options_allow()
-            || self.options().list_files_only.is_true()
-            || !self.snapshot.borrow().can_use_incremental_state()
-            || !check_cannot_see_outputs()
-        {
+        if !early_emit_options_allow() || !self.emit_can_start() {
             return;
         }
-        if self.started.borrow().global_diagnostics.is_none()
-            && get_syntactic_diagnostics(Node::NIL).is_empty()
-        {
-            get_program_diagnostics();
-            let global_diagnostics = get_global_diagnostics();
-            self.started.borrow_mut().global_diagnostics = Some(global_diagnostics);
-        }
+        self.read_first_global_diagnostics();
         let emit = start_emit_files(self, options);
         self.started.borrow_mut().emit = Some(emit);
     }
 
+    /// PORT: not in Go (perf). `tsc -b` only: the early emit of a
+    /// `noEmitOnError` task, after the check that `start_check` sent has
+    /// ended (`BuildTask::start_emit_after_check`). Go's task goroutine then
+    /// runs `Emit`, whose `HandleNoEmitOptions` reads the diagnostics again
+    /// (a second global read, the semantic diagnostics and the declaration
+    /// diagnostics pass), and emits only when there are none. This does that
+    /// now, on the loading thread:
+    ///
+    /// 1. It reads the first global diagnostics when `start_check` did not
+    ///    (`read_first_global_diagnostics`), and sets them aside, so that
+    ///    `HandleNoEmitOptions` reads them from the checkers again (Go's
+    ///    second read) and `EmitFilesAndReportErrors` still gets the first.
+    /// 2. It keeps the `HandleNoEmitOptions` result for `emit`.
+    /// 3. With no diagnostic it sends the emit of the affected files
+    ///    (`start_emit_files`). With `noEmitOnError` each file emits through
+    ///    `emit_with` (Go's per-file `HandleNoEmitOptions`) before this
+    ///    returns.
+    ///
+    /// So the checker jobs keep Go's order (check, second global read,
+    /// declaration diagnostics, emit). The caller runs it inside
+    /// `buffer_early_emit_writes`, so the writes wait for the task's
+    /// `compile_and_emit_finish`: the task writes when its emit ends, as its
+    /// Go builder does, not when its check ends. Returns false and does
+    /// nothing without `noEmitOnError`, or when the rules of `start_emit`
+    /// without its `noEmitOnError` rule (`late_emit_options_allow`) do not
+    /// allow the early emit; then `emit` runs in Go's order.
+    pub fn start_emit_after_check(&self, options: EmitOptions) -> bool {
+        debug_assert!(
+            self.started.borrow().emit.is_none() && self.started.borrow().no_emit.is_none(),
+            "start_emit_after_check: the emit already started"
+        );
+        if !self.options().no_emit_on_error.is_true()
+            || !late_emit_options_allow()
+            || !self.emit_can_start()
+        {
+            return false;
+        }
+        self.read_first_global_diagnostics();
+        let first_global_diagnostics = self.started.borrow_mut().global_diagnostics.take();
+        let result = handle_no_emit_options(self, None, None);
+        self.started.borrow_mut().global_diagnostics = first_global_diagnostics;
+        let emits = result.is_none();
+        self.started.borrow_mut().no_emit = Some(result);
+        if emits {
+            let emit = start_emit_files(self, options);
+            self.started.borrow_mut().emit = Some(emit);
+        }
+        true
+    }
+
+    /// The rules of `start_emit` after the options: Go emits (no
+    /// `--listFilesOnly`; `tsc -p` reaches here with it), the program has
+    /// the incremental state, and the check cannot see the outputs
+    /// (`check_cannot_see_outputs`).
+    fn emit_can_start(&self) -> bool {
+        !self.options().list_files_only.is_true()
+            && self.snapshot.borrow().can_use_incremental_state()
+            && check_cannot_see_outputs()
+    }
+
+    /// The first global read of `EmitFilesAndReportErrors` before an early
+    /// emit, when `start_check` did not read it and the syntactic
+    /// diagnostics are empty.
+    fn read_first_global_diagnostics(&self) {
+        if self.started.borrow().global_diagnostics.is_some()
+            || !get_syntactic_diagnostics(Node::NIL).is_empty()
+        {
+            return;
+        }
+        // Go's order: the program diagnostics, then the globals. The read
+        // only marks the include processor diagnostics as read
+        // (`--explainFiles`), and `EmitFilesAndReportErrors` reads them
+        // again before any output that depends on it, so no output shows
+        // whether this read ran.
+        get_program_diagnostics();
+        let global_diagnostics = get_global_diagnostics();
+        self.started.borrow_mut().global_diagnostics = Some(global_diagnostics);
+    }
+
     /// PORT: not in Go. True when the caller used everything that
-    /// `start_check` and `start_emit` read and started. `tsc -b`
-    /// and `tsc -p` assert it after the emit: a result left over means the
-    /// calls did not follow `EmitFilesAndReportErrors`.
+    /// `start_check`, `start_emit` and `start_emit_after_check` read and
+    /// started. `tsc -b` and `tsc -p` assert it after the emit: a result
+    /// left over means the calls did not follow `EmitFilesAndReportErrors`.
     #[must_use]
     pub fn start_check_used(&self) -> bool {
         let started = self.started.borrow();
-        started.global_diagnostics.is_none() && started.check.is_none() && started.emit.is_none()
+        started.global_diagnostics.is_none()
+            && started.check.is_none()
+            && started.emit.is_none()
+            && started.no_emit.is_none()
     }
 
     // Go: incremental/program.go:189 GetSemanticDiagnostics
@@ -589,19 +665,26 @@ impl Program {
     // Go: incremental/program.go:243 Emit
     // GetModeForUsageLocation implements compiler.AnyProgram interface.
     // PORT: with an emit that `start_emit` sent, this waits for it
-    // and finishes it. That emit started only without `noEmit` and
-    // `noEmitOnError`, so Go goes to `emitFiles` here too.
+    // and finishes it. That emit started only without `noEmit`, and with
+    // `noEmitOnError` only after `start_emit_after_check` ran
+    // `HandleNoEmitOptions` with no diagnostic, so Go goes to `emitFiles`
+    // here too. When `start_emit_after_check` found diagnostics, this uses
+    // its result instead of a second `HandleNoEmitOptions` (the call here,
+    // from `EmitFilesAndReportErrors`, has no target file and no `noEmit`).
     pub fn emit(&self, options: EmitOptions) -> EmitResult {
         self.panic_if_no_program("Emit");
 
         let started = self.started.borrow_mut().emit.take();
+        let no_emit = self.started.borrow_mut().no_emit.take();
         if let Some(started) = started {
             return finish_emit_files(self, started, &options);
         }
 
         let mut result = None;
-        // #4407: Go `HandleNoEmitOptions` with `emitBuildInfo` under noEmit.
-        if !options.force_emit && options.emit_only != EmitOnly::BuilderSignature {
+        if let Some(no_emit) = no_emit {
+            result = no_emit;
+        } else if !options.force_emit && options.emit_only != EmitOnly::BuilderSignature {
+            // #4407: Go `HandleNoEmitOptions` with `emitBuildInfo` under noEmit.
             let emit_build_info: &dyn Fn() -> Option<EmitResult> =
                 &|| self.emit_build_info(&options);
             result = handle_no_emit_options(

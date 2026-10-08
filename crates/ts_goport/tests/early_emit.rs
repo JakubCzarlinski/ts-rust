@@ -24,7 +24,9 @@
 //! task that checks nothing (every file's semantic diagnostics cached,
 //! `noCheck`, or a syntax error) must emit on its checker threads too, so it
 //! finishes when its own emit ends, as a Go builder does. The global
-//! diagnostics test makes its own project there too.
+//! diagnostics test makes its own project there too. So do the k2gaps1
+//! tests: a `noEmitOnError` task writes when its emit ends, and
+//! `tsc -p --listFilesOnly` emits nothing.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -150,7 +152,7 @@ fn build_early_emit_writes_what_the_barrier_writes() {
 #[test]
 fn build_emit_only_task_finishes_when_its_emit_ends() {
     assert_eq!(
-        build_emit_only_solution("", &[]),
+        build_emit_only_solution("", &[], 0),
         (Some(0), String::new()),
         "p2 finishes before p1, so p3 loads after p2 wrote v2"
     );
@@ -164,7 +166,7 @@ fn build_emit_only_task_finishes_when_its_emit_ends() {
 #[test]
 fn build_no_check_task_finishes_when_its_emit_ends() {
     assert_eq!(
-        build_emit_only_solution(r#", "noCheck": true"#, &[]),
+        build_emit_only_solution(r#", "noCheck": true"#, &[], 0),
         (Some(0), String::new()),
         "p2 finishes before p1, so p3 loads after p2 wrote v2"
     );
@@ -178,7 +180,7 @@ fn build_no_check_task_finishes_when_its_emit_ends() {
 #[test]
 fn build_task_with_syntax_errors_finishes_when_its_emit_ends() {
     assert_eq!(
-        build_emit_only_solution("", &[("bad.ts", "export const bad = ;\n")]),
+        build_emit_only_solution("", &[("bad.ts", "export const bad = ;\n")], 2),
         (
             Some(2),
             "p1/src/bad.ts(1,20): error TS1109: Expression expected.\n".to_owned()
@@ -249,93 +251,252 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
     }
 }
 
-/// Makes the solution of `build_emit_only_task_finishes_when_its_emit_ends`
-/// in a scratch dir, with `p1_options` added to p1's compiler options and
-/// `p1_files` added to p1's `src`, runs its builds and returns the exit code
-/// and stdout of the last one (`--builders 2`).
-fn build_emit_only_solution(p1_options: &str, p1_files: &[(&str, &str)]) -> (Option<i32>, String) {
+/// k2gaps1 (G3): as `build_emit_only_task_finishes_when_its_emit_ends`,
+/// with `noEmitOnError` in p1. Go's p1 checks (every file cached), reads
+/// the diagnostics again in `HandleNoEmitOptions` with the declaration
+/// diagnostics pass, then emits, and writes when that emit ends. So p2
+/// ends first: exit 0, no output (Go N gives that). The port starts p1's
+/// emit when its check has ended (`BuildTask::start_emit_after_check`).
+/// Before, p1 finished when its check ended and emitted then, so its
+/// builder took p3 before p2 wrote (TS2305).
+#[test]
+fn build_no_emit_on_error_task_finishes_when_its_emit_ends() {
+    assert_eq!(
+        build_emit_only_solution(r#", "noEmitOnError": true"#, &[], 0),
+        (Some(0), String::new()),
+        "p2 finishes before p1, so p3 loads after p2 wrote v2"
+    );
+}
+
+/// k2gaps1 (G3): the other way round. p1 is the big `noEmitOnError` writer
+/// (3,000 modules), whose new output adds `v2`; p2 only emits a smaller
+/// file (600 modules); p3 reads `v2` from p1's output without a reference
+/// (`--builders 2`). Go's p1 writes when its emit ends, after p2 ended and
+/// its builder took p3, so p3 loads before p1 writes: TS2305 (Go N gives
+/// that, also with 16 copies at once). Before, the port emitted p1 and
+/// wrote its outputs as soon as p1's check ended, so p3 saw `v2` (exit 0).
+#[test]
+fn build_no_emit_on_error_writer_writes_when_its_emit_ends() {
+    let solution = Solution::new();
+    solution.write("tsconfig.json", SOLUTION);
+    solution.write(
+        "p1/tsconfig.json",
+        &project_config(r#", "noEmitOnError": true"#),
+    );
+    for project in ["p2", "p3"] {
+        solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
+    }
+    solution.write(
+        "p1/src/index.ts",
+        &(big_module("v1", 3000) + "export const v1 = 1;\n"),
+    );
+    solution.write("p2/src/index.ts", "export const s = 1;\n");
+    solution.write("p2/src/mid.ts", &big_module("m1", 600));
+    solution.write(
+        "p3/src/a.ts",
+        "import { v1, v2 } from \"../../p1/dist/index\";\nexport const a = v1 + v2;\n",
+    );
+    solution.build(&["tsconfig.json"]);
+    solution.write(
+        "p1/src/index.ts",
+        &(big_module("v2", 3000) + "export const v1 = 1;\nexport const v2 = 2;\n"),
+    );
+    solution.write(
+        "p2/src/index.ts",
+        "export const s = 1;\nexport const t = 2;\n",
+    );
+    solution.write("p2/src/mid.ts", &big_module("m2", 600));
+    for project in ["p1", "p2"] {
+        assert_eq!(
+            solution.build(&[project, "--noEmit"]),
+            (Some(0), String::new()),
+            "tsc -b {project} --noEmit"
+        );
+    }
+    assert_eq!(
+        solution.build(&["tsconfig.json", "--builders", "2"]),
+        (
+            Some(2),
+            "p3/src/a.ts(1,14): error TS2305: Module '\"../../p1/dist/index\"' has no exported member 'v2'.\n"
+                .to_owned()
+        ),
+        "p2 finishes first, so p3 loads before p1 wrote v2"
+    );
+    solution.remove();
+}
+
+/// k2gaps1 (M6): `tsc -p --listFilesOnly` on an incremental project lists
+/// the program files, exits 0 and writes nothing (Go N gives that). The
+/// program reaches the early emit (`start_check_and_emit`), whose rules
+/// must refuse `--listFilesOnly`.
+#[test]
+fn tsc_p_list_files_only_writes_no_output() {
     let root = scratch_dir();
-    let write = |path: &str, text: &str| {
-        let path = root.join(path);
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{"compilerOptions": {"incremental": true, "strict": true, "target": "es2022",
+  "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
+  "declaration": true, "skipLibCheck": true, "lib": ["es5"]}, "include": ["src"]}"#,
+    )
+    .expect("write the config");
+    fs::create_dir(root.join("src")).expect("create src");
+    fs::write(root.join("src/a.ts"), "export const a = 1;\n").expect("write a.ts");
+    let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+        .current_dir(&root)
+        .args([
+            "-p",
+            "tsconfig.json",
+            "--listFilesOnly",
+            "--pretty",
+            "false",
+        ])
+        .env("GOPORT_EARLY_EMIT", "1")
+        .output()
+        .expect("run tsgo");
+    assert_eq!(
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        ),
+        (
+            Some(0),
+            format!(
+                "bundled:///libs/lib.es5.d.ts\nbundled:///libs/lib.decorators.d.ts\n\
+                 bundled:///libs/lib.decorators.legacy.d.ts\n{}/src/a.ts\n",
+                root.display()
+            )
+        ),
+        "tsc -p --listFilesOnly lists the files"
+    );
+    let mut files = BTreeMap::new();
+    read_files(&root, &root, &mut files);
+    assert_eq!(
+        files.keys().collect::<Vec<_>>(),
+        ["src/a.ts", "tsconfig.json"],
+        "tsc -p --listFilesOnly writes nothing"
+    );
+    fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
+}
+
+/// The solution config of p1, p2 and p3.
+const SOLUTION: &str =
+    r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}, {"path": "./p3"}]}"#;
+
+/// A `tsc -b` solution in a scratch dir.
+struct Solution {
+    root: PathBuf,
+}
+
+impl Solution {
+    fn new() -> Self {
+        Solution {
+            root: scratch_dir(),
+        }
+    }
+
+    /// Writes `text` to `path` under the root, and makes its directories.
+    fn write(&self, path: &str, text: &str) {
+        let path = self.root.join(path);
         fs::create_dir_all(path.parent().expect("a file in a project"))
             .unwrap_or_else(|error| panic!("create the dir of {}: {error}", path.display()));
         fs::write(&path, text).unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
-    };
-    let tsgo_b = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_tsgo"))
-            .current_dir(&root)
+    }
+
+    /// Runs `tsgo -b` with `args` and `--pretty false`, and returns its exit
+    /// code and stdout.
+    fn build(&self, args: &[&str]) -> (Option<i32>, String) {
+        let output = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+            .current_dir(&self.root)
             .arg("-b")
             .args(args)
             .args(["--pretty", "false"])
             .env("GOPORT_EARLY_EMIT", "1")
             .output()
-            .expect("run tsgo -b")
-    };
-    // The code of 1,500 modules in one file: its emit takes far longer than
-    // the load and emit of p2.
-    let big = |tag: &str| {
-        use std::fmt::Write as _;
-        let mut text = String::new();
-        for i in 0..1500 {
-            write!(
-                text,
-                "export interface I{i} {{ a: number; b: string; c{i}: boolean }}\n\
-                 export function f{i}(x: I{i}): I{i} {{ return {{ ...x }}; }}\n\
-                 export class C{i} {{ constructor(public v: I{i}) {{}} get(): I{i} {{ return f{i}(this.v); }} }}\n\
-                 export const k{i}: number = {i}; // {tag}\n"
-            )
-            .expect("write to a String");
-        }
-        text
-    };
-    let config = |extra: &str| {
-        format!(
-            r#"{{"compilerOptions": {{"composite": true, "strict": true, "target": "es2022",
+            .expect("run tsgo -b");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
+    }
+
+    /// Removes the scratch dir. A failed test keeps it.
+    fn remove(self) {
+        fs::remove_dir_all(&self.root)
+            .unwrap_or_else(|error| panic!("remove {}: {error}", self.root.display()));
+    }
+}
+
+/// The config of a solution project, with `extra` added to its compiler
+/// options.
+fn project_config(extra: &str) -> String {
+    format!(
+        r#"{{"compilerOptions": {{"composite": true, "strict": true, "target": "es2022",
   "module": "esnext", "moduleResolution": "bundler", "outDir": "dist", "rootDir": "src",
   "skipLibCheck": true{extra}}}, "include": ["src"]}}"#
+    )
+}
+
+/// The code of `count` modules in one file, with `tag` in each comment: its
+/// load and emit take far longer than those of a small project.
+fn big_module(tag: &str, count: usize) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for i in 0..count {
+        write!(
+            text,
+            "export interface I{i} {{ a: number; b: string; c{i}: boolean }}\n\
+             export function f{i}(x: I{i}): I{i} {{ return {{ ...x }}; }}\n\
+             export class C{i} {{ constructor(public v: I{i}) {{}} get(): I{i} {{ return f{i}(this.v); }} }}\n\
+             export const k{i}: number = {i}; // {tag}\n"
         )
-    };
-    write(
-        "tsconfig.json",
-        r#"{"files": [], "references": [{"path": "./p1"}, {"path": "./p2"}, {"path": "./p3"}]}"#,
-    );
-    write("p1/tsconfig.json", &config(p1_options));
+        .expect("write to a String");
+    }
+    text
+}
+
+/// Makes the solution of `build_emit_only_task_finishes_when_its_emit_ends`
+/// in a scratch dir, with `p1_options` added to p1's compiler options and
+/// `p1_files` added to p1's `src`, runs its builds and returns the exit code
+/// and stdout of the last one (`--builders 2`). `p1_no_emit` is Go N's exit
+/// code of `tsc -b p1 --noEmit` on it.
+fn build_emit_only_solution(
+    p1_options: &str,
+    p1_files: &[(&str, &str)],
+    p1_no_emit: i32,
+) -> (Option<i32>, String) {
+    let solution = Solution::new();
+    solution.write("tsconfig.json", SOLUTION);
+    solution.write("p1/tsconfig.json", &project_config(p1_options));
     for project in ["p2", "p3"] {
-        write(&format!("{project}/tsconfig.json"), &config(""));
+        solution.write(&format!("{project}/tsconfig.json"), &project_config(""));
     }
-    write("p1/src/index.ts", &big("v1"));
+    // Its emit takes far longer than the load and emit of p2.
+    solution.write("p1/src/index.ts", &big_module("v1", 1500));
     for (name, text) in p1_files {
-        write(&format!("p1/src/{name}"), text);
+        solution.write(&format!("p1/src/{name}"), text);
     }
-    write("p2/src/s0.ts", "export const s0 = 0;\n");
-    write("p2/src/s1.ts", "export const s1 = 1;\n");
-    write("p2/src/index.ts", "export const v1 = 1;\n");
-    write(
+    solution.write("p2/src/s0.ts", "export const s0 = 0;\n");
+    solution.write("p2/src/s1.ts", "export const s1 = 1;\n");
+    solution.write("p2/src/index.ts", "export const v1 = 1;\n");
+    solution.write(
         "p3/src/a.ts",
         "import { v1, v2 } from \"../../p2/dist/index\";\nexport const a = v1 + v2;\n",
     );
     // The cold build: p3 cannot see `v2` yet.
-    tsgo_b(&["tsconfig.json"]);
-    write("p1/src/index.ts", &big("v2"));
-    write(
+    solution.build(&["tsconfig.json"]);
+    solution.write("p1/src/index.ts", &big_module("v2", 1500));
+    solution.write(
         "p2/src/index.ts",
         "export const v1 = 1;\nexport const v2 = 2;\n",
     );
     // p1's errors are part of the case; p2 must check clean.
-    tsgo_b(&["p1", "--noEmit"]);
-    let output = tsgo_b(&["p2", "--noEmit"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "tsc -b p2 --noEmit: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let output = tsgo_b(&["tsconfig.json", "--builders", "2"]);
-    fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-    )
+    let (status, stdout) = solution.build(&["p1", "--noEmit"]);
+    assert_eq!(status, Some(p1_no_emit), "tsc -b p1 --noEmit: {stdout}");
+    let (status, stdout) = solution.build(&["p2", "--noEmit"]);
+    assert_eq!(status, Some(0), "tsc -b p2 --noEmit: {stdout}");
+    let result = solution.build(&["tsconfig.json", "--builders", "2"]);
+    solution.remove();
+    result
 }
 
 #[test]
