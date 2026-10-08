@@ -66,6 +66,13 @@ Protocol 5 (every pin after 673a5f17d713; bump D N' = microsoft/TypeScript fed0b
     --kind ext` sends them at the end of each ext_file trace, so the earlier event keys stay;
   - KindSourceKeyword (#63915) moves every later SyntaxKind value up by 1. `build` reads the values from the
     pin's kind_generated.go, as before.
+  `check --wire 4` sends protocol 5 traces in their protocol 4 form (wire4, the inverse of symbol_refs: symbol
+  specs read /id, a symbol property request is {snapshot, project, objectId}, a snapshot reference with a literal
+  id is that id) and answers callbacks in their protocol 4 form, for a rebase run of base bins that speak protocol
+  4. The 7 new methods go as they are. Answers are normalized as protocol 5 answers, so a protocol 4 symbol
+  answer is never `same`. Node handles keep their N' kind ("kind is informational only": Go resolveNodeHandle).
+  As for --wire 3, it needs a reviewer ruling before its results are used; the result meta and manifest record
+  "wire": 4.
 `build` writes traces of the run's protocol. Normalization reads the escaped names from protocol 2 on.
 Build the traces at each pin: they hold positions from the pin's encoded AST (UTF-16 offsets after the
 O pin, UTF-8 at O; they differ in files with non-ASCII text). With GOPORT_PIN unset the run uses the
@@ -75,7 +82,7 @@ Commands:
   build     --preset P --battery B [--kind files|proto|callbacks|lsp|xchecker|ext] [--oracle BIN] [--limit N]
   record    --battery B [--oracle BIN] [--jobs N] [--force] [--only S]
   selfcheck --battery B [--oracle BIN] [--jobs N] [--runs N] [--only S]
-  check     --battery B --goport BIN --label L [--jobs N] [--only S] [--wire 3]
+  check     --battery B --goport BIN --label L [--jobs N] [--only S] [--wire 3|4]
   summary   --label L [--baseline L0]
   show      --label L --battery B --trace T --event K
 
@@ -920,9 +927,10 @@ CALLBACK_NAMES = ("readFile", "fileExists", "directoryExists", "getAccessibleEnt
 
 
 class CallbackFS:
-    def __init__(self, names, mode):
+    def __init__(self, names, mode, protocol=PROTOCOL):
         self.names = set(names)
         self.mode = mode
+        self.protocol = protocol  # 4 with --wire 4: protocol 4 answers for base bins
         self.overlay = {}  # abs path -> text | None (deleted)
         self.calls = set()
         self.writes = []  # writeFile calls since the last take_writes: {path, bytes, sha256}
@@ -943,7 +951,7 @@ class CallbackFS:
 
     def handle(self, method, arg):
         ans = self._answer(method, arg)
-        return callback_kind(method, ans) if PROTOCOL >= 5 and not method.startswith("#notification:") else ans
+        return callback_kind(method, ans) if self.protocol >= 5 and not method.startswith("#notification:") else ans
 
     def _answer(self, method, arg):
         """The protocol 4 answer: None is "use the real FS"; readFile {"content": null} is "missing"."""
@@ -1320,9 +1328,11 @@ class SessionRun:
 
     def __init__(self, header, events, binary, role, tmp_root, golden=None, timeout=None, keep=False, wire=None):
         self.header, self.events, self.binary, self.role = header, events, binary, role
-        self.wire = wire  # 3: send the snapshot events of protocol 4 traces in their protocol 3 form
+        self.wire = wire  # 3: protocol 4 traces in their protocol 3 form; 4: protocol 5 traces in protocol 4 form
         if wire == 3:
             self.events = [wire3_event(ev) for ev in events]
+        elif wire == 4:
+            self.events = [wire4_event(ev) for ev in events]
         self.golden = golden  # event -> golden record (check mode)
         self.timeout = timeout or REQUEST_TIMEOUT[role]
         self.tmp_root, self.keep = tmp_root, keep
@@ -1333,7 +1343,8 @@ class SessionRun:
         pdir = h["project"]["dir"]
         self.ctx = {"project_dir": pdir, "tsconfig": h["project"]["tsconfig"], "run_dir": run_dir,
                     "snapshot": None, "projects": []}
-        cbfs = CallbackFS(h.get("callbacks") or [], h.get("callbackMode", "fallback")) if h.get("callbacks") else None
+        cbfs = CallbackFS(h.get("callbacks") or [], h.get("callbackMode", "fallback"),
+                          4 if self.wire == 4 else PROTOCOL) if h.get("callbacks") else None
         norm = Normalizer([(run_dir, "@RUN_DIR@"), (pdir, "@PROJECT_DIR@")])
         records = []
         epochs = [[]]  # answers of each server process, for Normalizer.finalize
@@ -1818,8 +1829,9 @@ def cmd_selfcheck(args):
 
 
 def cmd_check(args):
-    if args.wire and PROTOCOL != 4:
-        raise UsageError(f"--wire {args.wire} needs protocol 4 traces (pin {PIN} has protocol {PROTOCOL})")
+    if args.wire and PROTOCOL != args.wire + 1:
+        raise UsageError(f"--wire {args.wire} needs protocol {args.wire + 1} traces (pin {PIN} has protocol "
+                         f"{PROTOCOL})")
     oracle_sha = args.oracle_sha or sha256_file(args.oracle)
     traces = list_traces(args.out_root, args.battery, args.only)
     gdir = golden_dir(args.out_root, oracle_sha, args.battery)
@@ -2225,6 +2237,59 @@ def to_reference(pointer):
 def snapshot_symbol(symbol_id):
     """A snapshot-owned SymbolReference (Go: SymbolOwnerKindSnapshot) with a literal id, for the error probes."""
     return {"kind": 1, "snapshot": "@SNAPSHOT@", "project": "@PROJECT@", "id": symbol_id}
+
+
+def literal_symbol(v):
+    """The literal id of a snapshot_symbol() reference, else v."""
+    return v["id"] if isinstance(v, dict) and v == snapshot_symbol(v.get("id")) and isinstance(v["id"], int) else v
+
+
+def from_reference(pointer):
+    if not pointer.endswith("/reference"):
+        raise ValueError(f"wire 4: a symbol spec reads a symbol answer's /reference, not {pointer!r}")
+    return pointer[:-len("/reference")] + "/id"
+
+
+def wire4(method, params, pf):
+    """(params, paramsFrom) of a protocol 5 request in its protocol 4 form: the inverse of symbol_refs. Used by
+    `check --wire 4` (base bins that speak protocol 4). A symbol spec reads the answer's /id, a symbol property
+    request is {snapshot, project, objectId} again, and a snapshot reference with a literal id is that id."""
+    if isinstance(params, dict):
+        params = dict(params)
+        if "symbol" in params:
+            params["symbol"] = literal_symbol(params["symbol"])
+        if isinstance(params.get("actions"), list):
+            params["actions"] = [{**a, "symbol": literal_symbol(a["symbol"])} if isinstance(a, dict) and "symbol" in a
+                                 else a for a in params["actions"]]
+        if method in SYMBOL_PROPERTY_METHODS:
+            params = {"snapshot": "@SNAPSHOT@", "project": "@PROJECT@", **params}
+    specs = pf if isinstance(pf, list) else [] if pf is None else [pf]
+    out = []
+    for spec in specs:
+        into = spec.get("into", "")
+        if into.endswith("/symbol") or spec.get("append") == "/symbols":
+            prop = into == "/symbol" and method in SYMBOL_PROPERTY_METHODS
+            spec = dict(spec, into="/objectId") if prop else dict(spec)
+            if "pick" in spec:
+                spec["pick"] = {**spec["pick"], "then": from_reference(spec["pick"]["then"])}
+            else:
+                spec["pointer"] = from_reference(spec["pointer"])
+        out.append(spec)
+    return params, out if isinstance(pf, list) else out[0] if out else None
+
+
+def wire4_event(ev):
+    """The event with wire4 applied; overlays come back unchanged."""
+    if ev.get("kind") != "request":
+        return ev
+    params, pf = wire4(ev["method"], ev.get("params"), ev.get("paramsFrom"))
+    out = dict(ev)
+    for k, v in (("params", params), ("paramsFrom", pf)):
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = v
+    return out
 
 
 class TraceBuilder:
@@ -3367,8 +3432,9 @@ def main(argv=None):
     p.add_argument("--goport", required=True)
     p.add_argument("--label", required=True)
     p.add_argument("--oracle-sha", help="golden set (default: hash of --oracle)")
-    p.add_argument("--wire", type=int, choices=[3], help="send the snapshot events of protocol 4 traces in "
-                   "their protocol 3 form (a ruling 10 rebase run of base bins; needs a reviewer ruling)")
+    p.add_argument("--wire", type=int, choices=[3, 4], help="3: send the snapshot events of protocol 4 traces in "
+                   "their protocol 3 form; 4: send protocol 5 traces in their protocol 4 form (a ruling 10 rebase "
+                   "run of base bins; needs a reviewer ruling)")
     p = sub.add_parser("summary")
     p.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
     p.add_argument("--label", required=True)

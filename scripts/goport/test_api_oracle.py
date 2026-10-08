@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for api_oracle.py protocol 3 (pin B), protocol 4 (pin N) and protocol 5 (pin N'). No server runs.
+"""Unit tests for api_oracle.py protocol 3 (pin B), protocol 4 (pin N), protocol 5 (pin N') and --wire. No server
+runs.
 
   python3 scripts/goport/test_api_oracle.py
 """
@@ -206,6 +207,40 @@ class Protocol5(unittest.TestCase):
         old = N.CallbackFS(["readFile"], "fallback")
         old.set_overlay("/p/a.ts", "x")
         self.assertEqual((old.handle("readFile", "/p/a.ts"), old.handle("readFile", "/p/b.ts")), ({"content": "x"}, None))
+
+
+class Wire4(unittest.TestCase):
+    def test_wire4_inverts_symbol_refs(self):
+        self.assertEqual([N2.wire4_event(e) for e in symbol_events(N2)], symbol_events(N))
+        self.assertEqual([N2.wire4_event(e) for e in events(N2)], events(N))
+        overlay = {"kind": "overlay", "path": "/p/a.ts", "content": "x"}
+        self.assertIs(N2.wire4_event(overlay), overlay)
+        new = {"kind": "request", "method": "getCachedSourceFile", "params": {"file": {"nodeId": "1"}}}
+        self.assertEqual(N2.wire4_event(new), new)
+        with self.assertRaises(ValueError):
+            N2.wire4("getTypeOfSymbol", {}, {"event": 0, "pointer": "/id", "into": "/symbol"})
+
+    def test_wire4_keeps_other_symbols(self):
+        # only an exact snapshot reference with an int id is a literal id
+        for v in ("@X@", {"kind": 0, "id": 5}, {"kind": 1, "snapshot": 3, "project": "@PROJECT@", "id": 5}):
+            self.assertEqual(N2.wire4("getTypeOfSymbol", {"symbol": v}, None)[0], {"symbol": v})
+
+    def test_wire4_run(self):
+        r = N2.SessionRun({}, symbol_events(N2), "tsgo", "goport", "/tmp", wire=4)
+        self.assertEqual(r.events, symbol_events(N))
+        self.assertEqual(N2.SessionRun({}, symbol_events(N2), "tsgo", "goport", "/tmp").events, symbol_events(N2))
+
+    def test_wire4_callbacks(self):
+        fs = N2.CallbackFS(["readFile", "writeFile"], "fallback", 4)
+        fs.set_overlay("/p/a.ts", "x")
+        self.assertEqual((fs.handle("readFile", "/p/a.ts"), fs.handle("readFile", "/p/b.ts")), ({"content": "x"}, None))
+        self.assertIsNone(fs.handle("writeFile", {"path": "/p/o.js", "data": "y"}))
+
+    def test_wire_needs_its_protocol(self):
+        import types
+        for mod, wire in ((N, 4), (N2, 3), (B, 3), (B, 4)):
+            with self.assertRaises(mod.UsageError):
+                mod.cmd_check(types.SimpleNamespace(wire=wire))
 
 
 if __name__ == "__main__":
