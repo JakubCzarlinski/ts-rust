@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for api_oracle.py protocol 3 (pin B) and protocol 4 (pin N). No server runs.
+"""Unit tests for api_oracle.py protocol 3 (pin B), protocol 4 (pin N) and protocol 5 (pin N'). No server runs.
 
   python3 scripts/goport/test_api_oracle.py
 """
@@ -26,7 +26,7 @@ def load(pin):
             os.environ["GOPORT_PIN_ACTIVE"] = old
 
 
-B, N = load("16c25522e123"), load("673a5f17d713")
+B, N, N2 = load("16c25522e123"), load("673a5f17d713"), load("fed0bf24149f")
 OPEN = {"openProjects": ["@PROJECT_DIR@/tsconfig.json"]}
 CHANGE = {"fileChanges": {"changed": ["@PROJECT_DIR@/a.ts"]}}
 TEMP = {"file": "@PROJECT_DIR@/a.ts", "newText": "x"}
@@ -58,7 +58,7 @@ def proj(pid, n=0):
 
 class Protocol(unittest.TestCase):
     def test_protocols(self):
-        self.assertEqual((B.PROTOCOL, N.PROTOCOL), (3, 4))
+        self.assertEqual((B.PROTOCOL, N.PROTOCOL, N2.PROTOCOL), (3, 4, 5))
 
     def test_b_events_unchanged(self):
         ev = events(B)
@@ -120,6 +120,88 @@ class Protocol(unittest.TestCase):
         ans = {"changes": {"changedProjects": {"p": {"changedFiles": ["b", "a"]}}, "removedProjects": ["y", "x"]}}
         got = N.Normalizer([]).prepare("createSnapshot", ans)["changes"]
         self.assertEqual(got, {"changedProjects": {"p": {"changedFiles": ["a", "b"]}}, "removedProjects": ["x", "y"]})
+
+
+def symbol_events(mod):
+    """Symbol requests of every spec form: into /symbol, symbol property (/objectId), append, pick, literal ids."""
+    tb = mod.TraceBuilder()
+    tb.req("getTypeOfSymbol", tb.ck(), {"event": 0, "pointer": "/id", "into": "/symbol"})
+    tb.req("getParentOfSymbol", tb.obj(), {"event": 0, "pointer": "/id", "into": "/objectId",
+                                           "when": [{"pointer": "/parent", "nonzero": True}]})
+    tb.req("getTypesOfSymbols", tb.ck(symbols=[]), [{"event": 0, "pointer": "/id", "append": "/symbols"}])
+    tb.req("getTypeOfSymbol", tb.ck(), {"event": 1, "pointer": "/entries", "into": "/symbol",
+                                        "pick": {"index": 0, "then": "/symbol/id"}})
+    tb.req("getSymbolOfType", tb.obj(), {"event": 2, "pointer": "/id", "into": "/objectId"})
+    tb.req("getTypeOfSymbol", tb.ck(symbol=987654321))
+    tb.req("getImportAdderEdits", tb.ck(actions=[{"kind": "importSymbol", "symbol": 0}, {"kind": "unknown"}]))
+    return tb.events
+
+
+class Protocol5(unittest.TestCase):
+    def test_n_symbol_events_unchanged(self):
+        ev = symbol_events(N)
+        self.assertEqual(ev[1]["params"], {"snapshot": "@SNAPSHOT@", "project": "@PROJECT@"})
+        self.assertEqual([e.get("paramsFrom") for e in ev], [e.get("paramsFrom") for e in symbol_events(B)])
+        self.assertEqual(ev[0]["paramsFrom"]["pointer"], "/id")
+        self.assertEqual(ev[5]["params"]["symbol"], 987654321)
+
+    def test_symbol_references(self):
+        ev = symbol_events(N2)
+        self.assertEqual(ev[0]["paramsFrom"], {"event": 0, "pointer": "/reference", "into": "/symbol"})
+        self.assertEqual(ev[1]["params"], {})
+        self.assertEqual(ev[1]["paramsFrom"], {"event": 0, "pointer": "/reference", "into": "/symbol",
+                                               "when": [{"pointer": "/parent", "nonzero": True}]})
+        self.assertEqual(ev[2]["paramsFrom"], [{"event": 0, "pointer": "/reference", "append": "/symbols"}])
+        self.assertEqual(ev[3]["paramsFrom"]["pick"]["then"], "/symbol/reference")
+        # a type property request keeps its objectId and params
+        self.assertEqual(ev[4]["paramsFrom"], {"event": 2, "pointer": "/id", "into": "/objectId"})
+        self.assertEqual(ev[4]["params"], {"snapshot": "@SNAPSHOT@", "project": "@PROJECT@"})
+        ref = lambda n: {"kind": 1, "snapshot": "@SNAPSHOT@", "project": "@PROJECT@", "id": n}  # noqa: E731
+        self.assertEqual(ev[5]["params"]["symbol"], ref(987654321))
+        self.assertEqual(ev[6]["params"]["actions"], [{"kind": "importSymbol", "symbol": ref(0)}, {"kind": "unknown"}])
+        with self.assertRaises(ValueError):
+            N2.TraceBuilder().req("getTypeOfSymbol", {}, {"event": 0, "pointer": "/name", "into": "/symbol"})
+
+    def test_normalize_owners(self):
+        desc = lambda node, path: {"fileName": path, "path": path, "contentHash": "h", "parseOptionsKey": "0",  # noqa: E731
+                                   "scriptKind": 3, "nodeId": node}
+        sym = lambda sid, node, path, parent=None: {  # noqa: E731
+            "reference": {"kind": 0, "file": desc(node, path), "id": sid}, "name": f"n{sid}", "flags": 1,
+            "declarations": [f"1.80.{path}"], **({"parent": parent} if parent else {})}
+        entries = [("getSymbolAtPosition", sym(901, "77", "/p/a.ts", parent={"id": 902, "file": "77"})),
+                   ("getSymbolAtPosition", sym(903, "78", "/p/a.ts")),  # the same path, a new AST
+                   ("getTypeAtPosition", {"id": 5, "symbol": {"id": 901, "file": "77"},
+                                          "aliasSymbol": {"id": 904, "file": "99"}})]
+        a, b, c = N2.Normalizer([("/p", "@P@")]).finalize(entries)
+        self.assertEqual(a["reference"], {"kind": 0, "file": desc("@P@/a.ts", "@P@/a.ts"), "id": "n901@1.80.@P@/a.ts"})
+        self.assertEqual(a["parent"], {"id": "?1", "file": "@P@/a.ts"})
+        self.assertEqual(b["reference"]["file"]["nodeId"], "@P@/a.ts#2")
+        self.assertEqual(c["symbol"], {"id": "n901@1.80.@P@/a.ts", "file": "@P@/a.ts"})
+        self.assertEqual(c["aliasSymbol"], {"id": "?2", "file": "?f1"})
+        masked = N2.mask_ids("getTypeAtPosition", entries[2][1])
+        self.assertEqual(masked["aliasSymbol"], {"id": "#", "file": "#"})
+
+    def test_source_file_node_id_zeroed(self):
+        data = bytes(range(64))
+        out = N2.Normalizer([]).prepare("getSourceFile", {"data": N2.base64.b64encode(data).decode()})
+        got = N2.base64.b64decode(out["data"])
+        self.assertEqual((got[:44], got[44:52], got[52:]), (data[:44], bytes(8), data[52:]))
+        same = N.Normalizer([]).prepare("getSourceFile", {"data": N.base64.b64encode(data).decode()})
+        self.assertEqual(N.base64.b64decode(same["data"]), data)
+
+    def test_callback_kinds(self):
+        fs = N2.CallbackFS(["readFile", "fileExists", "writeFile"], "fallback")
+        fs.set_overlay("/p/a.ts", "x")
+        fs.set_overlay("/p/gone.ts", None)
+        self.assertEqual(fs.handle("readFile", "/p/a.ts"), {"kind": "value", "value": "x"})
+        self.assertEqual(fs.handle("readFile", "/p/gone.ts"), {"kind": "missing"})
+        self.assertEqual(fs.handle("readFile", "/p/other.ts"), {"kind": "useOS"})
+        self.assertEqual(fs.handle("fileExists", "/p/gone.ts"), {"kind": "value", "value": False})
+        self.assertEqual(fs.handle("writeFile", {"path": "/p/o.js", "data": "y"}), {"kind": "noop"})
+        self.assertIsNone(fs.handle("#notification:x", None))
+        old = N.CallbackFS(["readFile"], "fallback")
+        old.set_overlay("/p/a.ts", "x")
+        self.assertEqual((old.handle("readFile", "/p/a.ts"), old.handle("readFile", "/p/b.ts")), ({"content": "x"}, None))
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ The script mirrors these Go files (pinned dc37b5249, /home/theo/.explore/repos/m
 Upstream pins (UPSTREAM.json, scripts/upstream/pin.py): with GOPORT_PIN=<key> the tool runs itself
 again under `pin.py exec`, so the default oracle, Go checkout and traces/ show that pin's files (traces/
 is a pin cache; golden/ is keyed by the oracle anyway). The O pin dc37b5249ab6 speaks protocol 1, the
-bump A pin 52168999f3dc protocol 2, the bump B pin 16c25522e123 protocol 3, every later pin protocol 4.
+bump A pin 52168999f3dc protocol 2, the bump B pin 16c25522e123 protocol 3, the bump C pin 673a5f17d713
+protocol 4, every later pin protocol 5.
 Protocol 2 (Go changed the API in bump A):
   - updateSnapshot takes openProjects: [config] (tsgo#4402), not openProject;
   - the type, symbol and signature property requests (objectId) need a project (tsgo#4341:
@@ -49,6 +50,21 @@ target/continuation-r97-goport/studies/api-oracle-N.md) changes only the snapsho
   `check --wire 3` sends the snapshot events of protocol 4 traces in their protocol 3 form (wire3), for a
   ruling 10 rebase run of base bins that speak protocol 3. It needs a reviewer ruling before its results are
   used; the result meta and manifest record "wire": 3.
+Protocol 5 (every pin after 673a5f17d713; bump D N' = microsoft/TypeScript fed0bf24149f) adds to protocol 4:
+  - symbol ownership (#64518): a symbol answer has "reference" {kind (0 file, 1 snapshot), file (a source file
+    descriptor) or snapshot and project, id} in place of "id"; parent, exportSymbol, a type's symbol and
+    aliasSymbol and a signature's parameters and thisParameter are compact references {id, file (the owning
+    file's node id)}. A request sends the symbol's reference: TraceBuilder.req moves each symbol spec from the
+    answer's /id to its /reference. getParentOfSymbol, getMembersOfSymbol, getExportsOfSymbol and
+    getExportSymbolOfSymbol (GetSymbolPropertyParams) take {symbol} only. A literal symbol id of an error probe
+    becomes a snapshot reference with that id;
+  - an encoded source file has the file's node id at header byte 44 (SetSourceFileID). Node ids come from a
+    global counter, like symbol ids, so normalization names them by the file path and zeroes those 8 bytes;
+  - 7 new methods (#64518, #64571, #64598): retainSourceFile, getCachedSourceFile, getSymbolOfDeclaration,
+    getMergedSymbol, getSymbolOfNode, getSymbolOfDeclarationForChecker, getParentOfSymbolForChecker. `build
+    --kind ext` sends them at the end of each ext_file trace, so the earlier event keys stay;
+  - KindSourceKeyword (#63915) moves every later SyntaxKind value up by 1. `build` reads the values from the
+    pin's kind_generated.go, as before.
 `build` writes traces of the run's protocol. Normalization reads the escaped names from protocol 2 on.
 Build the traces at each pin: they hold positions from the pin's encoded AST (UTF-16 offsets after the
 O pin, UTF-8 at O; they differ in files with non-ASCII text). With GOPORT_PIN unset the run uses the
@@ -156,6 +172,7 @@ PIN_TOOL = REPO + "/scripts/upstream/pin.py"
 O_PIN = "dc37b5249ab6"  # the last pin with API protocol 1
 A_PIN = "52168999f3dc"  # the last pin with API protocol 2
 B_PIN = "16c25522e123"  # the last pin with API protocol 3
+C_PIN = "673a5f17d713"  # the last pin with API protocol 4
 
 
 def run_pin():
@@ -171,7 +188,7 @@ def run_pin():
 
 
 PIN = run_pin()
-PROTOCOL = 1 if PIN == O_PIN else 2 if PIN == A_PIN else 3 if PIN == B_PIN else 4
+PROTOCOL = 1 if PIN == O_PIN else 2 if PIN == A_PIN else 3 if PIN == B_PIN else 4 if PIN == C_PIN else 5
 PROTOCOL2 = PROTOCOL >= 2
 DEFAULT_OUT_ROOT = REPO + "/target/continuation-r97-goport/tests2/api"
 DEFAULT_ORACLE = os.path.expanduser("~/.local/bin/tsgo-oracle")
@@ -440,15 +457,20 @@ def find_unstable(a0, b0, max_rounds=64):
 # ---------------------------------------------------------------------------
 
 # Walk order matters: "name" is last, so an id embedded in a name is usually known by then.
-SYM = {"id": "sym", "parent": "sym", "exportSymbol": "sym", "name": "symname"}
-TYPE = {"id": "type", "symbol": "sym", "aliasSymbol": "sym", "aliasTypeArguments": ["type"], "target": "type",
+# Protocol 5 (#64518): a symbol answer holds its id in "reference", with the owning file's descriptor; other
+# answers hold compact references {id, file}. Both name the file by its node id ("node", renamed by path).
+FILE_DESC = {"nodeId": "node"}
+CSYM = {"id": "sym", "file": "node"} if PROTOCOL >= 5 else "sym"
+SYM = {"reference": {"id": "sym", "file": FILE_DESC}, "parent": CSYM, "exportSymbol": CSYM, "name": "symname"} \
+    if PROTOCOL >= 5 else {"id": "sym", "parent": "sym", "exportSymbol": "sym", "name": "symname"}
+TYPE = {"id": "type", "symbol": CSYM, "aliasSymbol": CSYM, "aliasTypeArguments": ["type"], "target": "type",
         "typeParameters": ["type"], "outerTypeParameters": ["type"], "localTypeParameters": ["type"],
         "objectType": "type", "indexType": "type", "checkType": "type", "extendsType": "type", "baseType": "type",
         "substConstraint": "type", "freshType": "type", "regularType": "type",
         # protocol 4 (TypeResponse at N); B answers never have these keys
         "typeParameter": "type", "constraintType": "type", "nameType": "type", "templateType": "type",
         "thisType": "type"}
-SIG = {"id": "sig", "typeParameters": ["type"], "parameters": ["sym"], "thisParameter": "sym", "target": "sig"}
+SIG = {"id": "sig", "typeParameters": ["type"], "parameters": [CSYM], "thisParameter": CSYM, "target": "sig"}
 INDEX_INFO = {"keyType": TYPE, "valueType": TYPE}
 PREDICATE = {"type": TYPE}
 COMPLETIONS = {"entries": [{"symbol": SYM}]}
@@ -456,7 +478,10 @@ REF_SYMBOL = {"symbol": SYM}
 
 SYM_METHODS = ["getSymbolAtPosition", "getSymbolAtLocation", "resolveName", "getParentOfSymbol",
                "getExportSymbolOfSymbol", "getSymbolOfType", "getAliasSymbolOfType", "getThisParameterOfSignature",
-               "getShorthandAssignmentValueSymbol"]
+               "getShorthandAssignmentValueSymbol",
+               # protocol 5 (#64571, #64598)
+               "getSymbolOfDeclaration", "getMergedSymbol", "getSymbolOfNode", "getSymbolOfDeclarationForChecker",
+               "getParentOfSymbolForChecker"]
 SYM_LIST_METHODS = ["getSymbolsAtPositions", "getSymbolsAtLocations", "getMembersOfSymbol", "getExportsOfSymbol",
                     "getParametersOfSignature", "getPropertiesOfType"]
 TYPE_METHODS = ["getTypeOfSymbol", "getDeclaredTypeOfSymbol", "getTypeAtLocation", "getTypeAtPosition",
@@ -492,7 +517,11 @@ UNORDERED = {"getMembersOfSymbol": "", "getExportsOfSymbol": "", "getCompletions
 # Methods that answer {snapshot, projects, changes?}: protocol 3 sends the last two, protocol 4 the first three.
 SNAPSHOT_METHODS = ("createSnapshot", "updateSnapshot", "getCurrentLanguageServerSnapshot", "updateTemporarySnapshot")
 # Methods whose msgpack answer is raw bytes (Go: RawBinary in session.go).
-BINARY_METHODS = {"getSourceFile", "typeToTypeNode", "signatureToSignatureDeclaration", "echo", "getConfigSourceFile"}
+BINARY_METHODS = {"getSourceFile", "typeToTypeNode", "signatureToSignatureDeclaration", "echo", "getConfigSourceFile",
+                  "getCachedSourceFile"}
+# Methods that answer an encoded source file. Protocol 5 writes the file's node id at header byte 44.
+SOURCE_FILE_METHODS = {"getSourceFile", "getCachedSourceFile"}
+SOURCE_FILE_ID = slice(44, 52)  # Go: encoder.HeaderOffsetSourceFileID, a uint64
 # tsgo#4699 emit methods: files emit in parallel, so these lists come in any order.
 EMIT_METHODS = {"emit", "emitToString", "getJavaScriptEmit", "getDeclarationEmit"}
 
@@ -566,7 +595,9 @@ class Normalizer:
     numbers symbols its own way. `finalize` names each symbol by content: "<name>@<first
     declaration handle>", with "#k" for the k-th distinct symbol of that key (by first
     appearance). A symbol id seen only as a reference (never as a full symbol answer) gets
-    "?n" by first appearance. Type and signature ids stay raw."""
+    "?n" by first appearance. Type and signature ids stay raw. Protocol 5: a source file node id
+    gets the file's path from a descriptor ("#k" for the k-th distinct node of that path), or "?fn"
+    by first appearance; an encoded source file has its node id bytes zeroed."""
 
     def __init__(self, replacements):
         self.replacements = [(a, b) for a, b in replacements if a]
@@ -594,6 +625,11 @@ class Normalizer:
                       (lambda e: canon(mask_ids(method, [e])))
                 lst = sorted(lst, key=key)
                 v = pointer_set(v, ptr, lst) if ptr else lst
+        if PROTOCOL >= 5 and method in SOURCE_FILE_METHODS and isinstance(v, dict) and isinstance(v.get("data"), str):
+            data = bytearray(base64.b64decode(v["data"]))
+            if len(data) >= SOURCE_FILE_ID.stop:
+                data[SOURCE_FILE_ID] = bytes(SOURCE_FILE_ID.stop - SOURCE_FILE_ID.start)
+                v = {**v, "data": base64.b64encode(bytes(data)).decode()}
         if method in EMIT_METHODS and isinstance(v, dict):
             for k in ("emittedFiles", "diagnostics"):
                 if isinstance(v.get(k), list):
@@ -615,10 +651,13 @@ class Normalizer:
     def finalize(self, entries):
         """entries: [(method, raw answer)] of one process in order. Returns normalized answers."""
         pre = [(m, self.prepare(m, v)) for m, v in entries]
-        keyed = {}
+        keyed, node_paths = {}, {}
 
         def collect(shape, obj):
-            rid = obj.get("id")
+            if shape is FILE_DESC and isinstance(obj.get("nodeId"), str):
+                node_paths.setdefault(obj["nodeId"], obj.get("path"))
+                return
+            rid = (obj.get("reference") or {}).get("id") if PROTOCOL >= 5 else obj.get("id")
             if shape is SYM and isinstance(rid, int) and rid and rid not in keyed:
                 decls = obj.get("declarations") or []
                 decl0 = decls[0] if decls else (obj.get("valueDeclaration") or "-")
@@ -628,6 +667,20 @@ class Normalizer:
             if SHAPES.get(m) is not None:
                 walk_shape(SHAPES[m], v, lambda kind, val: val, collect)
         names, per_key, unknown = {}, collections.Counter(), [0]
+        nodes, per_path, unknown_nodes = {}, collections.Counter(), [0]
+
+        def nid(raw):
+            if not isinstance(raw, str) or not raw:
+                return raw
+            if raw not in nodes:
+                path = node_paths.get(raw)
+                if path is None:
+                    unknown_nodes[0] += 1
+                    nodes[raw] = f"?f{unknown_nodes[0]}"
+                else:
+                    per_path[path] += 1
+                    nodes[raw] = path if per_path[path] == 1 else f"{path}#{per_path[path]}"
+            return nodes[raw]
 
         def cid(raw, from_name=False):
             if not isinstance(raw, int) or raw == 0:
@@ -647,6 +700,8 @@ class Normalizer:
         def f(kind, val):
             if kind == "sym":
                 return cid(val)
+            if kind == "node":
+                return nid(val)
             if kind == "symname" and isinstance(val, str):
                 m = _INTERNAL_AT.match(val)
                 if m:
@@ -885,6 +940,11 @@ class CallbackFS:
                 self.overlay[path] = content
 
     def handle(self, method, arg):
+        ans = self._answer(method, arg)
+        return callback_kind(method, ans) if PROTOCOL >= 5 and not method.startswith("#notification:") else ans
+
+    def _answer(self, method, arg):
+        """The protocol 4 answer: None is "use the real FS"; readFile {"content": null} is "missing"."""
         if method == "writeFile" and method in self.names:
             # tsgo#4699 (Go: callbackfs.go WriteFile {path, data}). Recorded, never written.
             arg = arg if isinstance(arg, dict) else {}
@@ -949,6 +1009,19 @@ class CallbackFS:
 
     def summary(self, norm):
         return sorted({f"{m} {norm.strings(p)}" for m, p in self.calls})
+
+
+def callback_kind(method, ans):
+    """Protocol 5 (#64447, Go: callbackfs.go decodeCallbackResponse): every callback answer is {kind, value?}. The
+    protocol 4 answer maps to: None -> useOS (the real FS), readFile {"content": null} -> missing, writeFile ->
+    noop (recorded, never written), else value."""
+    if method == "writeFile":
+        return {"kind": "noop"}
+    if ans is None:
+        return {"kind": "useOS"}
+    if method == "readFile":
+        return {"kind": "missing"} if ans.get("content") is None else {"kind": "value", "value": ans["content"]}
+    return {"kind": "value", "value": ans}
 
 
 # ---------------------------------------------------------------------------
@@ -1743,7 +1816,7 @@ def cmd_selfcheck(args):
 
 
 def cmd_check(args):
-    if args.wire and PROTOCOL < 4:
+    if args.wire and PROTOCOL != 4:
         raise UsageError(f"--wire {args.wire} needs protocol 4 traces (pin {PIN} has protocol {PROTOCOL})")
     oracle_sha = args.oracle_sha or sha256_file(args.oracle)
     traces = list_traces(args.out_root, args.battery, args.only)
@@ -2107,6 +2180,49 @@ def glob_files(pdir, include, exclude):
 # Methods that take their type or signature as "objectId" from protocol 3 on (tsgo#4689). The builders write
 # "type" or "signature"; TraceBuilder.req moves the value to "objectId" in a protocol 3 run.
 OBJECT_ID_METHODS = {"getConstraintOfTypeParameter", "getNonNullableType", "getApparentType", "getReturnTypeOfSignature"}
+# Go: proto.go GetSymbolPropertyParams. Protocol 2 to 4: {snapshot, project, objectId}; protocol 5: {symbol}.
+SYMBOL_PROPERTY_METHODS = {"getParentOfSymbol", "getMembersOfSymbol", "getExportsOfSymbol", "getExportSymbolOfSymbol"}
+
+
+def symbol_refs(method, params, pf):
+    """Protocol 5 (#64518): (params, paramsFrom) that send symbols as SymbolReference objects. A spec that takes
+    a symbol (into ".../symbol", append "/symbols", or into "/objectId" of a symbol property method) reads the
+    answer's /reference in place of its /id (pick: the "then" pointer). A symbol property request is {symbol}
+    only. A literal symbol id (the error probes) becomes a snapshot reference with that id."""
+    if method in SYMBOL_PROPERTY_METHODS and isinstance(params, dict):
+        params = {k: v for k, v in params.items() if k not in ("snapshot", "project")}
+    if isinstance(params, dict):
+        params = dict(params)
+        if isinstance(params.get("symbol"), int):
+            params["symbol"] = snapshot_symbol(params["symbol"])
+        if isinstance(params.get("actions"), list):
+            params["actions"] = [{**a, "symbol": snapshot_symbol(a["symbol"])}
+                                 if isinstance(a, dict) and isinstance(a.get("symbol"), int) else a
+                                 for a in params["actions"]]
+    specs = pf if isinstance(pf, list) else [] if pf is None else [pf]
+    out = []
+    for spec in specs:
+        into = spec.get("into", "")
+        if into.endswith("/symbol") or spec.get("append") == "/symbols" or \
+                (into == "/objectId" and method in SYMBOL_PROPERTY_METHODS):
+            spec = dict(spec, into="/symbol") if into == "/objectId" else dict(spec)
+            if "pick" in spec:
+                spec["pick"] = {**spec["pick"], "then": to_reference(spec["pick"]["then"])}
+            else:
+                spec["pointer"] = to_reference(spec["pointer"])
+        out.append(spec)
+    return params, out if isinstance(pf, list) else out[0] if out else None
+
+
+def to_reference(pointer):
+    if not pointer.endswith("/id"):
+        raise ValueError(f"protocol 5: a symbol spec reads a symbol answer's /id, not {pointer!r}")
+    return pointer[:-len("/id")] + "/reference"
+
+
+def snapshot_symbol(symbol_id):
+    """A snapshot-owned SymbolReference (Go: SymbolOwnerKindSnapshot) with a literal id, for the error probes."""
+    return {"kind": 1, "snapshot": "@SNAPSHOT@", "project": "@PROJECT@", "id": symbol_id}
 
 
 class TraceBuilder:
@@ -2120,6 +2236,8 @@ class TraceBuilder:
         if PROTOCOL >= 3 and method in OBJECT_ID_METHODS and isinstance(pf, dict) \
                 and pf.get("into") in ("/type", "/signature"):
             pf = {**pf, "into": "/objectId"}
+        if PROTOCOL >= 5:
+            params, pf = symbol_refs(method, params, pf)
         ev = {"kind": "request", "method": method}
         if params is not None:
             ev["params"] = params
@@ -2297,7 +2415,7 @@ def oracle_session(oracle, pdir, tsconfig, files, tmp_root, project_out=None):
         if st != "ok":
             raise HarnessError(f"{method}: {snap}")
         want = os.path.join(pdir, tsconfig)
-        proj = next((p for p in snap["projects"] if p["configFileName"] == want), snap["projects"][0])
+        proj = next((p for p in snap["projects"] if p.get("configFileName") == want), snap["projects"][0])
         if project_out is not None:
             project_out.update(proj)
         roots = set(proj["rootFiles"])
@@ -2892,7 +3010,42 @@ def ext_file_trace(ext, rel):
         if body_end is not None:
             tb.req("formatNodeForInsertion", ck(file=file, position=line_start_u16(text, offs, body_end - 1)),
                    at(tn, "/data", "/data"))
+    if PROTOCOL >= 5:
+        ext_symbol_owner_events(tb, ext, rel, mod)
     return tb.events
+
+
+# Declaration node kinds (Go ast.IsDeclaration) for getSymbolOfDeclaration samples.
+DECLARATION_KINDS = ("KindFunctionDeclaration", "KindClassDeclaration", "KindInterfaceDeclaration",
+                     "KindTypeAliasDeclaration", "KindEnumDeclaration", "KindVariableDeclaration",
+                     "KindMethodDeclaration", "KindPropertyDeclaration", "KindParameter")
+
+
+def ext_symbol_owner_events(tb, ext, rel, mod):
+    """Protocol 5: the 7 methods of #64518, #64571 and #64598, after the other ext_file events, so their keys
+    stay. The file descriptor is the /reference/file of the module symbol (event `mod`; a script file has none,
+    so those requests skip). A declaration index is a node index of this file's encoded AST."""
+    K, s, enc = ext.kinds, ext.samples[rel], ext.enc[rel]
+    ck, file = tb.ck, pdir_file(rel)
+    desc = at(mod, "/reference/file", "/file")
+    r = tb.req("retainSourceFile", {}, desc)
+    tb.req("getCachedSourceFile", {}, desc)
+    tb.req("releaseSourceFile", {}, at(r, "/lease", "/lease"))
+    kinds = {K[k] for k in DECLARATION_KINDS}
+    for j in spread([j for j in range(1, enc.count) if enc.node(j)[0] in kinds], 3):
+        tb.req("getSymbolOfDeclaration", {"index": j}, desc)
+        tb.req("getSymbolOfDeclarationForChecker", ck(location=ext.handle(rel, j)))
+        tb.req("getSymbolOfNode", ck(location=ext.handle(rel, j)))
+    for i, pos in s.ids[:3]:
+        a = tb.req("getSymbolAtPosition", ck(file=file, position=pos))
+        m = tb.req("getMergedSymbol", ck(), at(a, "/id", "/symbol"))
+        tb.req("getParentOfSymbolForChecker", ck(), at(m, "/id", "/symbol"))
+        tb.req("getSymbolOfNode", ck(location=ext.handle(rel, i)))
+    # errors: the source file node, an index past the end, a descriptor of no cached file
+    tb.req("getSymbolOfDeclaration", {"index": 0}, desc)
+    tb.req("getSymbolOfDeclaration", {"index": enc.count + 10}, desc)
+    tb.req("getCachedSourceFile", {"file": {"fileName": file, "path": file, "contentHash": "0" * 32,
+                                            "parseOptionsKey": "0", "scriptKind": 3, "nodeId": "1"}})
 
 
 def ext_misc_trace(ext):
