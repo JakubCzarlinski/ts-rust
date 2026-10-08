@@ -17,6 +17,10 @@
 # (and every @types package it reads), at the versions of the project's lock file, without
 # install scripts. <dir>/projects/<name>/node_modules links to them. npm --before gives every
 # other package the newest version of the day the list was made, so each setup gets the same tree.
+# The effect config lists the @effect/language-service plugin (its tsconfig.base.json), so the tsc
+# runs the Effect rules there. effect-noplugin is the same checkout without that entry (no_plugin,
+# for a name that ends in -noplugin), as most projects are: the set trains effect with and without
+# the Effect rules.
 #
 # Each project runs `tsc -p <config> --noEmit`; the ones marked emit also run `tsc -p <config>`
 # with --outDir. Output, emit and build info go to <dir>/out, so the runs only read the projects.
@@ -55,6 +59,9 @@ projects() {
   project effect https://github.com/Effect-TS/effect.git 0d083ba26b2e1afec8d3e8d83db0d05683b6602b \
     packages/effect packages/effect/tsconfig.json check \
     @types/node@26.2.0
+  project effect-noplugin https://github.com/Effect-TS/effect.git 0d083ba26b2e1afec8d3e8d83db0d05683b6602b \
+    packages/effect packages/effect/tsconfig.json check \
+    @types/node@26.2.0
   project playcanvas https://github.com/playcanvas/engine.git 6767f256721572a34f37daba419c18da8566f5ab \
     src tsconfig.build.json emit \
     fflate@0.8.3
@@ -87,6 +94,18 @@ projects() {
     @vitest/utils@4.1.11
 }
 
+# no_plugin <tsconfig>: drops the "plugins" lines of the effect tsconfig.base.json (a trailing comma
+# stays; tsconfig allows it). A child config cannot remove the plugin: the Effect options merge
+# across extends.
+no_plugin() {
+  awk '/"plugins": \[/ { skip = 1 } !skip { print } skip && /^    \}\]/ { skip = 0 }' "$1" > "$1.tmp"
+  mv "$1.tmp" "$1"
+  if grep -q language-service "$1" || ! grep -q '"jsx"' "$1"; then
+    echo "error: cannot drop the plugin entry of $1 (its format changed?)" >&2
+    exit 1
+  fi
+}
+
 # setup <dir>: a project that is already complete (deps/<name>/.done) is kept.
 setup() {
   project() {
@@ -102,6 +121,7 @@ setup() {
     [[ $dirs == . ]] || git -C "$p" sparse-checkout set ${dirs//,/ }
     GIT_TERMINAL_PROMPT=0 git -C "$p" fetch -q --depth 1 --filter=blob:none origin "$commit"
     git -C "$p" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    case $name in *-noplugin) no_plugin "$p/tsconfig.base.json" ;; esac
     mkdir -p "$deps"
     echo '{ "private": true }' > "$deps/package.json"
     (cd "$deps" && npm install --ignore-scripts --no-audit --no-fund --no-package-lock --legacy-peer-deps \
