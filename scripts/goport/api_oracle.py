@@ -58,8 +58,9 @@ Protocol 5 (every pin after 673a5f17d713; bump D N' = microsoft/TypeScript fed0b
     answer's /id to its /reference. getParentOfSymbol, getMembersOfSymbol, getExportsOfSymbol and
     getExportSymbolOfSymbol (GetSymbolPropertyParams) take {symbol} only. A literal symbol id of an error probe
     becomes a snapshot reference with that id;
-  - an encoded source file has the file's node id at header byte 44 (SetSourceFileID). Node ids come from a
-    global counter, like symbol ids, so normalization names them by the file path and zeroes those 8 bytes;
+  - an encoded source file (getSourceFile, getCachedSourceFile, getConfigSourceFile) has the file's node id at
+    header byte 44 (SetSourceFileID). Node ids come from a global counter, like symbol ids, so normalization
+    names them by the file path and zeroes those 8 bytes;
   - 7 new methods (#64518, #64571, #64598): retainSourceFile, getCachedSourceFile, getSymbolOfDeclaration,
     getMergedSymbol, getSymbolOfNode, getSymbolOfDeclarationForChecker, getParentOfSymbolForChecker. `build
     --kind ext` sends them at the end of each ext_file trace, so the earlier event keys stay;
@@ -519,8 +520,9 @@ SNAPSHOT_METHODS = ("createSnapshot", "updateSnapshot", "getCurrentLanguageServe
 # Methods whose msgpack answer is raw bytes (Go: RawBinary in session.go).
 BINARY_METHODS = {"getSourceFile", "typeToTypeNode", "signatureToSignatureDeclaration", "echo", "getConfigSourceFile",
                   "getCachedSourceFile"}
-# Methods that answer an encoded source file. Protocol 5 writes the file's node id at header byte 44.
-SOURCE_FILE_METHODS = {"getSourceFile", "getCachedSourceFile"}
+# Methods that answer an encoded source file. Protocol 5 writes the file's node id at header byte 44 (Go:
+# encodeSourceFileResponse, which these 3 handlers call).
+SOURCE_FILE_METHODS = {"getSourceFile", "getCachedSourceFile", "getConfigSourceFile"}
 SOURCE_FILE_ID = slice(44, 52)  # Go: encoder.HeaderOffsetSourceFileID, a uint64
 # tsgo#4699 emit methods: files emit in parallel, so these lists come in any order.
 EMIT_METHODS = {"emit", "emitToString", "getJavaScriptEmit", "getDeclarationEmit"}

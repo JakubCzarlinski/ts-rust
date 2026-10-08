@@ -183,11 +183,15 @@ class Protocol5(unittest.TestCase):
 
     def test_source_file_node_id_zeroed(self):
         data = bytes(range(64))
-        out = N2.Normalizer([]).prepare("getSourceFile", {"data": N2.base64.b64encode(data).decode()})
-        got = N2.base64.b64decode(out["data"])
-        self.assertEqual((got[:44], got[44:52], got[52:]), (data[:44], bytes(8), data[52:]))
-        same = N.Normalizer([]).prepare("getSourceFile", {"data": N.base64.b64encode(data).decode()})
-        self.assertEqual(N.base64.b64decode(same["data"]), data)
+        for method in ("getSourceFile", "getCachedSourceFile", "getConfigSourceFile"):
+            out = N2.Normalizer([]).prepare(method, {"data": N2.base64.b64encode(data).decode()})
+            got = N2.base64.b64decode(out["data"])
+            self.assertEqual((got[:44], got[44:52], got[52:]), (data[:44], bytes(8), data[52:]), method)
+            same = N.Normalizer([]).prepare(method, {"data": N.base64.b64encode(data).decode()})
+            self.assertEqual(N.base64.b64decode(same["data"]), data, method)
+        node = N2.Normalizer([]).prepare("typeToTypeNode", {"data": N2.base64.b64encode(data).decode()})
+        self.assertEqual(N2.base64.b64decode(node["data"]), data)
+        self.assertIsNone(N2.Normalizer([]).prepare("getConfigSourceFile", None))
 
     def test_callback_kinds(self):
         fs = N2.CallbackFS(["readFile", "fileExists", "writeFile"], "fallback")
