@@ -225,8 +225,18 @@ class Wire4(unittest.TestCase):
         for v in ("@X@", {"kind": 0, "id": 5}, {"kind": 1, "snapshot": 3, "project": "@PROJECT@", "id": 5}):
             self.assertEqual(N2.wire4("getTypeOfSymbol", {"symbol": v}, None)[0], {"symbol": v})
 
+    def test_wire4_kinds(self):
+        kinds = {181: 180, 168: 167}  # N' value -> N value (#63915)
+        ev = {"kind": "request", "method": "signatureToSignatureDeclaration", "params": {"kind": 181, "flags": 181,
+              "location": "7.168./p/a.ts", "x": ["7.999./p/a.ts", "a.181./p", True]}}
+        self.assertEqual(N2.wire4_event(ev, kinds)["params"], {"kind": 180, "flags": 181, "location": "7.167./p/a.ts",
+                                                               "x": ["7.999./p/a.ts", "a.181./p", True]})
+        other = {"kind": "request", "method": "getTypeAtLocation", "params": {"kind": 181, "location": "1.181./p"}}
+        self.assertEqual(N2.wire4_event(other, kinds)["params"], {"kind": 181, "location": "1.180./p"})
+        self.assertEqual(N2.wire4_event(ev)["params"], ev["params"])
+
     def test_wire4_run(self):
-        r = N2.SessionRun({}, symbol_events(N2), "tsgo", "goport", "/tmp", wire=4)
+        r = N2.SessionRun({}, symbol_events(N2), "tsgo", "goport", "/tmp", wire=4, wire_kinds={})
         self.assertEqual(r.events, symbol_events(N))
         self.assertEqual(N2.SessionRun({}, symbol_events(N2), "tsgo", "goport", "/tmp").events, symbol_events(N2))
 

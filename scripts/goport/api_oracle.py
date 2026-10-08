@@ -68,11 +68,12 @@ Protocol 5 (every pin after 673a5f17d713; bump D N' = microsoft/TypeScript fed0b
     pin's kind_generated.go, as before.
   `check --wire 4` sends protocol 5 traces in their protocol 4 form (wire4, the inverse of symbol_refs: symbol
   specs read /id, a symbol property request is {snapshot, project, objectId}, a snapshot reference with a literal
-  id is that id) and answers callbacks in their protocol 4 form, for a rebase run of base bins that speak protocol
-  4. The 7 new methods go as they are. Answers are normalized as protocol 5 answers, so a protocol 4 symbol
-  answer is never `same`. Node handles keep their N' kind ("kind is informational only": Go resolveNodeHandle).
-  As for --wire 3, it needs a reviewer ruling before its results are used; the result meta and manifest record
-  "wire": 4.
+  id is that id; and the SyntaxKind values of the params, in node handles and the signatureToSignatureDeclaration
+  "kind", go back to the values of the protocol 4 pin by kind name, read from both pins' kind_generated.go) and
+  answers callbacks in their protocol 4 form, for a rebase run of base bins that speak protocol 4. Then each
+  event is the event of the protocol 4 pin's trace. The 7 new methods go as they are. Answers are normalized as
+  protocol 5 answers, so a protocol 4 symbol answer is never `same`. As for --wire 3, it needs a reviewer ruling
+  before its results are used; the result meta and manifest record "wire": 4.
 `build` writes traces of the run's protocol. Normalization reads the escaped names from protocol 2 on.
 Build the traces at each pin: they hold positions from the pin's encoded AST (UTF-16 offsets after the
 O pin, UTF-8 at O; they differ in files with non-ASCII text). With GOPORT_PIN unset the run uses the
@@ -1326,13 +1327,14 @@ class SessionRun:
     """Runs one trace against one server. mode "record" keeps every answer; mode "check"
     follows the golden's skip decisions."""
 
-    def __init__(self, header, events, binary, role, tmp_root, golden=None, timeout=None, keep=False, wire=None):
+    def __init__(self, header, events, binary, role, tmp_root, golden=None, timeout=None, keep=False, wire=None,
+                 wire_kinds=None):
         self.header, self.events, self.binary, self.role = header, events, binary, role
         self.wire = wire  # 3: protocol 4 traces in their protocol 3 form; 4: protocol 5 traces in protocol 4 form
         if wire == 3:
             self.events = [wire3_event(ev) for ev in events]
         elif wire == 4:
-            self.events = [wire4_event(ev) for ev in events]
+            self.events = [wire4_event(ev, wire_kinds) for ev in events]
         self.golden = golden  # event -> golden record (check mode)
         self.timeout = timeout or REQUEST_TIMEOUT[role]
         self.tmp_root, self.keep = tmp_root, keep
@@ -1838,6 +1840,7 @@ def cmd_check(args):
     rdir = os.path.join(args.out_root, "results", args.label)
     tmp_root = make_tmp_root()
     goport_sha = sha256_file(args.goport)
+    wire_kinds = wire4_kinds() if args.wire == 4 else None
 
     def one(item):
         name, path = item
@@ -1855,7 +1858,8 @@ def cmd_check(args):
         pdir, rels = trace_inputs(header, events)
         fp0 = input_fingerprint(pdir, rels)
         recs, meta = SessionRun(header, events, args.goport, "goport", tmp_root, golden=gmap,
-                                timeout=args.request_timeout, keep=args.keep_temp, wire=args.wire).run()
+                                timeout=args.request_timeout, keep=args.keep_temp, wire=args.wire,
+                                wire_kinds=wire_kinds).run()
         if args.wire:
             meta["wire"] = args.wire
         if input_fingerprint(pdir, rels) != fp0:
@@ -2089,9 +2093,9 @@ def cmd_show(args):
 # ---------------------------------------------------------------------------
 
 
-def go_kinds():
-    """Go ast.Kind values (ast/kind_generated.go, iota order)."""
-    src = open(os.path.join(GO_REPO, "internal/ast/kind_generated.go"), encoding="utf-8").read()
+def go_kinds(repo=None):
+    """Go ast.Kind values (ast/kind_generated.go, iota order) of the Go checkout repo (default GO_REPO)."""
+    src = open(os.path.join(repo or GO_REPO, "internal/ast/kind_generated.go"), encoding="utf-8").read()
     m = re.search(r"const \(\n(.*?)\n\)", src, re.S)
     kinds, val = {}, -1
     for line in m.group(1).split("\n"):
@@ -2250,10 +2254,43 @@ def from_reference(pointer):
     return pointer[:-len("/reference")] + "/id"
 
 
-def wire4(method, params, pf):
+def wire4_kinds():
+    """{SyntaxKind value at this pin: value at C_PIN} by kind name, for `check --wire 4` (#63915 adds
+    KindSourceKeyword). The C_PIN values come from the goCheckout of its UPSTREAM.json record."""
+    with open(REPO + "/UPSTREAM.json", encoding="utf-8") as f:
+        old_repo = json.load(f)["pins"][C_PIN]["goCheckout"]
+    new, old = go_kinds(), go_kinds(old_repo)
+    names = {v: k for k, v in new.items() if not k.startswith(("KindFirst", "KindLast")) and v is not None}
+    return {v: old[k] for v, k in names.items() if old.get(k) is not None}
+
+
+_HANDLE = re.compile(r"^(\d+)\.(\d+)\.(/.*)$")
+
+
+def old_kinds(v, kinds, method, key=None):
+    """v with the SyntaxKind values of node handles "<index>.<kind>.<path>" (and the signatureToSignatureDeclaration
+    "kind") mapped by kinds."""
+    if isinstance(v, str):
+        m = _HANDLE.match(v)
+        return f"{m.group(1)}.{kinds[int(m.group(2))]}.{m.group(3)}" if m and int(m.group(2)) in kinds else v
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int) and key == "kind" and method == "signatureToSignatureDeclaration":
+        return kinds.get(v, v)
+    if isinstance(v, list):
+        return [old_kinds(e, kinds, method) for e in v]
+    if isinstance(v, dict):
+        return {k: old_kinds(e, kinds, method, k) for k, e in v.items()}
+    return v
+
+
+def wire4(method, params, pf, kinds=None):
     """(params, paramsFrom) of a protocol 5 request in its protocol 4 form: the inverse of symbol_refs. Used by
     `check --wire 4` (base bins that speak protocol 4). A symbol spec reads the answer's /id, a symbol property
-    request is {snapshot, project, objectId} again, and a snapshot reference with a literal id is that id."""
+    request is {snapshot, project, objectId} again, and a snapshot reference with a literal id is that id. With
+    kinds (wire4_kinds()), the SyntaxKind values of the params are the protocol 4 pin's."""
+    if kinds and params is not None:
+        params = old_kinds(params, kinds, method)
     if isinstance(params, dict):
         params = dict(params)
         if "symbol" in params:
@@ -2278,11 +2315,11 @@ def wire4(method, params, pf):
     return params, out if isinstance(pf, list) else out[0] if out else None
 
 
-def wire4_event(ev):
+def wire4_event(ev, kinds=None):
     """The event with wire4 applied; overlays come back unchanged."""
     if ev.get("kind") != "request":
         return ev
-    params, pf = wire4(ev["method"], ev.get("params"), ev.get("paramsFrom"))
+    params, pf = wire4(ev["method"], ev.get("params"), ev.get("paramsFrom"), kinds)
     out = dict(ev)
     for k, v in (("params", params), ("paramsFrom", pf)):
         if v is None:
