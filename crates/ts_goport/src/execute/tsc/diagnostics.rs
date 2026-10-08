@@ -336,6 +336,7 @@ const PLATFORM_ZONE_SOURCES: &[&str] = &[
 // Go: time/zoneinfo_unix.go:28 initLocal
 // PORT: Go `syscall.Getenv` gives the raw bytes of the value; so does
 // `as_encoded_bytes` on Unix.
+#[cfg(not(windows))]
 fn init_local() -> jiff::tz::TimeZone {
     // consult $TZ to find the time zone to use.
     // no $TZ means use the system default /etc/localtime.
@@ -368,6 +369,18 @@ fn init_local() -> jiff::tz::TimeZone {
 
     // Fall back to UTC.
     jiff::tz::TimeZone::UTC
+}
+
+// Go: time/zoneinfo_windows.go:234 initLocal
+// PORT: Go calls `GetTimeZoneInformation` and builds the zone from the
+// standard and daylight rules of the current year. jiff asks Windows for
+// the zone name (`GetDynamicTimeZoneInformation`) and takes that zone from
+// its own data, which gives the same civil time for the current time. On
+// failure both fall back to UTC.
+// DIVERGES: jiff reads `TZ` first; Go on Windows does not read it.
+#[cfg(windows)]
+fn init_local() -> jiff::tz::TimeZone {
+    jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC)
 }
 
 // Go: time/zoneinfo_read.go:531 loadLocation
