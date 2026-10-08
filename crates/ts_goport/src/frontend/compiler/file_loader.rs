@@ -2657,6 +2657,9 @@ mod tests {
         }
         std::fs::write(dir.join("tsconfig.json"), tsconfig).unwrap();
         let cwd = dir.to_string_lossy().replace('\\', "/");
+        // Taken while the dir exists: the real path of a removed dir is the
+        // path itself.
+        let real = osvfs_fs().realpath(&cwd);
         let fs = bundled::wrap_fs(osvfs_fs());
         let sys = System {
             fs: fs.clone(),
@@ -2692,8 +2695,20 @@ mod tests {
         let mut out = String::new();
         // The include reasons name files by path (Go `tspath.Path`), which
         // is in lower case on a case-insensitive file system (macOS).
-        let cwd_path = to_path(&cwd, "", osvfs_fs().use_case_sensitive_file_names()).0;
-        let name = |file_name: &str| file_name.replace(&cwd, "<dir>").replace(&cwd_path, "<dir>");
+        let case_sensitive = osvfs_fs().use_case_sensitive_file_names();
+        let cwd_path = to_path(&cwd, "", case_sensitive).0;
+        // A node_modules file is named by its real path (Go
+        // `resolutionState.realPath`, module/resolver.go:1859). On macOS the
+        // temp dir is under /var, a symlink to /private/var, and the real
+        // path contains the plain one, so it is replaced first.
+        let real_path = to_path(&real, "", case_sensitive).0;
+        let name = |file_name: &str| {
+            file_name
+                .replace(&real, "<dir>")
+                .replace(&real_path, "<dir>")
+                .replace(&cwd, "<dir>")
+                .replace(&cwd_path, "<dir>")
+        };
         for file in &processed.files {
             let path = file.path();
             writeln!(out, "file {}", name(file.file_name())).unwrap();
