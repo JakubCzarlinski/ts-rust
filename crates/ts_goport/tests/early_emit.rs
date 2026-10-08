@@ -58,6 +58,11 @@ const RULES_CONFIG: &str = concat!(
     "/tests/fixtures/emit_pool/tsconfig.rules.json"
 );
 
+/// The tests that load a program in this process (the rule test and the
+/// barrier test) take this lock: two program loads at once in one process
+/// break the node store and file id checks of `ast/store.rs`.
+static IN_PROCESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// What one `tsgo` run wrote and printed.
 #[derive(Debug, PartialEq)]
 struct Run {
@@ -452,6 +457,9 @@ fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
         std::iter::from_fn(|| receiver.recv_timeout(wait).ok()).count()
     }
 
+    let _in_process = IN_PROCESS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let program = try_load_version(CONFIG, |_| {})
         .unwrap_or_else(|error| panic!("cannot load {CONFIG}: {error}"));
     {
@@ -672,6 +680,9 @@ fn build_emit_only_solution(
 
 #[test]
 fn rules_keep_the_barrier_when_a_check_could_see_the_outputs() {
+    let _in_process = IN_PROCESS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let out_dir = std::env::temp_dir()
         .join("goport-early-emit-rules")
         .to_string_lossy()
