@@ -466,7 +466,7 @@ fn has_function_like_data_p4(node: Node) -> bool {
     )
 }
 
-// Go: ast/utilities.go:3137 GetTypeAnnotationNode
+// Go: ast/utilities.go:3106 GetTypeAnnotationNode
 pub fn get_type_annotation_node(node: Node) -> Node {
     match node.kind() {
         SyntaxKind::VariableDeclaration
@@ -487,7 +487,6 @@ pub fn get_type_annotation_node(node: Node) -> Node {
         | SyntaxKind::RestType
         | SyntaxKind::TemplateLiteralTypeSpan
         | SyntaxKind::JsDocTypeExpression
-        | SyntaxKind::JsDocParameterTag
         | SyntaxKind::JsDocPropertyTag
         | SyntaxKind::JsDocNullableType
         | SyntaxKind::JsDocNonNullableType
@@ -1129,7 +1128,7 @@ pub fn get_non_augmentation_declaration(symbols: &SymbolArena, symbol: SymbolId)
         .unwrap_or(Node::NIL)
 }
 
-// Go: ast/utilities.go:3658 IsTypeDeclaration
+// Go: ast/utilities.go:3627 IsTypeDeclaration
 pub fn is_type_declaration(node: Node) -> bool {
     match node.kind() {
         SyntaxKind::TypeParameter
@@ -1138,7 +1137,7 @@ pub fn is_type_declaration(node: Node) -> bool {
         | SyntaxKind::TypeAliasDeclaration
         | SyntaxKind::JsTypeAliasDeclaration
         | SyntaxKind::EnumDeclaration => true,
-        SyntaxKind::ImportClause => node.is_type_only() && node.name().is_some(),
+        SyntaxKind::ImportClause => node.is_type_only(),
         SyntaxKind::ImportSpecifier | SyntaxKind::ExportSpecifier => {
             node.parent().parent().is_type_only()
         }

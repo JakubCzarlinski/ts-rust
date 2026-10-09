@@ -89,7 +89,6 @@ interface AnalyserOptions extends AudioNodeOptions {
 }
 
 interface AnimationEventInit extends EventInit {
-    animation?: CSSAnimation | null;
     animationName?: string;
     elapsedTime?: number;
     pseudoElement?: string;
@@ -352,11 +351,6 @@ interface BlobPropertyBag {
     type?: string;
 }
 
-interface CSSContainerCondition {
-    name: string;
-    query: string;
-}
-
 interface CSSMatrixComponentOptions {
     is2D?: boolean;
 }
@@ -373,7 +367,7 @@ interface CSSNumericType {
 }
 
 interface CSSStyleSheetInit {
-    baseURL?: string | null;
+    baseURL?: string;
     disabled?: boolean;
     media?: MediaList | string;
 }
@@ -428,10 +422,6 @@ interface CloseEventInit extends EventInit {
     code?: number;
     reason?: string;
     wasClean?: boolean;
-}
-
-interface CloseWatcherOptions {
-    signal?: AbortSignal;
 }
 
 interface CommandEventInit extends EventInit {
@@ -647,17 +637,6 @@ interface DisplayMediaStreamOptions {
     video?: boolean | MediaTrackConstraints;
 }
 
-interface DocumentPictureInPictureEventInit extends EventInit {
-    window: Window;
-}
-
-interface DocumentPictureInPictureOptions {
-    disallowReturnToOpener?: boolean;
-    height?: number;
-    preferInitialWindowPlacement?: boolean;
-    width?: number;
-}
-
 interface DocumentTimelineOptions {
     originTime?: DOMHighResTimeStamp;
 }
@@ -839,7 +818,6 @@ interface FormDataEventInit extends EventInit {
 }
 
 interface FullscreenOptions {
-    keyboardLock?: FullscreenKeyboardLock;
     navigationUI?: FullscreenNavigationUI;
 }
 
@@ -1022,7 +1000,6 @@ interface GPUPipelineErrorInit {
 
 interface GPUPipelineLayoutDescriptor extends GPUObjectDescriptorBase {
     bindGroupLayouts: (GPUBindGroupLayout | null)[];
-    immediateSize?: GPUSize32;
 }
 
 interface GPUPrimitiveState {
@@ -1250,15 +1227,6 @@ interface HashChangeEventInit extends EventInit {
     oldURL?: string;
 }
 
-interface HighlightHitResult {
-    highlight?: Highlight;
-    ranges?: AbstractRange[];
-}
-
-interface HighlightsFromPointOptions {
-    shadowRoots?: ShadowRoot[];
-}
-
 interface HkdfParams extends Algorithm {
     hash: HashAlgorithmIdentifier;
     info: BufferSource;
@@ -1421,7 +1389,7 @@ interface Keyframe {
     composite?: CompositeOperationOrAuto;
     easing?: string;
     offset?: number | null;
-    [property: string]: string | number | CSSStyleValue | null | undefined;
+    [property: string]: string | number | null | undefined;
 }
 
 interface KeyframeAnimationOptions extends KeyframeEffectOptions {
@@ -1771,11 +1739,6 @@ interface NavigationUpdateCurrentEntryOptions {
     state: any;
 }
 
-interface NotificationAction {
-    action: string;
-    title: string;
-}
-
 interface NotificationOptions {
     badge?: string;
     body?: string;
@@ -1854,10 +1817,6 @@ interface PannerOptions extends AudioNodeOptions {
     positionZ?: number;
     refDistance?: number;
     rolloffFactor?: number;
-}
-
-interface ParseHTMLUnsafeOptions {
-    sanitizer?: Sanitizer | SanitizerConfig | SanitizerPresets;
 }
 
 interface PayerErrors {
@@ -2050,7 +2009,7 @@ interface PropertyIndexedKeyframes {
     composite?: CompositeOperationOrAuto | CompositeOperationOrAuto[];
     easing?: string | string[];
     offset?: number | (number | null)[];
-    [property: string]: string | string[] | number | CSSStyleValue | CSSStyleValue[] | null | (number | null)[] | undefined;
+    [property: string]: string | string[] | number | null | (number | null)[] | undefined;
 }
 
 interface PublicKeyCredentialCreationOptions {
@@ -2683,10 +2642,8 @@ interface SanitizerConfig {
     comments?: boolean;
     dataAttributes?: boolean;
     elements?: SanitizerElementWithAttributes[];
-    processingInstructions?: SanitizerPI[];
     removeAttributes?: SanitizerAttribute[];
     removeElements?: SanitizerElement[];
-    removeProcessingInstructions?: SanitizerPI[];
     replaceWithChildrenElements?: SanitizerElement[];
 }
 
@@ -2698,10 +2655,6 @@ interface SanitizerElementNamespace {
 interface SanitizerElementNamespaceWithAttributes extends SanitizerElementNamespace {
     attributes?: SanitizerAttribute[];
     removeAttributes?: SanitizerAttribute[];
-}
-
-interface SanitizerProcessingInstruction {
-    target: string;
 }
 
 interface SchedulerPostTaskOptions {
@@ -2742,53 +2695,6 @@ interface SecurityPolicyViolationEventInit extends EventInit {
     sourceFile?: string;
     statusCode?: number;
     violatedDirective?: string;
-}
-
-interface SerialInputSignals {
-    clearToSend: boolean;
-    dataCarrierDetect: boolean;
-    dataSetReady: boolean;
-    ringIndicator: boolean;
-}
-
-interface SerialOptions {
-    baudRate: number;
-    bufferSize?: number;
-    dataBits?: number;
-    flowControl?: FlowControlType;
-    parity?: ParityType;
-    stopBits?: number;
-}
-
-interface SerialOutputSignals {
-    break?: boolean;
-    dataTerminalReady?: boolean;
-    requestToSend?: boolean;
-}
-
-interface SerialPortFilter {
-    bluetoothServiceClassId?: BluetoothServiceUUID;
-    usbProductId?: number;
-    usbVendorId?: number;
-}
-
-interface SerialPortInfo {
-    bluetoothServiceClassId?: BluetoothServiceUUID;
-    usbProductId?: number;
-    usbVendorId?: number;
-}
-
-interface SerialPortRequestOptions {
-    allowedBluetoothServiceClassIds?: BluetoothServiceUUID[];
-    filters?: SerialPortFilter[];
-}
-
-interface SetHTMLOptions {
-    sanitizer?: Sanitizer | SanitizerConfig | SanitizerPresets;
-}
-
-interface SetHTMLUnsafeOptions {
-    sanitizer?: Sanitizer | SanitizerConfig | SanitizerPresets;
 }
 
 interface ShadowRootInit {
@@ -2976,7 +2882,6 @@ interface Transformer<I = any, O = any> {
 }
 
 interface TransitionEventInit extends EventInit {
-    animation?: CSSTransition | null;
     elapsedTime?: number;
     propertyName?: string;
     pseudoElement?: string;
@@ -3229,23 +3134,6 @@ interface WebTransportCloseInfo {
     reason?: string;
 }
 
-interface WebTransportConnectionStats {
-    bytesReceived?: number;
-    datagrams: WebTransportDatagramStats;
-    minRtt?: DOMHighResTimeStamp;
-    packetsLost?: number;
-    packetsReceived?: number;
-    packetsSent?: number;
-    rttVariation?: DOMHighResTimeStamp;
-    smoothedRtt?: DOMHighResTimeStamp;
-}
-
-interface WebTransportDatagramStats {
-    droppedIncoming?: number;
-    expiredOutgoing?: number;
-    lostOutgoing?: number;
-}
-
 interface WebTransportErrorOptions {
     source?: WebTransportErrorSource;
     streamErrorCode?: number | null;
@@ -3264,22 +3152,11 @@ interface WebTransportOptions {
     serverCertificateHashes?: WebTransportHash[];
 }
 
-interface WebTransportReceiveStreamStats {
-    bytesRead?: number;
-    bytesReceived?: number;
-}
-
 interface WebTransportSendOptions {
     sendOrder?: number;
 }
 
 interface WebTransportSendStreamOptions extends WebTransportSendOptions {
-}
-
-interface WebTransportSendStreamStats {
-    bytesAcknowledged?: number;
-    bytesSent?: number;
-    bytesWritten?: number;
 }
 
 interface WheelEventInit extends MouseEventInit {
@@ -3361,317 +3238,109 @@ interface ANGLE_instanced_arrays {
 }
 
 interface ARIAMixin {
-    /**
-     * The **`ariaActiveDescendantElement`** property of the Element interface represents the current active element when focus is on a composite widget, combobox, textbox, group, or application.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaActiveDescendantElement)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaActiveDescendantElement) */
     ariaActiveDescendantElement: Element | null;
-    /**
-     * The **`ariaAtomic`** property of the Element interface reflects the value of the aria-atomic attribute, which indicates whether assistive technologies will present all, or only parts of, the changed region based on the change notifications defined by the aria-relevant attribute.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaAtomic)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaAtomic) */
     ariaAtomic: string | null;
-    /**
-     * The **`ariaAutoComplete`** property of the Element interface reflects the value of the aria-autocomplete attribute, which indicates whether inputting text could trigger display of one or more predictions of the user's intended value for a combobox, searchbox, or textbox and specifies how predictions would be presented if they were made.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaAutoComplete)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaAutoComplete) */
     ariaAutoComplete: string | null;
-    /**
-     * The **`ariaBrailleLabel`** property of the Element interface reflects the value of the aria-braillelabel attribute, which defines the ARIA braille label of the element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBrailleLabel)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBrailleLabel) */
     ariaBrailleLabel: string | null;
-    /**
-     * The **`ariaBrailleRoleDescription`** property of the Element interface reflects the value of the aria-brailleroledescription attribute, which defines the ARIA braille role description of the element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBrailleRoleDescription)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBrailleRoleDescription) */
     ariaBrailleRoleDescription: string | null;
-    /**
-     * The **`ariaBusy`** property of the Element interface reflects the value of the aria-busy attribute, which indicates whether an element is being modified, as assistive technologies may want to wait until the modifications are complete before exposing them to the user.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBusy)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaBusy) */
     ariaBusy: string | null;
-    /**
-     * The **`ariaChecked`** property of the Element interface reflects the value of the aria-checked attribute, which indicates the current "checked" state of checkboxes, radio buttons, and other widgets that have a checked state.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaChecked)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaChecked) */
     ariaChecked: string | null;
-    /**
-     * The **`ariaColCount`** property of the Element interface reflects the value of the aria-colcount attribute, which defines the number of columns in a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColCount)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColCount) */
     ariaColCount: string | null;
-    /**
-     * The **`ariaColIndex`** property of the Element interface reflects the value of the aria-colindex attribute, which defines an element's column index or position with respect to the total number of columns within a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColIndex)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColIndex) */
     ariaColIndex: string | null;
-    /**
-     * The **`ariaColIndexText`** property of the Element interface reflects the value of the aria-colindextext attribute, which defines a human readable text alternative of aria-colindex.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColIndexText)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColIndexText) */
     ariaColIndexText: string | null;
-    /**
-     * The **`ariaColSpan`** property of the Element interface reflects the value of the aria-colspan attribute, which defines the number of columns spanned by a cell or gridcell within a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColSpan)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaColSpan) */
     ariaColSpan: string | null;
-    /**
-     * The **`ariaControlsElements`** property of the Element interface is an array containing the elements that are controlled by the element it is applied to. For example, this might be set on a combobox to indicate the element that it pops up, or on a scrollbar to indicate the ID of the element it controls.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaControlsElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaControlsElements) */
     ariaControlsElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaCurrent`** property of the Element interface reflects the value of the aria-current attribute, which indicates the element that represents the current item within a container or set of related elements.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaCurrent)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaCurrent) */
     ariaCurrent: string | null;
-    /**
-     * The **`ariaDescribedByElements`** property of the Element interface is an array containing the element (or elements) that provide an accessible description for the element it is applied to. The accessible description is similar to the accessible label (see ariaLabelledByElements), but provides more verbose information.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDescribedByElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDescribedByElements) */
     ariaDescribedByElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaDescription`** property of the Element interface reflects the value of the aria-description attribute, which defines a string value that describes or annotates the current element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDescription)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDescription) */
     ariaDescription: string | null;
-    /**
-     * The **`ariaDetailsElements`** property of the Element interface is an array containing the element (or elements) that provide an accessible details for the element it is applied to. The accessible details are similar to the accessible description (see ariaDescribedByElements), but provides more verbose information.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDetailsElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDetailsElements) */
     ariaDetailsElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaDisabled`** property of the Element interface reflects the value of the aria-disabled attribute, which indicates that the element is perceivable but disabled, so it is not editable or otherwise operable.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDisabled)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaDisabled) */
     ariaDisabled: string | null;
-    /**
-     * The **`ariaErrorMessageElements`** property of the Element interface is an array containing the element (or elements) that provide an error message for the element it is applied to.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaErrorMessageElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaErrorMessageElements) */
     ariaErrorMessageElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaExpanded`** property of the Element interface reflects the value of the aria-expanded attribute, which indicates whether a grouping element owned or controlled by this element is expanded or collapsed.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaExpanded)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaExpanded) */
     ariaExpanded: string | null;
-    /**
-     * The **`ariaFlowToElements`** property of the Element interface is an array containing the element (or elements) that provide an alternate reading order of content, overriding the general default reading order at the user's discretion. If just one element is provided this is the next element in the reading order. If multiple elements are provided, then each element represents a possible path that should be offered to the user for selection.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaFlowToElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaFlowToElements) */
     ariaFlowToElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaHasPopup`** property of the Element interface reflects the value of the aria-haspopup attribute, which indicates the availability and type of interactive popup element, such as menu or dialog, that can be triggered by an element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaHasPopup)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaHasPopup) */
     ariaHasPopup: string | null;
-    /**
-     * The **`ariaHidden`** property of the Element interface reflects the value of the aria-hidden) attribute, which indicates whether the element is exposed to an accessibility API.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaHidden)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaHidden) */
     ariaHidden: string | null;
-    /**
-     * The **`ariaInvalid`** property of the Element interface reflects the value of the aria-invalid attribute. Relevant for the application, checkbox, combobox, gridcell, listbox, radiogroup, slider, spinbutton, textbox, and tree roles, it indicates to the accessibility API whether the entered value does not conform to the format expected by the application.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaInvalid)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaInvalid) */
     ariaInvalid: string | null;
-    /**
-     * The **`ariaKeyShortcuts`** property of the Element interface reflects the value of the aria-keyshortcuts attribute, which indicates keyboard shortcuts that an author has implemented to activate or give focus to an element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaKeyShortcuts)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaKeyShortcuts) */
     ariaKeyShortcuts: string | null;
-    /**
-     * The **`ariaLabel`** property of the Element interface reflects the value of the aria-label attribute, which defines a string value that labels the current element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLabel)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLabel) */
     ariaLabel: string | null;
-    /**
-     * The **`ariaLabelledByElements`** property of the Element interface is an array containing the element (or elements) that provide an accessible name for the element it is applied to.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLabelledByElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLabelledByElements) */
     ariaLabelledByElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaLevel`** property of the Element interface reflects the value of the aria-level attribute, which defines the hierarchical level of an element within a structure.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLevel)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLevel) */
     ariaLevel: string | null;
-    /**
-     * The **`ariaLive`** property of the Element interface reflects the value of the aria-live attribute, which indicates that an element will be updated, and describes the types of updates the user agents, assistive technologies, and user can expect from the live region.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLive)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaLive) */
     ariaLive: string | null;
-    /**
-     * The **`ariaModal`** property of the Element interface reflects the value of the aria-modal attribute, which indicates whether an element is modal when displayed. Applying the aria-modal property to an element with role="dialog" replaces the technique of using aria-hidden on the background for informing assistive technologies that content outside a dialog is inert.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaModal)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaModal) */
     ariaModal: string | null;
-    /**
-     * The **`ariaMultiLine`** property of the Element interface reflects the value of the aria-multiline attribute, which indicates whether a text box accepts multiple lines of input or only a single line.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaMultiLine)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaMultiLine) */
     ariaMultiLine: string | null;
-    /**
-     * The **`ariaMultiSelectable`** property of the Element interface reflects the value of the aria-multiselectable attribute, which indicates that the user may select more than one item from the current selectable descendants.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaMultiSelectable)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaMultiSelectable) */
     ariaMultiSelectable: string | null;
-    /**
-     * The **`ariaOrientation`** property of the Element interface reflects the value of the aria-orientation attribute, which indicates whether the element's orientation is horizontal, vertical, or unknown/ambiguous.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaOrientation)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaOrientation) */
     ariaOrientation: string | null;
-    /**
-     * The **`ariaOwnsElements`** property of the Element interface is an array containing the element (or elements) that define a visual, functional, or contextual relationship between a parent element that it is applied to, and its child elements. This is used when the DOM hierarchy cannot be used to represent the relationship, and it would not otherwise be available to assistive technology,
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaOwnsElements)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaOwnsElements) */
     ariaOwnsElements: ReadonlyArray<Element> | null;
-    /**
-     * The **`ariaPlaceholder`** property of the Element interface reflects the value of the aria-placeholder attribute, which defines a short hint intended to aid the user with data entry when the control has no value.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPlaceholder)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPlaceholder) */
     ariaPlaceholder: string | null;
-    /**
-     * The **`ariaPosInSet`** property of the Element interface reflects the value of the aria-posinset attribute, which defines an element's number or position in the current set of listitems or treeitems.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPosInSet)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPosInSet) */
     ariaPosInSet: string | null;
-    /**
-     * The **`ariaPressed`** property of the Element interface reflects the value of the aria-pressed attribute, which indicates the current "pressed" state of toggle buttons.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPressed)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaPressed) */
     ariaPressed: string | null;
-    /**
-     * The **`ariaReadOnly`** property of the Element interface reflects the value of the aria-readonly attribute, which indicates that the element is not editable, but is otherwise operable.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaReadOnly)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaReadOnly) */
     ariaReadOnly: string | null;
-    /**
-     * The **`ariaRelevant`** property of the Element interface reflects the value of the aria-relevant attribute, which indicates what notifications the user agent will trigger when the accessibility tree within a live region is modified. This is used to describe what changes in an aria-live region are relevant and should be announced.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRelevant)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRelevant) */
     ariaRelevant: string | null;
-    /**
-     * The **`ariaRequired`** property of the Element interface reflects the value of the aria-required attribute, which indicates that user input is required on the element before a form may be submitted.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRequired)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRequired) */
     ariaRequired: string | null;
-    /**
-     * The **`ariaRoleDescription`** property of the Element interface reflects the value of the aria-roledescription attribute, which defines a human-readable, author-localized description for the role of an element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRoleDescription)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRoleDescription) */
     ariaRoleDescription: string | null;
-    /**
-     * The **`ariaRowCount`** property of the Element interface reflects the value of the aria-rowcount attribute, which defines the total number of rows in a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowCount)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowCount) */
     ariaRowCount: string | null;
-    /**
-     * The **`ariaRowIndex`** property of the Element interface reflects the value of the aria-rowindex attribute, which defines an element's row index or position with respect to the total number of rows within a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowIndex)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowIndex) */
     ariaRowIndex: string | null;
-    /**
-     * The **`ariaRowIndexText`** property of the Element interface reflects the value of the aria-rowindextext attribute, which defines a human readable text alternative of aria-rowindex.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowIndexText)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowIndexText) */
     ariaRowIndexText: string | null;
-    /**
-     * The **`ariaRowSpan`** property of the Element interface reflects the value of the aria-rowspan attribute, which defines the number of rows spanned by a cell or gridcell within a table, grid, or treegrid.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowSpan)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaRowSpan) */
     ariaRowSpan: string | null;
-    /**
-     * The **`ariaSelected`** property of the Element interface reflects the value of the aria-selected attribute, which indicates the current "selected" state of elements that have a selected state.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSelected)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSelected) */
     ariaSelected: string | null;
-    /**
-     * The **`ariaSetSize`** property of the Element interface reflects the value of the aria-setsize attribute, which defines the number of items in the current set of listitems or treeitems.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSetSize)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSetSize) */
     ariaSetSize: string | null;
-    /**
-     * The **`ariaSort`** property of the Element interface reflects the value of the aria-sort attribute, which indicates if items in a table or grid are sorted in ascending or descending order.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSort)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaSort) */
     ariaSort: string | null;
-    /**
-     * The **`ariaValueMax`** property of the Element interface reflects the value of the aria-valuemax attribute, which defines the maximum allowed value for a range widget.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueMax)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueMax) */
     ariaValueMax: string | null;
-    /**
-     * The **`ariaValueMin`** property of the Element interface reflects the value of the aria-valuemin attribute, which defines the minimum allowed value for a range widget.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueMin)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueMin) */
     ariaValueMin: string | null;
-    /**
-     * The **`ariaValueNow`** property of the Element interface reflects the value of the aria-valuenow attribute, which defines the current value for a range widget.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueNow)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueNow) */
     ariaValueNow: string | null;
-    /**
-     * The **`ariaValueText`** property of the Element interface reflects the value of the aria-valuetext attribute, which defines the human-readable text alternative of aria-valuenow for a range widget.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueText)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/ariaValueText) */
     ariaValueText: string | null;
-    /**
-     * The **`role`** property of the Element interface returns the explicitly set WAI-ARIA role for the element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/role)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/role) */
     role: string | null;
 }
 
@@ -5442,53 +5111,21 @@ declare var BlobEvent: {
 };
 
 interface Body {
-    /**
-     * The **`body`** read-only property of the Request interface contains a ReadableStream with the body contents that have been added to the request. Note that a request using the GET or HEAD method cannot have a body and null is returned in these cases.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/body)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/body) */
     readonly body: ReadableStream<Uint8Array<ArrayBuffer>> | null;
-    /**
-     * The **`bodyUsed`** read-only property of the Request interface is a boolean value that indicates whether the request body has been read yet.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/bodyUsed)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/bodyUsed) */
     readonly bodyUsed: boolean;
-    /**
-     * The **`arrayBuffer()`** method of the Request interface reads the request body and returns it as a promise that resolves with an ArrayBuffer.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/arrayBuffer)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/arrayBuffer) */
     arrayBuffer(): Promise<ArrayBuffer>;
-    /**
-     * The **`blob()`** method of the Request interface reads the request body and returns it as a promise that resolves with a Blob.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/blob)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/blob) */
     blob(): Promise<Blob>;
-    /**
-     * The **`bytes()`** method of the Request interface reads the request body and returns it as a promise that resolves with a Uint8Array.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/bytes)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/bytes) */
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
-    /**
-     * The **`formData()`** method of the Request interface reads the request body and returns it as a promise that resolves with a FormData object.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/formData)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/formData) */
     formData(): Promise<FormData>;
-    /**
-     * The **`json()`** method of the Request interface reads the request body and returns it as a promise that resolves with the result of parsing the body text as JSON.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/json)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/json) */
     json(): Promise<any>;
-    /**
-     * The **`text()`** method of the Request interface reads the request body and returns it as a promise that resolves with a String. The response is always decoded using UTF-8.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/text)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request/text) */
     text(): Promise<string>;
 }
 
@@ -5618,8 +5255,6 @@ declare var CSSConditionRule: {
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSContainerRule)
  */
 interface CSSContainerRule extends CSSConditionRule {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSContainerRule/conditions) */
-    readonly conditions: ReadonlyArray<CSSContainerCondition>;
     /**
      * The read-only **`containerName`** property of the CSSContainerRule interface represents the container name of the associated CSS @container at-rule.
      *
@@ -5719,47 +5354,17 @@ declare var CSSCounterStyleRule: {
 };
 
 /**
- * The **`CSSFontFaceDescriptors`** interface represents a CSS declaration block for an @font-face at-rule.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSFontFaceDescriptors)
- */
-interface CSSFontFaceDescriptors extends CSSStyleDeclarationBase {
-    "font-display": string;
-    "font-family": string;
-    "font-feature-settings": string;
-    "font-stretch": string;
-    "font-style": string;
-    "font-weight": string;
-    fontDisplay: string;
-    fontFamily: string;
-    fontFeatureSettings: string;
-    fontStretch: string;
-    fontStyle: string;
-    fontWeight: string;
-    "size-adjust": string;
-    sizeAdjust: string;
-    src: string;
-    "unicode-range": string;
-    unicodeRange: string;
-}
-
-declare var CSSFontFaceDescriptors: {
-    prototype: CSSFontFaceDescriptors;
-    new(): CSSFontFaceDescriptors;
-};
-
-/**
  * The **`CSSFontFaceRule`** interface represents an @font-face at-rule.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSFontFaceRule)
  */
 interface CSSFontFaceRule extends CSSRule {
     /**
-     * The read-only **`style`** property of the CSSFontFaceRule interface returns a CSSFontFaceDescriptors object representing the descriptors available in the @font-face rule's body.
+     * The read-only **`style`** property of the CSSFontFaceRule interface contains a CSSStyleDeclaration object representing the descriptors available in the @font-face rule's body.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSFontFaceRule/style)
      */
-    get style(): CSSFontFaceDescriptors;
+    get style(): CSSStyleDeclaration;
     set style(cssText: string);
 }
 
@@ -6045,29 +5650,9 @@ declare var CSSLayerStatementRule: {
     new(): CSSLayerStatementRule;
 };
 
-/**
- * The **`CSSMathClamp`** interface of the CSS Typed Object Model API represents the CSS clamp() function. It inherits properties and methods from its parent CSSNumericValue.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSMathClamp)
- */
 interface CSSMathClamp extends CSSMathValue {
-    /**
-     * The **`lower`** read-only property of the CSSMathClamp interface returns a CSSNumericValue object containing the minimum value of a CSSMathClamp object.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSMathClamp/lower)
-     */
     readonly lower: CSSNumericValue;
-    /**
-     * The **`upper`** read-only property of the CSSMathClamp interface returns a CSSNumericValue object containing the maximum value of a CSSMathClamp object.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSMathClamp/upper)
-     */
     readonly upper: CSSNumericValue;
-    /**
-     * The **`value`** read-only property of the CSSMathClamp interface returns a CSSNumericValue object containing the preferred value of a CSSMathClamp object.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSMathClamp/value)
-     */
     readonly value: CSSNumericValue;
 }
 
@@ -7246,11 +6831,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/background-size)
      */
     backgroundSize: string;
-    /**
-     * The baseline-shift CSS property repositions the dominant-baseline of a text element relative to the dominant-baseline of its parent text content element. The shifted element might be a sub- or superscript. If the property is present, the value overrides the element's baseline-shift attribute.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/baseline-shift)
-     */
+    /** The baseline-shift CSS property repositions the dominant-baseline of a text element relative to the dominant-baseline of its parent text content element. The shifted element might be a sub- or superscript. If the property is present, the value overrides the element's baseline-shift attribute. */
     baselineShift: string;
     /**
      * The baseline-source CSS property defines which baseline to use when inline-level boxes have multiple possible baselines, such as multi-line inline blocks or inline flex containers. The values allow for choosing between aligning to the box's first baseline, last baseline, or letting the browser decide automatically based on the box type.
@@ -7788,7 +7369,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      */
     columnWidth: string;
     /**
-     * The **`columns`** CSS shorthand property sets the maximum number of columns to use when drawing an element's contents, along with the minimum width and maximum height of the element's columns.
+     * The **`columns`** CSS shorthand property sets the number of columns to use when drawing an element's contents, as well as those columns' widths.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/columns)
      */
@@ -8396,7 +7977,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      */
     left: string;
     /**
-     * The letter-spacing CSS property sets the spacing between text characters. This value is added to the natural spacing between characters while rendering the text. Positive values of letter-spacing spread characters further apart, while negative values of letter-spacing bring characters closer together.
+     * The letter-spacing CSS property sets the horizontal spacing behavior between text characters. This value is added to the natural spacing between characters while rendering the text. Positive values of letter-spacing causes characters to spread farther apart, while negative values of letter-spacing bring characters closer together.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/letter-spacing)
      */
@@ -8474,7 +8055,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      */
     marginBottom: string;
     /**
-     * The margin-inline CSS shorthand property defines both the logical inline start and end margins of an element, which maps to physical margins depending on the element's writing mode, directionality, and text orientation.
+     * The margin-inline CSS shorthand property is a shorthand property that defines both the logical inline start and end margins of an element, which maps to physical margins depending on the element's writing mode, directionality, and text orientation.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/margin-inline)
      */
@@ -9659,7 +9240,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      */
     vectorEffect: string;
     /**
-     * The vertical-align CSS shorthand property sets the vertical alignment of an inline, inline-block, or table-cell box.
+     * The vertical-align CSS property sets vertical alignment of an inline, inline-block or table-cell box.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/vertical-align)
      */
@@ -10161,7 +9742,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
      */
     wordBreak: string;
     /**
-     * The word-spacing CSS property sets the spacing between words and between tags.
+     * The word-spacing CSS property sets the length of space between words and between tags.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/word-spacing)
      */
@@ -10464,13 +10045,13 @@ declare var CSSTranslate: {
 };
 
 /**
- * The **`CSSUnitValue`** interface of the CSS Typed Object Model API represents values that contain a single unit type.
+ * The **`CSSUnitValue`** interface of the CSS Typed Object Model API represents values that contain a single unit type. For example, "42px" would be represented by a CSSNumericValue.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSUnitValue)
  */
 interface CSSUnitValue extends CSSNumericValue {
     /**
-     * The **`CSSUnitValue.unit`** read-only property of the CSSUnitValue interface returns a string indicating the unit type.
+     * The **`CSSUnitValue.unit`** read-only property of the CSSUnitValue interface returns a string indicating the type of unit.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSSUnitValue/unit)
      */
@@ -10854,7 +10435,7 @@ interface CanvasRect {
  */
 interface CanvasRenderingContext2D extends CanvasCompositing, CanvasDrawImage, CanvasDrawPath, CanvasFillStrokeStyles, CanvasFilters, CanvasImageData, CanvasImageSmoothing, CanvasPath, CanvasPathDrawingStyles, CanvasRect, CanvasSettings, CanvasShadowStyles, CanvasState, CanvasText, CanvasTextDrawingStyles, CanvasTransform, CanvasUserInterface {
     /**
-     * The **`CanvasRenderingContext2D.canvas`** property, part of the Canvas API, is a read-only reference to the HTMLCanvasElement object that is associated with a given context.
+     * The **`CanvasRenderingContext2D.canvas`** property, part of the Canvas API, is a read-only reference to the HTMLCanvasElement object that is associated with a given context. It might be null if there is no associated <canvas> element.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CanvasRenderingContext2D/canvas)
      */
@@ -10913,8 +10494,6 @@ interface CanvasTextDrawingStyles {
     fontStretch: CanvasFontStretch;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CanvasRenderingContext2D/fontVariantCaps) */
     fontVariantCaps: CanvasFontVariantCaps;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CanvasRenderingContext2D/lang) */
-    lang: string;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CanvasRenderingContext2D/letterSpacing) */
     letterSpacing: string;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CanvasRenderingContext2D/textAlign) */
@@ -11230,50 +10809,6 @@ declare var CloseEvent: {
     new(type: string, eventInitDict?: CloseEventInit): CloseEvent;
 };
 
-interface CloseWatcherEventMap {
-    "cancel": Event;
-    "close": Event;
-}
-
-/**
- * The **`CloseWatcher`** interface allows a custom UI component with open and close semantics to respond to device-specific close actions in the same way as a built-in component.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher)
- */
-interface CloseWatcher extends EventTarget {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher/cancel_event) */
-    oncancel: ((this: CloseWatcher, ev: Event) => any) | null;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher/close_event) */
-    onclose: ((this: CloseWatcher, ev: Event) => any) | null;
-    /**
-     * The **`close()`** method of the CloseWatcher interface lets you skip any logic in the cancel event handler and immediately fire the close event. It then deactivates the close watcher as if destroy() was called.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher/close)
-     */
-    close(): void;
-    /**
-     * The **`destroy()`** method of the CloseWatcher interface deactivates the close watcher. This is intended to be called if the relevant UI element is torn down in some other way than being closed.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher/destroy)
-     */
-    destroy(): void;
-    /**
-     * The **`requestClose()`** method of the CloseWatcher interface fires a cancel event and if that event is not canceled with Event.preventDefault(), proceeds to fire a close event, and then finally deactivates the close watcher as if destroy() was called.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CloseWatcher/requestClose)
-     */
-    requestClose(): void;
-    addEventListener<K extends keyof CloseWatcherEventMap>(type: K, listener: (this: CloseWatcher, ev: CloseWatcherEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
-    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
-    removeEventListener<K extends keyof CloseWatcherEventMap>(type: K, listener: (this: CloseWatcher, ev: CloseWatcherEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
-    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
-}
-
-declare var CloseWatcher: {
-    prototype: CloseWatcher;
-    new(options?: CloseWatcherOptions): CloseWatcher;
-};
-
 /**
  * The **`CommandEvent`** interface represents an event notifying the user when a button element with valid commandForElement and command attributes is about to invoke an interactive element.
  *
@@ -11577,12 +11112,6 @@ interface Credential {
 declare var Credential: {
     prototype: Credential;
     new(): Credential;
-    /**
-     * The **`isConditionalMediationAvailable()`** static method of the Credential interface returns a Promise which resolves to false.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Credential/isConditionalMediationAvailable_static)
-     */
-    isConditionalMediationAvailable(): Promise<boolean>;
 };
 
 /**
@@ -11695,7 +11224,7 @@ declare var CryptoKey: {
 };
 
 /**
- * The **`CustomElementRegistry`** interface provides methods for registering custom elements and querying registered elements. To get an instance of it, use the window.customElements property. To create a scoped registry, use the CustomElementRegistry() constructor.
+ * The **`CustomElementRegistry`** interface provides methods for registering custom elements and querying registered elements. To get an instance of it, use the window.customElements property.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CustomElementRegistry)
  */
@@ -11718,11 +11247,6 @@ interface CustomElementRegistry {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CustomElementRegistry/getName)
      */
     getName(constructor: CustomElementConstructor): string | null;
-    /**
-     * The **`initialize()`** method of the CustomElementRegistry interface associates this registry with a DOM subtree, setting the customElementRegistry of each inclusive descendant that doesn't already have one, and attempting to upgrade any custom elements found.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/CustomElementRegistry/initialize)
-     */
     initialize(root: Node): void;
     /**
      * The **`upgrade()`** method of the CustomElementRegistry interface upgrades all shadow-containing custom elements in a Node subtree, even before they are connected to the main document.
@@ -11872,7 +11396,7 @@ declare var DOMException: {
  */
 interface DOMImplementation {
     /**
-     * The **`createDocument()`** method of the DOMImplementation interface creates and returns an XMLDocument.
+     * The **`DOMImplementation.createDocument()`** method creates and returns an XMLDocument.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DOMImplementation/createDocument)
      */
@@ -13002,7 +12526,7 @@ declare var DeviceOrientationEvent: {
 /** Available only in secure contexts. */
 interface DigitalCredential extends Credential {
     readonly data: any;
-    readonly protocol: DigitalCredentialPresentationProtocol;
+    readonly protocol: string;
     toJSON(): any;
 }
 
@@ -13368,13 +12892,13 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
      */
     close(): void;
     /**
-     * The **`createAttribute()`** method of the Document interface creates a new attribute node.
+     * The **`Document.createAttribute()`** method creates a new attribute node, and returns it. The object created is a node implementing the Attr interface. The DOM does not enforce what sort of attributes can be added to a particular element in this manner.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/createAttribute)
      */
     createAttribute(localName: string): Attr;
     /**
-     * The **`createAttributeNS()`** method of the Document interface creates a new attribute node with the specified namespace URI and qualified name.
+     * The **`Document.createAttributeNS()`** method creates a new attribute node with the specified namespace URI and qualified name, and returns it. The object created is a node implementing the Attr interface. The DOM does not enforce what sort of attributes can be added to a particular element in this manner.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/createAttributeNS)
      */
@@ -13398,7 +12922,7 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
      */
     createDocumentFragment(): DocumentFragment;
     /**
-     * The **`createElement()`** method of the Document interface creates a new HTMLElement that has the specified localName.
+     * In an HTML document, the **`document.createElement()`** method creates the HTML element specified by localName, or an HTMLUnknownElement if localName isn't recognized.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/createElement)
      */
@@ -13407,7 +12931,7 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
     createElement<K extends keyof HTMLElementDeprecatedTagNameMap>(tagName: K, options?: ElementCreationOptions): HTMLElementDeprecatedTagNameMap[K];
     createElement(tagName: string, options?: ElementCreationOptions): HTMLElement;
     /**
-     * The **`createElementNS()`** method of the Document interface creates a new element with the specified namespace URI and qualified name.
+     * Creates an element with the specified namespace URI and qualified name.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/createElementNS)
      */
@@ -13438,7 +12962,6 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
     createEvent(eventInterface: "CustomEvent"): CustomEvent;
     createEvent(eventInterface: "DeviceMotionEvent"): DeviceMotionEvent;
     createEvent(eventInterface: "DeviceOrientationEvent"): DeviceOrientationEvent;
-    createEvent(eventInterface: "DocumentPictureInPictureEvent"): DocumentPictureInPictureEvent;
     createEvent(eventInterface: "DragEvent"): DragEvent;
     createEvent(eventInterface: "ErrorEvent"): ErrorEvent;
     createEvent(eventInterface: "Event"): Event;
@@ -13687,7 +13210,7 @@ declare var Document: {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/parseHTMLUnsafe_static)
      */
-    parseHTMLUnsafe(html: string, options?: ParseHTMLUnsafeOptions): Document;
+    parseHTMLUnsafe(html: string): Document;
 };
 
 /**
@@ -13711,114 +13234,35 @@ declare var DocumentFragment: {
 
 interface DocumentOrShadowRoot {
     /**
-     * The **`activeElement`** read-only property of the Document interface returns the Element within the DOM that is receiving keyboard events such as keydown and keyup. This is usually analogous to the focused element.
+     * Returns the deepest element in the document through which or to which key events are being routed. This is, roughly speaking, the focused element in the document.
+     *
+     * For the purposes of this API, when a child browsing context is focused, its container is focused in the parent browsing context. For example, if the user moves the focus to a text control in an iframe, the iframe is the element returned by the activeElement API in the iframe's node document.
+     *
+     * Similarly, when the focused element is in a different node tree than documentOrShadowRoot, the element returned will be the host that's located in the same node tree as documentOrShadowRoot if documentOrShadowRoot is a shadow-including inclusive ancestor of the focused element, and null if not.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/activeElement)
      */
     readonly activeElement: Element | null;
-    /**
-     * The **`adoptedStyleSheets`** property of the Document interface is used for setting an array of constructed stylesheets to be used by the document.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/adoptedStyleSheets)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/adoptedStyleSheets) */
     adoptedStyleSheets: CSSStyleSheet[];
-    /**
-     * The **`customElementRegistry`** read-only property of the Document interface returns the CustomElementRegistry object associated with this document, or null if one has not been set.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/customElementRegistry)
-     */
     readonly customElementRegistry: CustomElementRegistry | null;
     /**
-     * The **`Document.fullscreenElement`** read-only property returns the Element that is currently being presented in fullscreen mode in this document, or null if fullscreen mode is not currently in use.
+     * Returns document's fullscreen element.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/fullscreenElement)
      */
     readonly fullscreenElement: Element | null;
-    /**
-     * The read-only **`pictureInPictureElement`** property of the Document interface returns the Element that is currently being presented in picture-in-picture mode in this document, or null if picture-in-picture mode is not currently in use.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/pictureInPictureElement)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/pictureInPictureElement) */
     readonly pictureInPictureElement: Element | null;
-    /**
-     * The **`pointerLockElement`** read-only property of the Document interface provides the element set as the target for mouse events while the pointer is locked. It is null if lock is pending, pointer is unlocked, or the target is in another document.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/pointerLockElement)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/pointerLockElement) */
     readonly pointerLockElement: Element | null;
-    /**
-     * The **`styleSheets`** read-only property of the Document interface returns a StyleSheetList of CSSStyleSheet objects, for stylesheets explicitly linked into or embedded in a document.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/styleSheets)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/styleSheets) */
     readonly styleSheets: StyleSheetList;
-    /** The **`elementFromPoint()`** method, available on the Document object, returns the topmost Element at the specified coordinates (relative to the viewport). */
     elementFromPoint(x: number, y: number): Element | null;
-    /** The **`elementsFromPoint()`** method of the Document interface returns an array of all elements at the specified coordinates (relative to the viewport). The elements are ordered from the topmost to the bottommost box of the viewport. */
     elementsFromPoint(x: number, y: number): Element[];
-    /**
-     * The **`getAnimations()`** method of the Document interface returns an array of all Animation objects currently in effect whose target elements are descendants of the document. This array includes CSS Animations, CSS Transitions, and Web Animations.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/getAnimations)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/getAnimations) */
     getAnimations(): Animation[];
 }
-
-interface DocumentPictureInPictureEventMap {
-    "enter": DocumentPictureInPictureEvent;
-}
-
-/**
- * The **`DocumentPictureInPicture`** interface of the Document Picture-in-Picture API is the entry point for creating and handling document picture-in-picture windows.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPicture)
- */
-interface DocumentPictureInPicture extends EventTarget {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPicture/enter_event) */
-    onenter: ((this: DocumentPictureInPicture, ev: DocumentPictureInPictureEvent) => any) | null;
-    /**
-     * The **`window`** read-only property of the DocumentPictureInPicture interface returns a Window instance representing the browsing context inside the Picture-in-Picture window.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPicture/window)
-     */
-    readonly window: Window;
-    /**
-     * The **`requestWindow()`** method of the DocumentPictureInPicture interface opens the Picture-in-Picture window for the current main browsing context. It returns a Promise that fulfills with a Window instance representing the browsing context inside the Picture-in-Picture window.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPicture/requestWindow)
-     */
-    requestWindow(options?: DocumentPictureInPictureOptions): Promise<Window>;
-    addEventListener<K extends keyof DocumentPictureInPictureEventMap>(type: K, listener: (this: DocumentPictureInPicture, ev: DocumentPictureInPictureEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
-    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
-    removeEventListener<K extends keyof DocumentPictureInPictureEventMap>(type: K, listener: (this: DocumentPictureInPicture, ev: DocumentPictureInPictureEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
-    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
-}
-
-declare var DocumentPictureInPicture: {
-    prototype: DocumentPictureInPicture;
-    new(): DocumentPictureInPicture;
-};
-
-/**
- * The **`DocumentPictureInPictureEvent`** interface of the Document Picture-in-Picture API is the event object for the enter event, which fires when the Picture-in-Picture window is opened.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPictureEvent)
- */
-interface DocumentPictureInPictureEvent extends Event {
-    /**
-     * The **`window`** read-only property of the DocumentPictureInPictureEvent interface returns a Window instance representing the browsing context inside the DocumentPictureInPicture window the event was fired on.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DocumentPictureInPictureEvent/window)
-     */
-    readonly window: Window;
-}
-
-declare var DocumentPictureInPictureEvent: {
-    prototype: DocumentPictureInPictureEvent;
-    new(type: string, eventInitDict: DocumentPictureInPictureEventInit): DocumentPictureInPictureEvent;
-};
 
 /**
  * The **`DocumentTimeline`** interface of the Web Animations API represents animation timelines, including the default document timeline (accessed via Document.timeline).
@@ -14111,11 +13555,6 @@ interface Element extends Node, ARIAMixin, Animatable, ChildNode, NonDocumentTyp
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/currentCSSZoom)
      */
     readonly currentCSSZoom: number;
-    /**
-     * The **`customElementRegistry`** read-only property of the Element interface returns the CustomElementRegistry object associated with this element, or null if one has not been set.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/customElementRegistry)
-     */
     readonly customElementRegistry: CustomElementRegistry | null;
     /**
      * The **`id`** property of the Element interface represents the element's identifier, reflecting the id global attribute.
@@ -14447,17 +13886,11 @@ interface Element extends Node, ARIAMixin, Animatable, ChildNode, NonDocumentTyp
      */
     setAttributeNodeNS(attr: Attr): Attr | null;
     /**
-     * The **`setHTML()`** method of the Element interface provides an XSS-safe method to parse and sanitize a string of HTML and insert it into the DOM as a subtree of the element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/setHTML)
-     */
-    setHTML(html: string, options?: SetHTMLOptions): void;
-    /**
      * The **`setHTMLUnsafe()`** method of the Element interface is used to parse HTML input into a DocumentFragment, optionally filtering out unwanted elements and attributes, and those that don't belong in the context, and then using it to replace the element's subtree in the DOM.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/setHTMLUnsafe)
      */
-    setHTMLUnsafe(html: string, options?: SetHTMLUnsafeOptions): void;
+    setHTMLUnsafe(html: string): void;
     /**
      * The **`setPointerCapture()`** method of the Element interface is used to designate a specific element as the capture target of future pointer events. Subsequent events for the pointer will be targeted at the capture element until capture is released (via Element.releasePointerCapture() or the pointerup event is fired).
      *
@@ -14465,7 +13898,7 @@ interface Element extends Node, ARIAMixin, Animatable, ChildNode, NonDocumentTyp
      */
     setPointerCapture(pointerId: number): void;
     /**
-     * The **`toggleAttribute()`** method of the Element interface toggles a Boolean attribute on the given element, removing it if present and adding it if not present.
+     * The **`toggleAttribute()`** method of the Element interface toggles a Boolean attribute (removing it if it is present and adding it if it is not present) on the given element.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Element/toggleAttribute)
      */
@@ -14767,7 +14200,7 @@ interface Event {
      */
     readonly eventPhase: number;
     /**
-     * The **`isTrusted`** read-only property of the Event interface is a boolean value that is true when the event was generated by the user agent (including via user actions and programmatic methods such as HTMLElement.focus()), and false when the event was dispatched via EventTarget.dispatchEvent(). The click event fired through HTMLElement.click() sets the isTrusted property to false.
+     * The **`isTrusted`** read-only property of the Event interface is a boolean value that is true when the event was generated by the user agent (including via user actions and programmatic methods such as HTMLElement.focus()), and false when the event was dispatched via EventTarget.dispatchEvent(). The only exception is the click event, which initializes the isTrusted property to false in user agents.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Event/isTrusted)
      */
@@ -16744,12 +16177,8 @@ interface GPUSupportedLimits {
     readonly maxSamplersPerShaderStage: number;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/GPUSupportedLimits#instance_properties) */
     readonly maxStorageBufferBindingSize: number;
-    readonly maxStorageBuffersInFragmentStage: number;
-    readonly maxStorageBuffersInVertexStage: number;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/GPUSupportedLimits#instance_properties) */
     readonly maxStorageBuffersPerShaderStage: number;
-    readonly maxStorageTexturesInFragmentStage: number;
-    readonly maxStorageTexturesInVertexStage: number;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/GPUSupportedLimits#instance_properties) */
     readonly maxStorageTexturesPerShaderStage: number;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/GPUSupportedLimits#instance_properties) */
@@ -17600,7 +17029,7 @@ declare var HTMLAllCollection: {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement)
  */
-interface HTMLAnchorElement extends HTMLElement, HTMLHyperlinkElementUtils, HyperlinkElementUtils {
+interface HTMLAnchorElement extends HTMLElement, HTMLHyperlinkElementUtils {
     /** @deprecated */
     charset: string;
     /** @deprecated */
@@ -17611,6 +17040,12 @@ interface HTMLAnchorElement extends HTMLElement, HTMLHyperlinkElementUtils, Hype
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/download)
      */
     download: string;
+    /**
+     * The **`hreflang`** property of the HTMLAnchorElement interface is a string that is the language of the linked resource.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hreflang)
+     */
+    hreflang: string;
     /** @deprecated */
     name: string;
     /**
@@ -17643,11 +17078,23 @@ interface HTMLAnchorElement extends HTMLElement, HTMLHyperlinkElementUtils, Hype
     /** @deprecated */
     shape: string;
     /**
+     * The **`target`** property of the HTMLAnchorElement interface is a string that indicates where to display the linked resource.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/target)
+     */
+    target: string;
+    /**
      * The **`text`** property of the HTMLAnchorElement represents the text inside the element. This property represents the same information as Node.textContent.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/text)
      */
     text: string;
+    /**
+     * The **`type`** property of the HTMLAnchorElement interface is a string that indicates the MIME type of the linked resource.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/type)
+     */
+    type: string;
     addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLAnchorElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLAnchorElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -17664,7 +17111,7 @@ declare var HTMLAnchorElement: {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAreaElement)
  */
-interface HTMLAreaElement extends HTMLElement, HTMLHyperlinkElementUtils, HyperlinkElementUtils {
+interface HTMLAreaElement extends HTMLElement, HTMLHyperlinkElementUtils {
     /**
      * The **`alt`** property of the HTMLAreaElement interface specifies the text of the hyperlink, defining the textual label for an image map's link. It reflects the <area> element's alt attribute.
      *
@@ -17716,6 +17163,12 @@ interface HTMLAreaElement extends HTMLElement, HTMLHyperlinkElementUtils, Hyperl
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAreaElement/shape)
      */
     shape: string;
+    /**
+     * The **`target`** property of the HTMLAreaElement interface is a string that indicates where to display the linked resource.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAreaElement/target)
+     */
+    target: string;
     addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLAreaElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLAreaElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -17988,7 +17441,6 @@ interface HTMLCanvasElement extends HTMLElement {
     getContext(contextId: "bitmaprenderer", options?: ImageBitmapRenderingContextSettings): ImageBitmapRenderingContext | null;
     getContext(contextId: "webgl", options?: WebGLContextAttributes): WebGLRenderingContext | null;
     getContext(contextId: "webgl2", options?: WebGLContextAttributes): WebGL2RenderingContext | null;
-    getContext(contextId: "webgpu"): GPUCanvasContext | null;
     getContext(contextId: string, options?: any): RenderingContext | null;
     /**
      * The **`HTMLCanvasElement.toBlob()`** method creates a Blob object representing the image contained in the canvas. This file may be cached on the disk or stored in memory at the discretion of the user agent.
@@ -18274,7 +17726,7 @@ interface HTMLElementEventMap extends ElementEventMap, GlobalEventHandlersEventM
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLElement)
  */
-interface HTMLElement extends Element, ElementCSSInlineStyle, ElementContentEditable, GlobalEventHandlers, HTMLOrSVGElement, HTMLOrSVGOrMathMLElement {
+interface HTMLElement extends Element, ElementCSSInlineStyle, ElementContentEditable, GlobalEventHandlers, HTMLOrSVGElement {
     /**
      * The **`HTMLElement.accessKey`** property sets the keystroke which a user can press to jump to a given element.
      *
@@ -18912,18 +18364,92 @@ declare var HTMLHtmlElement: {
 
 interface HTMLHyperlinkElementUtils {
     /**
-     * The **`href`** property of the HTMLAnchorElement interface is a stringifier that returns the absolute URL corresponding to the element's href attribute (or an empty string if href is unset). Setting this property updates the element's href attribute to the provided value.
+     * Returns the hyperlink's URL's fragment (includes leading "#" if non-empty).
+     *
+     * Can be set, to change the URL's fragment (ignores leading "#").
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hash)
+     */
+    hash: string;
+    /**
+     * Returns the hyperlink's URL's host and port (if different from the default port for the scheme).
+     *
+     * Can be set, to change the URL's host and port.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/host)
+     */
+    host: string;
+    /**
+     * Returns the hyperlink's URL's host.
+     *
+     * Can be set, to change the URL's host.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hostname)
+     */
+    hostname: string;
+    /**
+     * Returns the hyperlink's URL.
+     *
+     * Can be set, to change the URL.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/href)
      */
     href: string;
     toString(): string;
     /**
-     * The **`target`** property of the HTMLAnchorElement interface is a string that indicates where to display the linked resource.
+     * Returns the hyperlink's URL's origin.
      *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/target)
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/origin)
      */
-    target: string;
+    readonly origin: string;
+    /**
+     * Returns the hyperlink's URL's password.
+     *
+     * Can be set, to change the URL's password.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/password)
+     */
+    password: string;
+    /**
+     * Returns the hyperlink's URL's path.
+     *
+     * Can be set, to change the URL's path.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/pathname)
+     */
+    pathname: string;
+    /**
+     * Returns the hyperlink's URL's port.
+     *
+     * Can be set, to change the URL's port.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/port)
+     */
+    port: string;
+    /**
+     * Returns the hyperlink's URL's scheme.
+     *
+     * Can be set, to change the URL's scheme.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/protocol)
+     */
+    protocol: string;
+    /**
+     * Returns the hyperlink's URL's query (includes leading "?" if non-empty).
+     *
+     * Can be set, to change the URL's query (ignores leading "?").
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/search)
+     */
+    search: string;
+    /**
+     * Returns the hyperlink's URL's username.
+     *
+     * Can be set, to change the URL's username.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/username)
+     */
+    username: string;
 }
 
 /**
@@ -18967,7 +18493,7 @@ interface HTMLIFrameElement extends HTMLElement {
      */
     height: string;
     /**
-     * The **`loading`** property of the HTMLIFrameElement interface is a string that provides a hint to the browser indicating whether the iframe should be loaded immediately on page load, or only when it is needed.
+     * The **`loading`** property of the HTMLIFrameElement interface is a string that provides a hint to the user agent indicating whether the iframe should be loaded immediately on page load, or only when it is needed.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLIFrameElement/loading)
      */
@@ -19071,7 +18597,7 @@ interface HTMLImageElement extends HTMLElement {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLImageElement/crossOrigin)
      */
-    crossOrigin: "anonymous" | "use-credentials" | null;
+    crossOrigin: string | null;
     /**
      * The **`currentSrc`** read-only property of the HTMLImageElement interface indicates the URL of the image selected by the browser to load.
      *
@@ -19110,7 +18636,7 @@ interface HTMLImageElement extends HTMLElement {
      */
     isMap: boolean;
     /**
-     * The **`loading`** property of the HTMLImageElement interface provides a hint to the browser on how to handle the loading of the image which is currently outside the window's visual viewport. This helps to optimize the loading of the document's contents by postponing loading the image until it's expected to be needed, rather than immediately during the initial page load. It reflects the <img> element's loading content attribute.
+     * The **`loading`** property of the HTMLImageElement interface provides a hint to the user agent on how to handle the loading of the image which is currently outside the window's visual viewport. This helps to optimize the loading of the document's contents by postponing loading the image until it's expected to be needed, rather than immediately during the initial page load. It reflects the <img> element's loading content attribute.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLImageElement/loading)
      */
@@ -19150,7 +18676,7 @@ interface HTMLImageElement extends HTMLElement {
      */
     referrerPolicy: string;
     /**
-     * The **`sizes`** property of the HTMLImageElement interface allows you to specify the layout width of the image for each of a list of media queries, or auto for lazy-loaded images to allow the browser to automatically select an image to display based on the layout size of the element. This allows the browser to choose between different images specified in the element srcset to match different media conditions — even images with different orientations or aspect ratios.
+     * The **`sizes`** property of the HTMLImageElement interface allows you to specify the layout width of the image for each of a list of media queries. This provides the ability to automatically select among different images—even images of different orientations or aspect ratios—as the document state changes to match different media conditions. It reflects the <img> element's sizes content attribute.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLImageElement/sizes)
      */
@@ -19253,12 +18779,6 @@ interface HTMLInputElement extends HTMLElement, PopoverTargetAttributes {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLInputElement/checked)
      */
     checked: boolean;
-    /**
-     * The **`colorSpace`** property of the HTMLInputElement interface reflects the <input> element's colorspace attribute, which indicates whether the color space of the serialized CSS color is sRGB (the default) or display-p3. It is only relevant to color controls.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLInputElement/colorSpace)
-     */
-    colorSpace: string;
     /**
      * The **`defaultChecked`** property of the HTMLInputElement interface specifies the default checkedness state of the element. This property reflects the <input> element's checked attribute.
      *
@@ -20064,12 +19584,6 @@ interface HTMLMediaElement extends HTMLElement {
      */
     canPlayType(type: string): CanPlayTypeResult;
     /**
-     * The **`captureStream()`** method of the HTMLMediaElement interface returns a MediaStream object that streams a real-time capture of the content being rendered in the media element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLMediaElement/captureStream)
-     */
-    captureStream(): MediaStream;
-    /**
      * The **`HTMLMediaElement.fastSeek()`** method quickly seeks the media to the new time with precision tradeoff.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLMediaElement/fastSeek)
@@ -20603,10 +20117,7 @@ declare var HTMLOptionsCollection: {
     new(): HTMLOptionsCollection;
 };
 
-interface HTMLOrSVGElement extends HTMLOrSVGOrMathMLElement {
-}
-
-interface HTMLOrSVGOrMathMLElement {
+interface HTMLOrSVGElement {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLElement/autofocus) */
     autofocus: boolean;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLElement/dataset) */
@@ -21809,11 +21320,6 @@ interface HTMLTemplateElement extends HTMLElement {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLTemplateElement/shadowRootClonable)
      */
     shadowRootClonable: boolean;
-    /**
-     * The **`shadowRootCustomElementRegistry`** property of the HTMLTemplateElement interface reflects the value of the shadowrootcustomelementregistry attribute of the associated <template> element.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLTemplateElement/shadowRootCustomElementRegistry)
-     */
     shadowRootCustomElementRegistry: string;
     /**
      * The **`shadowRootDelegatesFocus`** property of the HTMLTemplateElement interface reflects the value of the shadowrootdelegatesfocus attribute of the associated <template> element.
@@ -22361,7 +21867,7 @@ declare var Headers: {
 };
 
 /**
- * The **`Highlight`** interface of the CSS Custom Highlight API is used to represent a collection of AbstractRange instances to be styled using the API.
+ * The **`Highlight`** interface of the CSS Custom Highlight API is used to represent a collection of Range instances to be styled using the API.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Highlight)
  */
@@ -22392,12 +21898,6 @@ declare var Highlight: {
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HighlightRegistry)
  */
 interface HighlightRegistry {
-    /**
-     * The **`highlightsFromPoint()`** method of the HighlightRegistry interface returns an array of objects representing the custom highlights applied at a specific point within the viewport.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HighlightRegistry/highlightsFromPoint)
-     */
-    highlightsFromPoint(x: number, y: number, options?: HighlightsFromPointOptions): HighlightHitResult[];
     forEach(callbackfn: (value: Highlight, key: string, parent: HighlightRegistry) => void, thisArg?: any): void;
 }
 
@@ -22466,81 +21966,6 @@ declare var History: {
     prototype: History;
     new(): History;
 };
-
-interface HyperlinkElementUtils {
-    /**
-     * The **`hash`** property of the HTMLAnchorElement interface is a string containing a "#" followed by the fragment identifier of the <a> element's href. If the URL does not have a fragment identifier, this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hash)
-     */
-    hash: string;
-    /**
-     * The **`host`** property of the HTMLAnchorElement interface is a string containing the host, which is the hostname, and then, if the port of the URL is nonempty, a ":", followed by the port of the URL. If the URL does not have a hostname, this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/host)
-     */
-    host: string;
-    /**
-     * The **`hostname`** property of the HTMLAnchorElement interface is a string containing either the domain name or IP address of the <a> element's href. If the URL does not have a hostname, this property contains an empty string, "". IPv4 and IPv6 addresses are normalized, such as stripping leading zeros, and domain names are converted to IDN.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hostname)
-     */
-    hostname: string;
-    /**
-     * The **`hreflang`** property of the HTMLAnchorElement interface is a string that is the language of the linked resource.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/hreflang)
-     */
-    hreflang: string;
-    /**
-     * The **`origin`** read-only property of the HTMLAnchorElement interface returns a string containing the Unicode serialization of the origin of the <a> element's href.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/origin)
-     */
-    readonly origin: string;
-    /**
-     * The **`password`** property of the HTMLAnchorElement interface is a string containing the password component of the <a> element's href. If the URL does not have a password, this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/password)
-     */
-    password: string;
-    /**
-     * The **`HTMLAnchorElement.pathname`** property is a string containing an initial '/' followed by the path of the URL not including the query string or fragment (or the empty string if there is no path).
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/pathname)
-     */
-    pathname: string;
-    /**
-     * The **`port`** property of the HTMLAnchorElement interface is a string containing the port number of the <a> element's href. If the port is the default for the protocol (80 for ws: and http:, 443 for wss: and https:, and 21 for ftp:), this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/port)
-     */
-    port: string;
-    /**
-     * The **`protocol`** property of the HTMLAnchorElement interface is a string containing the protocol or scheme of the <area> element's href, including the final ":".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/protocol)
-     */
-    protocol: string;
-    /**
-     * The **`search`** property of the HTMLAnchorElement interface is a search string, also called a query string, that is a string containing a "?" followed by the parameters of the <a> element's href. If the URL does not have a search query, this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/search)
-     */
-    search: string;
-    /**
-     * The **`type`** property of the HTMLAnchorElement interface is a string that indicates the MIME type of the linked resource.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/type)
-     */
-    type: string;
-    /**
-     * The **`username`** property of the HTMLAnchorElement interface is a string containing the username component of the <a> element's href. If the URL does not have a username, this property contains an empty string, "".
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLAnchorElement/username)
-     */
-    username: string;
-}
 
 /**
  * The **`IDBCursor`** interface of the IndexedDB API represents a cursor for traversing or iterating over multiple records in a database.
@@ -24324,7 +23749,7 @@ interface MathMLElementEventMap extends ElementEventMap, GlobalEventHandlersEven
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MathMLElement)
  */
-interface MathMLElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGOrMathMLElement {
+interface MathMLElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGElement {
     addEventListener<K extends keyof MathMLElementEventMap>(type: K, listener: (this: MathMLElement, ev: MathMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof MathMLElementEventMap>(type: K, listener: (this: MathMLElement, ev: MathMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -26316,12 +25741,11 @@ declare var NavigationPreloadManager: {
 };
 
 /**
- * The **`NavigationTransition`** interface of the Navigation API represents an ongoing navigation — a navigation that hasn't yet reached the navigatesuccess or navigateerror stage.
+ * The **`NavigationTransition`** interface of the Navigation API represents an ongoing navigation, that is, a navigation that hasn't yet reached the navigatesuccess or navigateerror stage.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/NavigationTransition)
  */
 interface NavigationTransition {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/NavigationTransition/committed) */
     readonly committed: Promise<void>;
     /**
      * The **`finished`** read-only property of the NavigationTransition interface returns a Promise that fulfills at the same time the navigatesuccess event fires, or rejects at the same time the navigateerror event fires.
@@ -26414,12 +25838,6 @@ interface Navigator extends NavigatorAutomationInformation, NavigatorBadge, Navi
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Navigator/permissions)
      */
     readonly permissions: Permissions;
-    /**
-     * The **`serial`** read-only property of the Navigator interface returns a Serial object which represents the entry point into the Web Serial API.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Navigator/serial)
-     */
-    readonly serial: Serial;
     /**
      * The **`serviceWorker`** read-only property of the Navigator interface returns the ServiceWorkerContainer object for the associated document, which provides access to registration, removal, upgrade, and communication with the ServiceWorker.
      * Available only in secure contexts.
@@ -26970,7 +26388,7 @@ interface NonDocumentTypeChildNode {
 
 interface NonElementParentNode {
     /**
-     * The **`getElementById()`** method of the Document interface returns an Element object representing the element whose id property matches the specified string. Since element IDs are required to be unique if specified, they're a useful way to get access to a specific element quickly.
+     * Returns the first element within node's descendants whose ID is elementId.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/getElementById)
      */
@@ -26990,12 +26408,6 @@ interface NotificationEventMap {
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Notification)
  */
 interface Notification extends EventTarget {
-    /**
-     * The **`actions`** read-only property of the Notification interface provides the actions available for users to choose from for interacting with the notification.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Notification/actions)
-     */
-    readonly actions: ReadonlyArray<NotificationAction>;
     /**
      * The **`body`** read-only property of the Notification interface indicates the body string of the notification, as specified in the body option of the Notification() constructor.
      *
@@ -27073,12 +26485,6 @@ interface Notification extends EventTarget {
 declare var Notification: {
     prototype: Notification;
     new(title: string, options?: NotificationOptions): Notification;
-    /**
-     * The **`maxActions`** read-only static property of the Notification interface returns the maximum number of actions supported by the device and the User Agent. Effectively, this is the maximum number of elements in Notification.actions array which will be respected by the User Agent.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Notification/maxActions_static)
-     */
-    readonly maxActions: number;
     /**
      * The **`permission`** read-only static property of the Notification interface indicates the current permission granted by the user for the current origin to display web notifications.
      *
@@ -27361,10 +26767,9 @@ interface OffscreenCanvas extends EventTarget {
     getContext(contextId: "bitmaprenderer", options?: any): ImageBitmapRenderingContext | null;
     getContext(contextId: "webgl", options?: any): WebGLRenderingContext | null;
     getContext(contextId: "webgl2", options?: any): WebGL2RenderingContext | null;
-    getContext(contextId: "webgpu"): GPUCanvasContext | null;
     getContext(contextId: OffscreenRenderingContextId, options?: any): OffscreenRenderingContext | null;
     /**
-     * The **`transferToImageBitmap()`** method of the OffscreenCanvas interface creates an ImageBitmap object from the most recently rendered image of the OffscreenCanvas. The image in the OffscreenCanvas is replaced with a new blank image for subsequent rendering.
+     * The **`OffscreenCanvas.transferToImageBitmap()`** method creates an ImageBitmap object from the most recently rendered image of the OffscreenCanvas. The OffscreenCanvas allocates a new image for its subsequent rendering.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/OffscreenCanvas/transferToImageBitmap)
      */
@@ -27393,18 +26798,6 @@ interface OffscreenCanvasRenderingContext2D extends CanvasCompositing, CanvasDra
 declare var OffscreenCanvasRenderingContext2D: {
     prototype: OffscreenCanvasRenderingContext2D;
     new(): OffscreenCanvasRenderingContext2D;
-};
-
-interface Origin {
-    readonly opaque: boolean;
-    isSameOrigin(other: Origin): boolean;
-    isSameSite(other: Origin): boolean;
-}
-
-declare var Origin: {
-    prototype: Origin;
-    new(): Origin;
-    from(value: any): Origin;
 };
 
 /**
@@ -27531,9 +26924,7 @@ declare var PageTransitionEvent: {
 };
 
 interface PaintTimingMixin {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/LargestContentfulPaint/paintTime) */
     readonly paintTime: DOMHighResTimeStamp;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/LargestContentfulPaint/presentationTime) */
     readonly presentationTime: DOMHighResTimeStamp | null;
 }
 
@@ -27649,50 +27040,46 @@ declare var PannerNode: {
 };
 
 interface ParentNode extends Node {
-    /**
-     * The **`Document.childElementCount`** read-only property returns the number of child elements of the document.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/childElementCount)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/childElementCount) */
     readonly childElementCount: number;
     /**
-     * The read-only **`children`** property returns a live HTMLCollection which contains all of the child elements of the document upon which it was called.
+     * Returns the child elements.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/children)
      */
     readonly children: HTMLCollection;
     /**
-     * The **`Document.firstElementChild`** read-only property returns the document's first child Element, or null if there are no child elements.
+     * Returns the first child that is an element, and null otherwise.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/firstElementChild)
      */
     readonly firstElementChild: Element | null;
     /**
-     * The **`Document.lastElementChild`** read-only property returns the document's last child Element, or null if there are no child elements.
+     * Returns the last child that is an element, and null otherwise.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/lastElementChild)
      */
     readonly lastElementChild: Element | null;
     /**
-     * The **`Document.append()`** method inserts a set of Node objects or strings after the last child of the document. Strings are inserted as equivalent Text nodes.
+     * Inserts nodes after the last child of node, while replacing strings in nodes with equivalent Text nodes.
+     *
+     * Throws a "HierarchyRequestError" DOMException if the constraints of the node tree are violated.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/append)
      */
     append(...nodes: (Node | string)[]): void;
-    /**
-     * The **`moveBefore()`** method of the Document interface moves a given Node inside the Document DOM node as a direct child, before a given reference node.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/moveBefore)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/moveBefore) */
     moveBefore(node: Node, child: Node | null): void;
     /**
-     * The **`Document.prepend()`** method inserts a set of Node objects or strings before the first child of the document. Strings are inserted as equivalent Text nodes.
+     * Inserts nodes before the first child of node, while replacing strings in nodes with equivalent Text nodes.
+     *
+     * Throws a "HierarchyRequestError" DOMException if the constraints of the node tree are violated.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/prepend)
      */
     prepend(...nodes: (Node | string)[]): void;
     /**
-     * The Document method **`querySelector()`** returns the first Element within the document that matches the specified CSS selector, or group of CSS selectors. If no matches are found, null is returned.
+     * Returns the first element that is a descendant of node that matches selectors.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/querySelector)
      */
@@ -27703,7 +27090,7 @@ interface ParentNode extends Node {
     querySelector<K extends keyof HTMLElementDeprecatedTagNameMap>(selectors: K): HTMLElementDeprecatedTagNameMap[K] | null;
     querySelector<E extends Element = Element>(selectors: string): E | null;
     /**
-     * The Document method **`querySelectorAll()`** returns a static (not live) NodeList representing a list of the document's elements that match the specified group of selectors.
+     * Returns all element descendants of node that match selectors.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/querySelectorAll)
      */
@@ -27714,7 +27101,9 @@ interface ParentNode extends Node {
     querySelectorAll<K extends keyof HTMLElementDeprecatedTagNameMap>(selectors: K): NodeListOf<HTMLElementDeprecatedTagNameMap[K]>;
     querySelectorAll<E extends Element = Element>(selectors: string): NodeListOf<E>;
     /**
-     * The **`Document.replaceChildren()`** method replaces the existing children of a Document with a specified new set of children.
+     * Replace all children of node with nodes, while replacing strings in nodes with equivalent Text nodes.
+     *
+     * Throws a "HierarchyRequestError" DOMException if the constraints of the node tree are violated.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Document/replaceChildren)
      */
@@ -28518,23 +27907,11 @@ interface PerformanceResourceTiming extends PerformanceEntry {
      */
     readonly connectStart: DOMHighResTimeStamp;
     /**
-     * The **`contentType`** read-only property of the PerformanceResourceTiming interface is a string indicating the content type of the fetched resource, formatted as a MIME type and subtype separated by a forward slash.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/contentType)
-     */
-    readonly contentType: string;
-    /**
      * The **`decodedBodySize`** read-only property returns the size (in octets) received from the fetch (HTTP or cache) of the message body after removing any applied content encoding (like gzip or Brotli). If the resource is retrieved from an application cache or local resources, it returns the size of the payload after removing any applied content encoding.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/decodedBodySize)
      */
     readonly decodedBodySize: number;
-    /**
-     * The **`deliveryType`** read-only property is a string indicating how the resource was delivered — for example from the cache or from a navigational prefetch.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/deliveryType)
-     */
-    readonly deliveryType: string;
     /**
      * The **`domainLookupEnd`** read-only property returns the timestamp immediately after the browser finishes the domain-name lookup for the resource.
      *
@@ -28559,18 +27936,6 @@ interface PerformanceResourceTiming extends PerformanceEntry {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/fetchStart)
      */
     readonly fetchStart: DOMHighResTimeStamp;
-    /**
-     * The **`finalResponseHeadersStart`** read-only property returns a timestamp immediately after the browser receives the first byte of the final document response (for example, 200 OK) from the server.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/finalResponseHeadersStart)
-     */
-    readonly finalResponseHeadersStart: DOMHighResTimeStamp;
-    /**
-     * The **`firstInterimResponseStart`** read-only property returns a timestamp immediately after the browser receives the first byte of the interim 1xx response (for example, 100 Continue or 103 Early Hints) from the server.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/PerformanceResourceTiming/firstInterimResponseStart)
-     */
-    readonly firstInterimResponseStart: DOMHighResTimeStamp;
     /**
      * The **`initiatorType`** read-only property is a string representing web platform feature that initiated the resource load.
      *
@@ -29180,17 +28545,9 @@ declare var PopStateEvent: {
 };
 
 interface PopoverTargetAttributes {
-    /**
-     * The **`popoverTargetAction`** property of the HTMLButtonElement interface gets and sets the action to be performed ("hide", "show", or "toggle") on a popover element being controlled by a button.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLButtonElement/popoverTargetAction)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLButtonElement/popoverTargetAction) */
     popoverTargetAction: string;
-    /**
-     * The **`popoverTargetElement`** property of the HTMLButtonElement interface gets and sets the popover element to control via a button.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLButtonElement/popoverTargetElement)
-     */
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/HTMLButtonElement/popoverTargetElement) */
     popoverTargetElement: Element | null;
 }
 
@@ -29794,7 +29151,7 @@ interface RTCEncodedVideoFrame {
      */
     readonly timestamp: number;
     /**
-     * The **`type`** read-only property of the RTCEncodedVideoFrame interface indicates whether this frame is a key frame or a delta frame.
+     * The **`type`** read-only property of the RTCEncodedVideoFrame interface indicates whether this frame is a key frame, delta frame, or empty frame.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCEncodedVideoFrame/type)
      */
@@ -30009,12 +29366,6 @@ interface RTCIceTransport extends EventTarget {
     onselectedcandidatepairchange: ((this: RTCIceTransport, ev: Event) => any) | null;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCIceTransport/statechange_event) */
     onstatechange: ((this: RTCIceTransport, ev: Event) => any) | null;
-    /**
-     * The **`role`** read-only property of the RTCIceTransport interface indicates which ICE role the transport is fulfilling: that of the controlling agent, or the agent that is being controlled.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCIceTransport/role)
-     */
-    readonly role: RTCIceRole;
     /**
      * The **`state`** read-only property of the RTCIceTransport interface returns the current state of the ICE transport, so you can determine the state of ICE gathering in which the ICE agent currently is operating.
      *
@@ -30287,13 +29638,9 @@ interface RTCPeerConnectionIceErrorEvent extends Event {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCPeerConnectionIceErrorEvent/address)
      */
     readonly address: string | null;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCPeerConnectionIceErrorEvent/errorCode) */
     readonly errorCode: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCPeerConnectionIceErrorEvent/errorText) */
     readonly errorText: string;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCPeerConnectionIceErrorEvent/port) */
     readonly port: number | null;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/RTCPeerConnectionIceErrorEvent/url) */
     readonly url: string;
 }
 
@@ -30398,7 +29745,7 @@ interface RTCRtpScriptTransform {
 
 declare var RTCRtpScriptTransform: {
     prototype: RTCRtpScriptTransform;
-    new(workerOrWorkerAndParameters: Worker, options?: any, transfer?: any[]): RTCRtpScriptTransform;
+    new(worker: Worker, options?: any, transfer?: any[]): RTCRtpScriptTransform;
 };
 
 /**
@@ -30976,7 +30323,7 @@ interface ReadableStreamBYOBRequest {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ReadableStreamBYOBRequest/view)
      */
-    readonly view: Uint8Array<ArrayBuffer> | null;
+    readonly view: ArrayBufferView<ArrayBuffer> | null;
     /**
      * The **`respond()`** method of the ReadableStreamBYOBRequest interface is used to signal to the associated readable byte stream that the specified number of bytes were written into the ReadableStreamBYOBRequest.view.
      *
@@ -31838,13 +31185,13 @@ interface SVGAnimatedRect {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGAnimatedRect/animVal)
      */
-    readonly animVal: SVGRect;
+    readonly animVal: DOMRectReadOnly;
     /**
      * The **`baseVal`** read-only property of the SVGAnimatedRect interface represents the current non-animated value of the viewBox attribute of an SVG element.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGAnimatedRect/baseVal)
      */
-    readonly baseVal: SVGRect;
+    readonly baseVal: DOMRect;
 }
 
 declare var SVGAnimatedRect: {
@@ -32144,7 +31491,7 @@ interface SVGElementEventMap extends ElementEventMap, GlobalEventHandlersEventMa
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGElement)
  */
-interface SVGElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGElement, HTMLOrSVGOrMathMLElement {
+interface SVGElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGElement {
     /** @deprecated */
     readonly className: any;
     /**
@@ -33221,7 +32568,7 @@ declare var SVGFETurbulenceElement: {
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGFilterElement)
  */
-interface SVGFilterElement extends SVGElement {
+interface SVGFilterElement extends SVGElement, SVGURIReference {
     /**
      * The **`filterUnits`** read-only property of the SVGFilterElement interface reflects the filterUnits attribute of the given <filter> element. It takes one of the SVG_UNIT_TYPE_* constants defined in SVGUnitTypes.
      *
@@ -33364,7 +32711,7 @@ interface SVGGeometryElement extends SVGGraphicsElement {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGGeometryElement/getPointAtLength)
      */
-    getPointAtLength(distance: number): SVGPoint;
+    getPointAtLength(distance: number): DOMPoint;
     /**
      * The **`SVGGeometryElement.getTotalLength()`** method returns the user agent's computed value for the total length of the path in user units.
      *
@@ -33454,19 +32801,19 @@ interface SVGGraphicsElement extends SVGElement, SVGTests {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGGraphicsElement/getBBox)
      */
-    getBBox(options?: SVGBoundingBoxOptions): SVGRect;
+    getBBox(options?: SVGBoundingBoxOptions): DOMRect;
     /**
      * The **`getCTM()`** method of the SVGGraphicsElement interface represents the matrix that transforms the current element's coordinate system to its SVG viewport's coordinate system.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGGraphicsElement/getCTM)
      */
-    getCTM(): SVGMatrix | null;
+    getCTM(): DOMMatrix | null;
     /**
      * The **`getScreenCTM()`** method of the SVGGraphicsElement interface represents the matrix that transforms the current element's coordinate system to the coordinate system of the SVG viewport for the SVG document fragment.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGGraphicsElement/getScreenCTM)
      */
-    getScreenCTM(): SVGMatrix | null;
+    getScreenCTM(): DOMMatrix | null;
     addEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGGraphicsElement, ev: SVGElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGGraphicsElement, ev: SVGElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -34128,7 +33475,7 @@ interface SVGPointList {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/appendItem)
      */
-    appendItem(newItem: SVGPoint): SVGPoint;
+    appendItem(newItem: DOMPoint): DOMPoint;
     /**
      * The **`clear()`** method of the SVGPointList interface removes all items from the list.
      *
@@ -34140,32 +33487,32 @@ interface SVGPointList {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/getItem)
      */
-    getItem(index: number): SVGPoint;
+    getItem(index: number): DOMPoint;
     /**
      * The **`initialize()`** method of the SVGPointList interface clears the list then adds a single new DOMPoint object to the list.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/initialize)
      */
-    initialize(newItem: SVGPoint): SVGPoint;
+    initialize(newItem: DOMPoint): DOMPoint;
     /**
      * The **`insertItemBefore()`** method of the SVGPointList interface inserts a DOMPoint before another item in the list.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/insertItemBefore)
      */
-    insertItemBefore(newItem: SVGPoint, index: number): SVGPoint;
+    insertItemBefore(newItem: DOMPoint, index: number): DOMPoint;
     /**
      * The **`removeItem()`** method of the SVGPointList interface removes a DOMPoint from the list.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/removeItem)
      */
-    removeItem(index: number): SVGPoint;
+    removeItem(index: number): DOMPoint;
     /**
      * The **`replaceItem()`** method of the SVGPointList interface replaces a DOMPoint in the list.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGPointList/replaceItem)
      */
-    replaceItem(newItem: SVGPoint, index: number): SVGPoint;
-    [index: number]: SVGPoint;
+    replaceItem(newItem: DOMPoint, index: number): DOMPoint;
+    [index: number]: DOMPoint;
 }
 
 declare var SVGPointList: {
@@ -34386,7 +33733,7 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/currentTranslate)
      */
-    readonly currentTranslate: SVGPoint;
+    readonly currentTranslate: DOMPointReadOnly;
     /**
      * The **`height`** read-only property of the SVGSVGElement interface describes the vertical size of element as an SVGAnimatedLength. It reflects the <svg> element's height attribute, which may not be the SVG's rendered height.
      *
@@ -34422,13 +33769,13 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/checkEnclosure)
      */
-    checkEnclosure(element: SVGElement, rect: SVGRect): boolean;
+    checkEnclosure(element: SVGElement, rect: DOMRectReadOnly): boolean;
     /**
      * The **`checkIntersection()`** method of the SVGSVGElement interface checks if the rendered content of the given element intersects the supplied rectangle.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/checkIntersection)
      */
-    checkIntersection(element: SVGElement, rect: SVGRect): boolean;
+    checkIntersection(element: SVGElement, rect: DOMRectReadOnly): boolean;
     /**
      * The **`createSVGAngle()`** method of the SVGSVGElement interface creates an SVGAngle object outside of any document trees.
      *
@@ -34446,7 +33793,7 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/createSVGMatrix)
      */
-    createSVGMatrix(): SVGMatrix;
+    createSVGMatrix(): DOMMatrix;
     /**
      * The **`createSVGNumber()`** method of the SVGSVGElement interface creates an SVGNumber object outside of any document trees.
      *
@@ -34458,13 +33805,13 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/createSVGPoint)
      */
-    createSVGPoint(): SVGPoint;
+    createSVGPoint(): DOMPoint;
     /**
      * The **`createSVGRect()`** method of the SVGSVGElement interface creates a DOMRect object outside of any document trees.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/createSVGRect)
      */
-    createSVGRect(): SVGRect;
+    createSVGRect(): DOMRect;
     /**
      * The **`createSVGTransform()`** method of the SVGSVGElement interface creates an SVGTransform object outside of any document trees.
      *
@@ -34497,8 +33844,8 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGSVGElement/getElementById)
      */
     getElementById(elementId: string): Element | null;
-    getEnclosureList(rect: SVGRect, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
-    getIntersectionList(rect: SVGRect, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
+    getEnclosureList(rect: DOMRectReadOnly, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
+    getIntersectionList(rect: DOMRectReadOnly, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
     /**
      * The **`pauseAnimations()`** method of the SVGSVGElement interface suspends (i.e., pauses) all currently running animations that are defined within the SVG document fragment corresponding to this <svg> element, causing the animation clock corresponding to this document fragment to stand still until it is unpaused.
      *
@@ -34800,13 +34147,13 @@ interface SVGTextContentElement extends SVGGraphicsElement {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGTextContentElement/getEndPositionOfChar)
      */
-    getEndPositionOfChar(charnum: number): SVGPoint;
+    getEndPositionOfChar(charnum: number): DOMPoint;
     /**
      * The **`getExtentOfChar()`** method of the SVGTextContentElement interface the represents computed tight bounding box of the glyph cell that corresponds to a given typographic character.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGTextContentElement/getExtentOfChar)
      */
-    getExtentOfChar(charnum: number): SVGRect;
+    getExtentOfChar(charnum: number): DOMRect;
     /**
      * The **`getNumberOfChars()`** method of the SVGTextContentElement interface represents the total number of addressable characters available for rendering within the current element, regardless of whether they will be rendered.
      *
@@ -34824,7 +34171,7 @@ interface SVGTextContentElement extends SVGGraphicsElement {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGTextContentElement/getStartPositionOfChar)
      */
-    getStartPositionOfChar(charnum: number): SVGPoint;
+    getStartPositionOfChar(charnum: number): DOMPoint;
     /**
      * The **`getSubStringLength()`** method of the SVGTextContentElement interface represents the computed length of the formatted text advance distance for a substring of text within the element.
      *
@@ -34995,7 +34342,7 @@ interface SVGTransform {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SVGTransform/matrix)
      */
-    readonly matrix: SVGMatrix;
+    readonly matrix: DOMMatrix;
     /**
      * The **`type`** read-only property of the SVGTransform interface represents the type of transformation applied, specified by one of the SVG_TRANSFORM_* constants defined on this interface.
      *
@@ -35221,11 +34568,7 @@ declare var SVGViewElement: {
     new(): SVGViewElement;
 };
 
-/**
- * The **`Sanitizer`** interface of the HTML Sanitizer API defines a configuration object that specifies what elements, attributes and comments are allowed or should be removed when inserting strings of HTML into an Element or ShadowRoot, or when parsing an HTML string into a Document.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Sanitizer)
- */
+/** The **`Sanitizer`** interface of the HTML Sanitizer API defines a configuration object that specifies what elements, attributes and comments are allowed or should be removed when inserting strings of HTML into an Element or ShadowRoot, or when parsing an HTML string into a Document. */
 interface Sanitizer {
     /**
      * The **`allowAttribute()`** method of the Sanitizer interface sets an attribute to be allowed on all elements when the sanitizer is used.
@@ -35258,7 +34601,7 @@ interface Sanitizer {
      */
     removeElement(element: SanitizerElement): boolean;
     /**
-     * The **`removeUnsafe()`** method of the Sanitizer interface configures the sanitizer so that it will remove all elements and attributes that are considered XSS-unsafe by the browser.
+     * The **`removeUnsafe()`** method of the Sanitizer interface configures the sanitizer configuration so that it will remove all elements, attributes, and event handler content attributes that are considered XSS-unsafe by the browser.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Sanitizer/removeUnsafe)
      */
@@ -35489,7 +34832,7 @@ interface SecurityPolicyViolationEvent extends Event {
      */
     readonly blockedURI: string;
     /**
-     * The **`columnNumber`** read-only property of the SecurityPolicyViolationEvent interface is the character position in the source file line of the document or worker script at which the Content Security Policy (CSP) violation occurred.
+     * The **`columnNumber`** read-only property of the SecurityPolicyViolationEvent interface is the column number in the document or worker script at which the Content Security Policy (CSP) violation occurred.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SecurityPolicyViolationEvent/columnNumber)
      */
@@ -35717,113 +35060,6 @@ interface Selection {
 declare var Selection: {
     prototype: Selection;
     new(): Selection;
-};
-
-/**
- * The **`Serial`** interface of the Web Serial API provides attributes and methods for finding and connecting to serial ports from a web page.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Serial)
- */
-interface Serial extends EventTarget {
-    /**
-     * The **`getPorts()`** method of the Serial interface returns a Promise that resolves with an array of SerialPort objects representing serial ports connected to the host which the origin has permission to access.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Serial/getPorts)
-     */
-    getPorts(): Promise<SerialPort[]>;
-    /**
-     * The **`Serial.requestPort()`** method of the Serial interface presents the user with a dialog asking them to select a serial device to connect to. It returns a Promise that resolves with an instance of SerialPort representing the device chosen by the user.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Serial/requestPort)
-     */
-    requestPort(options?: SerialPortRequestOptions): Promise<SerialPort>;
-}
-
-declare var Serial: {
-    prototype: Serial;
-    new(): Serial;
-};
-
-interface SerialPortEventMap {
-    "connect": Event;
-    "disconnect": Event;
-}
-
-/**
- * The **`SerialPort`** interface of the Web Serial API provides access to a serial port on the host device.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort)
- */
-interface SerialPort extends EventTarget {
-    /**
-     * The **`connected`** read-only property of the SerialPort interface returns a boolean value that indicates whether the port is logically connected to the device.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/connected)
-     */
-    readonly connected: boolean;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/connect_event) */
-    onconnect: ((this: SerialPort, ev: Event) => any) | null;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/disconnect_event) */
-    ondisconnect: ((this: SerialPort, ev: Event) => any) | null;
-    /**
-     * The **`readable`** read-only property of the SerialPort interface returns a ReadableStream for receiving data from the device connected to the port. Chunks read from this stream are instances of Uint8Array. This property is non-null as long as the port is open and has not encountered a fatal error.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/readable)
-     */
-    readonly readable: ReadableStream | null;
-    /**
-     * The **`writable`** read-only property of the SerialPort interface returns a WritableStream for sending data to the device connected to the port. Chunks written to this stream must be instances of ArrayBuffer, TypedArray, or DataView. This property is non-null as long as the port is open and has not encountered a fatal error.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/writable)
-     */
-    readonly writable: WritableStream | null;
-    /**
-     * The **`SerialPort.close()`** method of the SerialPort interface returns a Promise that resolves when the port closes.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/close)
-     */
-    close(): Promise<void>;
-    /**
-     * The **`SerialPort.forget()`** method of the SerialPort interface returns a Promise that resolves when access to the serial port is revoked.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/forget)
-     */
-    forget(): Promise<void>;
-    /**
-     * The **`getInfo()`** method of the SerialPort interface returns an object containing identifying information for the device available via the port.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/getInfo)
-     */
-    getInfo(): SerialPortInfo;
-    /**
-     * The **`SerialPort.getSignals()`** method of the SerialPort interface returns a Promise that resolves with an object containing the current state of the port's control signals.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/getSignals)
-     */
-    getSignals(): Promise<SerialInputSignals>;
-    /**
-     * The **`open()`** method of the SerialPort interface returns a Promise that resolves when the port is opened. By default the port is opened with 8 data bits, 1 stop bit and no parity checking. The baudRate parameter is required.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/open)
-     */
-    open(options: SerialOptions): Promise<void>;
-    /**
-     * The **`setSignals()`** method of the SerialPort interface sets control signals on the port and returns a Promise that resolves when they are set.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/SerialPort/setSignals)
-     */
-    setSignals(signals?: SerialOutputSignals): Promise<void>;
-    addEventListener<K extends keyof SerialPortEventMap>(type: K, listener: (this: SerialPort, ev: SerialPortEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
-    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
-    removeEventListener<K extends keyof SerialPortEventMap>(type: K, listener: (this: SerialPort, ev: SerialPortEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
-    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
-}
-
-declare var SerialPort: {
-    prototype: SerialPort;
-    new(): SerialPort;
 };
 
 interface ServiceWorkerEventMap extends AbstractWorkerEventMap {
@@ -36089,7 +35325,7 @@ interface ShadowRoot extends DocumentFragment, DocumentOrShadowRoot {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ShadowRoot/setHTMLUnsafe)
      */
-    setHTMLUnsafe(html: string, options?: SetHTMLUnsafeOptions): void;
+    setHTMLUnsafe(html: string): void;
     addEventListener<K extends keyof ShadowRootEventMap>(type: K, listener: (this: ShadowRoot, ev: ShadowRootEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof ShadowRootEventMap>(type: K, listener: (this: ShadowRoot, ev: ShadowRootEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -37901,7 +37137,7 @@ interface TransformStreamDefaultController<O = any> {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/TransformStreamDefaultController/enqueue)
      */
-    enqueue(chunk: O): void;
+    enqueue(chunk?: O): void;
     /**
      * The **`error()`** method of the TransformStreamDefaultController interface errors both sides of the stream. Any further interactions with it will fail with the given error message, and any chunks in the queue will be discarded.
      *
@@ -38446,21 +37682,13 @@ declare var VTTCue: {
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion)
  */
 interface VTTRegion {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/id) */
     id: string;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/lines) */
     lines: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/regionAnchorX) */
     regionAnchorX: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/regionAnchorY) */
     regionAnchorY: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/scroll) */
     scroll: ScrollSetting;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/viewportAnchorX) */
     viewportAnchorX: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/viewportAnchorY) */
     viewportAnchorY: number;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VTTRegion/width) */
     width: number;
 }
 
@@ -38962,7 +38190,6 @@ declare var ViewTransitionTypeSet: {
 interface VisualViewportEventMap {
     "resize": Event;
     "scroll": Event;
-    "scrollend": Event;
 }
 
 /**
@@ -38993,8 +38220,6 @@ interface VisualViewport extends EventTarget {
     onresize: ((this: VisualViewport, ev: Event) => any) | null;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VisualViewport/scroll_event) */
     onscroll: ((this: VisualViewport, ev: Event) => any) | null;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/VisualViewport/scrollend_event) */
-    onscrollend: ((this: VisualViewport, ev: Event) => any) | null;
     /**
      * The **`pageLeft`** read-only property of the VisualViewport interface returns the x coordinate of the left edge of the visual viewport relative to the initial containing block origin, in CSS pixels, or 0 if current document is not fully active.
      *
@@ -39234,13 +38459,13 @@ interface WEBGL_draw_buffers {
  */
 interface WEBGL_lose_context {
     /**
-     * The **`loseContext()`** method of the WEBGL_lose_context extension is part of the WebGL API and allows you to simulate losing the context of a WebGLRenderingContext.
+     * The **`WEBGL_lose_context.loseContext()`** method is part of the WebGL API and allows you to simulate losing the context of a WebGLRenderingContext context.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WEBGL_lose_context/loseContext)
      */
     loseContext(): void;
     /**
-     * The **`restoreContext()`** method of the WEBGL_lose_context extension is part of the WebGL API and allows you to simulate restoring the context of a WebGLRenderingContext.
+     * The **`WEBGL_lose_context.restoreContext()`** method is part of the WebGL API and allows you to simulate restoring the context of a WebGLRenderingContext object.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WEBGL_lose_context/restoreContext)
      */
@@ -41730,12 +40955,6 @@ interface WebTransport {
      */
     readonly closed: Promise<WebTransportCloseInfo>;
     /**
-     * The **`congestionControl`** read-only property of the WebTransport interface indicates the application's preference for either high throughput or low-latency when sending data.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/congestionControl)
-     */
-    readonly congestionControl: WebTransportCongestionControl;
-    /**
      * The **`datagrams`** read-only property of the WebTransport interface returns a WebTransportDatagramDuplexStream instance that can be used to send and receive datagrams — unreliable data transmission.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/datagrams)
@@ -41753,19 +40972,12 @@ interface WebTransport {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/incomingUnidirectionalStreams)
      */
     readonly incomingUnidirectionalStreams: ReadableStream;
-    readonly protocol: string;
     /**
      * The **`ready`** read-only property of the WebTransport interface returns a promise that resolves when the transport is ready to use.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/ready)
      */
     readonly ready: Promise<void>;
-    /**
-     * The **`reliability`** read-only property of the WebTransport interface indicates whether the connection supports reliable transports only, or whether it also supports unreliable transports (such as UDP).
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/reliability)
-     */
-    readonly reliability: WebTransportReliabilityMode;
     /**
      * The **`close()`** method of the WebTransport interface closes an ongoing WebTransport session.
      *
@@ -41784,12 +40996,6 @@ interface WebTransport {
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/createUnidirectionalStream)
      */
     createUnidirectionalStream(options?: WebTransportSendStreamOptions): Promise<WritableStream>;
-    /**
-     * The **`getStats()`** method of the WebTransport interface asynchronously returns an object containing HTTP/3 connection statistics.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransport/getStats)
-     */
-    getStats(): Promise<WebTransportConnectionStats>;
 }
 
 declare var WebTransport: {
@@ -41906,52 +41112,6 @@ declare var WebTransportError: {
 };
 
 /**
- * The **`WebTransportReceiveStream`** interface of the WebTransport API is a ReadableStream that can be used to read from an incoming unidirectional or bidirectional WebTransport stream.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransportReceiveStream)
- */
-interface WebTransportReceiveStream extends ReadableStream {
-    /**
-     * The **`getStats()`** method of the WebTransportReceiveStream interface asynchronously returns an object containing statistics for the current stream.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransportReceiveStream/getStats)
-     */
-    getStats(): Promise<WebTransportReceiveStreamStats>;
-}
-
-declare var WebTransportReceiveStream: {
-    prototype: WebTransportReceiveStream;
-    new(): WebTransportReceiveStream;
-};
-
-/**
- * The **`WebTransportSendStream`** interface of the WebTransport API is a specialized WritableStream that is used to send outbound data in both unidirectional or bidirectional WebTransport streams.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransportSendStream)
- */
-interface WebTransportSendStream extends WritableStream {
-    /**
-     * The **`sendOrder`** property of the WebTransportSendStream interface indicates the send priority of this stream relative to other streams for which the value has been set.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransportSendStream/sendOrder)
-     */
-    sendOrder: number;
-    /**
-     * The **`getStats()`** method of the WebTransportSendStream interface asynchronously returns an object containing statistics for the current stream.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WebTransportSendStream/getStats)
-     */
-    getStats(): Promise<WebTransportSendStreamStats>;
-}
-
-declare var WebTransportSendStream: {
-    prototype: WebTransportSendStream;
-    new(): WebTransportSendStream;
-};
-
-/**
  * The **`WheelEvent`** interface represents events that occur due to the user moving a mouse wheel or similar input device.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WheelEvent)
@@ -42029,7 +41189,7 @@ interface Window extends EventTarget, AnimationFrameProvider, GlobalEventHandler
      */
     readonly cookieStore: CookieStore;
     /**
-     * The **`customElements`** read-only property of the Window interface returns a reference to the global CustomElementRegistry object, which can be used to register new custom elements and get information about previously registered custom elements.
+     * The **`customElements`** read-only property of the Window interface returns a reference to the CustomElementRegistry object, which can be used to register new custom elements and get information about previously registered custom elements.
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/customElements)
      */
@@ -42046,13 +41206,6 @@ interface Window extends EventTarget, AnimationFrameProvider, GlobalEventHandler
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/document)
      */
     readonly document: Document;
-    /**
-     * The **`documentPictureInPicture`** read-only property of the Window interface returns a reference to the DocumentPictureInPicture object for the current document context.
-     * Available only in secure contexts.
-     *
-     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/documentPictureInPicture)
-     */
-    readonly documentPictureInPicture: DocumentPictureInPicture;
     /**
      * The read-only Window property **`event`** returns the Event which is currently being handled by the site's code. Outside the context of an event handler, the value is always undefined.
      * @deprecated
@@ -42763,7 +41916,7 @@ interface WritableStreamDefaultWriter<W = any> {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WritableStreamDefaultWriter/write)
      */
-    write(chunk: W): Promise<void>;
+    write(chunk?: W): Promise<void>;
 }
 
 declare var WritableStreamDefaultWriter: {
@@ -43205,7 +42358,6 @@ declare namespace CSS {
     function Hz(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function Q(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function cap(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function ch(value: number): CSSUnitValue;
@@ -43257,11 +42409,9 @@ declare namespace CSS {
     function fr(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function grad(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function ic(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function kHz(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function lh(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function lvb(value: number): CSSUnitValue;
@@ -43291,9 +42441,7 @@ declare namespace CSS {
     function px(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rad(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rcap(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rch(value: number): CSSUnitValue;
     /**
      * The **`CSS.registerProperty()`** static method registers custom properties, allowing for property type checking, default values, and properties that do or do not inherit their value.
@@ -43303,11 +42451,8 @@ declare namespace CSS {
     function registerProperty(definition: PropertyDefinition): void;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rem(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rex(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function ric(value: number): CSSUnitValue;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function rlh(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function s(value: number): CSSUnitValue;
@@ -43344,47 +42489,6 @@ declare namespace CSS {
     function vmin(value: number): CSSUnitValue;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/CSS/factory_functions_static) */
     function vw(value: number): CSSUnitValue;
-}
-
-declare namespace GPUBufferUsage {
-    const MAP_READ: 0x0001;
-    const MAP_WRITE: 0x0002;
-    const COPY_SRC: 0x0004;
-    const COPY_DST: 0x0008;
-    const INDEX: 0x0010;
-    const VERTEX: 0x0020;
-    const UNIFORM: 0x0040;
-    const STORAGE: 0x0080;
-    const INDIRECT: 0x0100;
-    const QUERY_RESOLVE: 0x0200;
-}
-
-declare namespace GPUColorWrite {
-    const RED: 0x1;
-    const GREEN: 0x2;
-    const BLUE: 0x4;
-    const ALPHA: 0x8;
-    const ALL: 0xF;
-}
-
-declare namespace GPUMapMode {
-    const READ: 0x0001;
-    const WRITE: 0x0002;
-}
-
-declare namespace GPUShaderStage {
-    const VERTEX: 0x1;
-    const FRAGMENT: 0x2;
-    const COMPUTE: 0x4;
-}
-
-declare namespace GPUTextureUsage {
-    const COPY_SRC: 0x01;
-    const COPY_DST: 0x02;
-    const TEXTURE_BINDING: 0x04;
-    const STORAGE_BINDING: 0x08;
-    const RENDER_ATTACHMENT: 0x10;
-    const TRANSIENT_ATTACHMENT: 0x20;
 }
 
 declare namespace WebAssembly {
@@ -43435,13 +42539,7 @@ declare namespace WebAssembly {
      * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Global)
      */
     interface Global<T extends ValueType = ValueType> {
-        /**
-         * The **`value`** property of the WebAssembly.Global object prototype returns the value contained inside the global variable.
-         *
-         * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Global/value)
-         */
         value: ValueTypeMap[T];
-        /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Global/valueOf) */
         valueOf(): ValueTypeMap[T];
     }
 
@@ -43516,7 +42614,7 @@ declare namespace WebAssembly {
 
     var Module: {
         prototype: Module;
-        new(bytes: AllowSharedBufferSource, options?: WebAssemblyCompileOptions): Module;
+        new(bytes: BufferSource, options?: WebAssemblyCompileOptions): Module;
         /**
          * The WebAssembly.**`Module.customSections()`** static method returns a copy of the contents of all custom sections in the given module with the given string name.
          *
@@ -43667,16 +42765,16 @@ declare namespace WebAssembly {
     type ValueType = keyof ValueTypeMap;
     var JSTag: Tag;
     /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/compile_static) */
-    function compile(bytes: AllowSharedBufferSource, options?: WebAssemblyCompileOptions): Promise<Module>;
+    function compile(bytes: BufferSource, options?: WebAssemblyCompileOptions): Promise<Module>;
     /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/compileStreaming_static) */
     function compileStreaming(source: Response | PromiseLike<Response>, options?: WebAssemblyCompileOptions): Promise<Module>;
     /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/instantiate_static) */
-    function instantiate(bytes: AllowSharedBufferSource, importObject?: Imports, options?: WebAssemblyCompileOptions): Promise<WebAssemblyInstantiatedSource>;
+    function instantiate(bytes: BufferSource, importObject?: Imports, options?: WebAssemblyCompileOptions): Promise<WebAssemblyInstantiatedSource>;
     function instantiate(moduleObject: Module, importObject?: Imports): Promise<Instance>;
     /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/instantiateStreaming_static) */
     function instantiateStreaming(source: Response | PromiseLike<Response>, importObject?: Imports, options?: WebAssemblyCompileOptions): Promise<WebAssemblyInstantiatedSource>;
     /** [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/validate_static) */
-    function validate(bytes: AllowSharedBufferSource, options?: WebAssemblyCompileOptions): boolean;
+    function validate(bytes: BufferSource, options?: WebAssemblyCompileOptions): boolean;
 }
 
 /** The **`console`** object provides access to the debugging console (e.g., the Web console in Firefox). */
@@ -44276,7 +43374,7 @@ declare var closed: boolean;
  */
 declare var cookieStore: CookieStore;
 /**
- * The **`customElements`** read-only property of the Window interface returns a reference to the global CustomElementRegistry object, which can be used to register new custom elements and get information about previously registered custom elements.
+ * The **`customElements`** read-only property of the Window interface returns a reference to the CustomElementRegistry object, which can be used to register new custom elements and get information about previously registered custom elements.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/customElements)
  */
@@ -44293,13 +43391,6 @@ declare var devicePixelRatio: number;
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/document)
  */
 declare var document: Document;
-/**
- * The **`documentPictureInPicture`** read-only property of the Window interface returns a reference to the DocumentPictureInPicture object for the current document context.
- * Available only in secure contexts.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Window/documentPictureInPicture)
- */
-declare var documentPictureInPicture: DocumentPictureInPicture;
 /**
  * The read-only Window property **`event`** returns the Event which is currently being handled by the site's code. Outside the context of an event handler, the value is always undefined.
  * @deprecated
@@ -45046,7 +44137,6 @@ type AutoFillSection = `section-${string}`;
 type Base64URLString = string;
 type BigInteger = Uint8Array<ArrayBuffer>;
 type BlobPart = BufferSource | Blob | string;
-type BluetoothServiceUUID = string | number;
 type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
 type BufferSource = ArrayBufferView<ArrayBuffer> | ArrayBuffer;
 type COSEAlgorithmIdentifier = number;
@@ -45138,7 +44228,6 @@ type RequestInfo = Request | string;
 type SanitizerAttribute = string | SanitizerAttributeNamespace;
 type SanitizerElement = string | SanitizerElementNamespace;
 type SanitizerElementWithAttributes = string | SanitizerElementNamespaceWithAttributes;
-type SanitizerPI = string | SanitizerProcessingInstruction;
 type SelectionDirection = "forward" | "backward" | "none";
 type TexImageSource = ImageBitmap | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | OffscreenCanvas | VideoFrame;
 type TimerHandler = string | Function;
@@ -45193,11 +44282,10 @@ type ColorGamut = "p3" | "rec2020" | "srgb";
 type ColorSpaceConversion = "default" | "none";
 type CompositeOperation = "accumulate" | "add" | "replace";
 type CompositeOperationOrAuto = "accumulate" | "add" | "auto" | "replace";
-type CompressionFormat = "brotli" | "deflate" | "deflate-raw" | "gzip";
+type CompressionFormat = "deflate" | "deflate-raw" | "gzip";
 type CookieSameSite = "lax" | "none" | "strict";
 type CredentialMediationRequirement = "conditional" | "optional" | "required" | "silent";
 type DOMParserSupportedType = "application/xhtml+xml" | "application/xml" | "image/svg+xml" | "text/html" | "text/xml";
-type DigitalCredentialPresentationProtocol = "org-iso-mdoc";
 type DirectionSetting = "" | "lr" | "rl";
 type DisplayCaptureSurfaceType = "browser" | "monitor" | "window";
 type DistanceModelType = "exponential" | "inverse" | "linear";
@@ -45210,11 +44298,9 @@ type EndingType = "native" | "transparent";
 type FileSystemHandleKind = "directory" | "file";
 type FillLightMode = "auto" | "flash" | "off";
 type FillMode = "auto" | "backwards" | "both" | "forwards" | "none";
-type FlowControlType = "hardware" | "none";
 type FontDisplay = "auto" | "block" | "fallback" | "optional" | "swap";
 type FontFaceLoadStatus = "error" | "loaded" | "loading" | "unloaded";
 type FontFaceSetLoadStatus = "loaded" | "loading";
-type FullscreenKeyboardLock = "browser" | "none";
 type FullscreenNavigationUI = "auto" | "hide" | "show";
 type GPUAddressMode = "clamp-to-edge" | "mirror-repeat" | "repeat";
 type GPUAutoLayoutMode = "auto";
@@ -45248,7 +44334,7 @@ type GPUTextureDimension = "1d" | "2d" | "3d";
 type GPUTextureFormat = "astc-10x10-unorm" | "astc-10x10-unorm-srgb" | "astc-10x5-unorm" | "astc-10x5-unorm-srgb" | "astc-10x6-unorm" | "astc-10x6-unorm-srgb" | "astc-10x8-unorm" | "astc-10x8-unorm-srgb" | "astc-12x10-unorm" | "astc-12x10-unorm-srgb" | "astc-12x12-unorm" | "astc-12x12-unorm-srgb" | "astc-4x4-unorm" | "astc-4x4-unorm-srgb" | "astc-5x4-unorm" | "astc-5x4-unorm-srgb" | "astc-5x5-unorm" | "astc-5x5-unorm-srgb" | "astc-6x5-unorm" | "astc-6x5-unorm-srgb" | "astc-6x6-unorm" | "astc-6x6-unorm-srgb" | "astc-8x5-unorm" | "astc-8x5-unorm-srgb" | "astc-8x6-unorm" | "astc-8x6-unorm-srgb" | "astc-8x8-unorm" | "astc-8x8-unorm-srgb" | "bc1-rgba-unorm" | "bc1-rgba-unorm-srgb" | "bc2-rgba-unorm" | "bc2-rgba-unorm-srgb" | "bc3-rgba-unorm" | "bc3-rgba-unorm-srgb" | "bc4-r-snorm" | "bc4-r-unorm" | "bc5-rg-snorm" | "bc5-rg-unorm" | "bc6h-rgb-float" | "bc6h-rgb-ufloat" | "bc7-rgba-unorm" | "bc7-rgba-unorm-srgb" | "bgra8unorm" | "bgra8unorm-srgb" | "depth16unorm" | "depth24plus" | "depth24plus-stencil8" | "depth32float" | "depth32float-stencil8" | "eac-r11snorm" | "eac-r11unorm" | "eac-rg11snorm" | "eac-rg11unorm" | "etc2-rgb8a1unorm" | "etc2-rgb8a1unorm-srgb" | "etc2-rgb8unorm" | "etc2-rgb8unorm-srgb" | "etc2-rgba8unorm" | "etc2-rgba8unorm-srgb" | "r16float" | "r16sint" | "r16snorm" | "r16uint" | "r16unorm" | "r32float" | "r32sint" | "r32uint" | "r8sint" | "r8snorm" | "r8uint" | "r8unorm" | "rg11b10ufloat" | "rg16float" | "rg16sint" | "rg16snorm" | "rg16uint" | "rg16unorm" | "rg32float" | "rg32sint" | "rg32uint" | "rg8sint" | "rg8snorm" | "rg8uint" | "rg8unorm" | "rgb10a2uint" | "rgb10a2unorm" | "rgb9e5ufloat" | "rgba16float" | "rgba16sint" | "rgba16snorm" | "rgba16uint" | "rgba16unorm" | "rgba32float" | "rgba32sint" | "rgba32uint" | "rgba8sint" | "rgba8snorm" | "rgba8uint" | "rgba8unorm" | "rgba8unorm-srgb" | "stencil8";
 type GPUTextureSampleType = "depth" | "float" | "sint" | "uint" | "unfilterable-float";
 type GPUTextureViewDimension = "1d" | "2d" | "2d-array" | "3d" | "cube" | "cube-array";
-type GPUVertexFormat = "float16" | "float16x2" | "float16x4" | "float32" | "float32x2" | "float32x3" | "float32x4" | "sint16" | "sint16x2" | "sint16x4" | "sint32" | "sint32x2" | "sint32x3" | "sint32x4" | "sint8" | "sint8x2" | "sint8x4" | "snorm10-10-10-2" | "snorm16" | "snorm16x2" | "snorm16x4" | "snorm8" | "snorm8x2" | "snorm8x4" | "uint16" | "uint16x2" | "uint16x4" | "uint32" | "uint32x2" | "uint32x3" | "uint32x4" | "uint8" | "uint8x2" | "uint8x4" | "unorm10-10-10-2" | "unorm16" | "unorm16x2" | "unorm16x4" | "unorm8" | "unorm8x2" | "unorm8x4" | "unorm8x4-bgra";
+type GPUVertexFormat = "float16" | "float16x2" | "float16x4" | "float32" | "float32x2" | "float32x3" | "float32x4" | "sint16" | "sint16x2" | "sint16x4" | "sint32" | "sint32x2" | "sint32x3" | "sint32x4" | "sint8" | "sint8x2" | "sint8x4" | "snorm16" | "snorm16x2" | "snorm16x4" | "snorm8" | "snorm8x2" | "snorm8x4" | "uint16" | "uint16x2" | "uint16x4" | "uint32" | "uint32x2" | "uint32x3" | "uint32x4" | "uint8" | "uint8x2" | "uint8x4" | "unorm10-10-10-2" | "unorm16" | "unorm16x2" | "unorm16x4" | "unorm8" | "unorm8x2" | "unorm8x4" | "unorm8x4-bgra";
 type GPUVertexStepMode = "instance" | "vertex";
 type GamepadHapticEffectType = "dual-rumble" | "trigger-rumble";
 type GamepadHapticsResult = "complete" | "preempted";
@@ -45301,7 +44387,6 @@ type OrientationType = "landscape-primary" | "landscape-secondary" | "portrait-p
 type OscillatorType = "custom" | "sawtooth" | "sine" | "square" | "triangle";
 type OverSampleType = "2x" | "4x" | "none";
 type PanningModelType = "HRTF" | "equalpower";
-type ParityType = "even" | "none" | "odd";
 type PaymentComplete = "fail" | "success" | "unknown";
 type PaymentShippingType = "delivery" | "pickup" | "shipping";
 type PermissionName = "camera" | "geolocation" | "microphone" | "midi" | "notifications" | "persistent-storage" | "push" | "screen-wake-lock" | "storage-access";
@@ -45348,7 +44433,7 @@ type ReferrerPolicy = "" | "no-referrer" | "no-referrer-when-downgrade" | "origi
 type RemotePlaybackState = "connected" | "connecting" | "disconnected";
 type RequestCache = "default" | "force-cache" | "no-cache" | "no-store" | "only-if-cached" | "reload";
 type RequestCredentials = "include" | "omit" | "same-origin";
-type RequestDestination = "" | "audio" | "audioworklet" | "document" | "embed" | "font" | "frame" | "iframe" | "image" | "json" | "manifest" | "object" | "paintworklet" | "report" | "script" | "sharedworker" | "style" | "track" | "video" | "worker" | "xslt";
+type RequestDestination = "" | "audio" | "audioworklet" | "document" | "embed" | "font" | "frame" | "iframe" | "image" | "manifest" | "object" | "paintworklet" | "report" | "script" | "sharedworker" | "style" | "track" | "video" | "worker" | "xslt";
 type RequestMode = "cors" | "navigate" | "no-cors" | "same-origin";
 type RequestPriority = "auto" | "high" | "low";
 type RequestRedirect = "error" | "follow" | "manual";
@@ -45386,7 +44471,6 @@ type WakeLockType = "screen";
 type WebGLPowerPreference = "default" | "high-performance" | "low-power";
 type WebTransportCongestionControl = "default" | "low-latency" | "throughput";
 type WebTransportErrorSource = "session" | "stream";
-type WebTransportReliabilityMode = "pending" | "reliable-only" | "supports-unreliable";
 type WorkerType = "classic" | "module";
 type WriteCommandType = "seek" | "truncate" | "write";
 type XMLHttpRequestResponseType = "" | "arraybuffer" | "blob" | "document" | "json" | "text";
@@ -45771,7 +44855,7 @@ interface SVGNumberList {
 }
 
 interface SVGPointList {
-    [Symbol.iterator](): ArrayIterator<SVGPoint>;
+    [Symbol.iterator](): ArrayIterator<DOMPoint>;
 }
 
 interface SVGStringList {

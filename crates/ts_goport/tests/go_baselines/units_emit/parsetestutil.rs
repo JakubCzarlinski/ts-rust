@@ -16,9 +16,7 @@ pub(crate) fn parse_type_script(text: &str, jsx: bool) -> Node {
     parse_type_script_file(text, jsx).root
 }
 
-/// `parse_type_script` with the whole parse result (Go reads fields such as
-/// `ExternalModuleIndicator` from the returned `*ast.SourceFile`).
-pub(crate) fn parse_type_script_file(text: &str, jsx: bool) -> ParsedSourceFile {
+fn parse_type_script_file(text: &str, jsx: bool) -> ParsedSourceFile {
     let file_name = if jsx { "/main.tsx" } else { "/main.ts" };
     parse_source_file(
         &SourceFileParseOptions {

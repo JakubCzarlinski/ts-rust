@@ -857,14 +857,11 @@ impl Checker {
                 return self.check_new_target_meta_property(node);
             }
             SyntaxKind::ImportKeyword => {
-                // ts#63915, Go N' checker.go:10993: `import.defer` and `import.source`
-                if is_import_phase_meta_property(node) {
-                    if is_call_expression(node.parent()) {
-                        debug_assert!(
-                            node.parent().expression() != node,
-                            "Trying to get the type of a phase import meta-property in its call"
-                        );
-                    }
+                if node.name().text() == "defer" {
+                    debug_assert!(
+                        !is_call_expression(node.parent()) || node.parent().expression() != node,
+                        "Trying to get the type of `import.defer` in `import.defer(...)`"
+                    );
                     return self.error_type;
                 }
                 return self.check_import_meta_property(node);

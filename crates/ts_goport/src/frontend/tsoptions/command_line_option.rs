@@ -2,7 +2,7 @@ use crate::diagnostics::Message;
 use crate::frontend::prelude::*;
 use std::sync::LazyLock;
 
-// Go: tsoptions/commandlineoption.go:10 CommandLineOptionKind
+// Go: tsoptions/commandlineoption.go:9 CommandLineOptionKind
 // PORT: Go `CommandLineOptionKind` is a string type. It stays a string
 // newtype. Go `CommandLineOptionTypeX` constants are the associated
 // constants `CommandLineOptionKind::X`.
@@ -10,25 +10,25 @@ use std::sync::LazyLock;
 pub struct CommandLineOptionKind(pub &'static str);
 
 impl CommandLineOptionKind {
-    // Go: tsoptions/commandlineoption.go:13 CommandLineOptionTypeString
+    // Go: tsoptions/commandlineoption.go:12 CommandLineOptionTypeString
     pub const STRING: Self = Self("string");
-    // Go: tsoptions/commandlineoption.go:14 CommandLineOptionTypeNumber
+    // Go: tsoptions/commandlineoption.go:13 CommandLineOptionTypeNumber
     pub const NUMBER: Self = Self("number");
-    // Go: tsoptions/commandlineoption.go:15 CommandLineOptionTypeBoolean
+    // Go: tsoptions/commandlineoption.go:14 CommandLineOptionTypeBoolean
     pub const BOOLEAN: Self = Self("boolean");
-    // Go: tsoptions/commandlineoption.go:16 CommandLineOptionTypeObject
+    // Go: tsoptions/commandlineoption.go:15 CommandLineOptionTypeObject
     pub const OBJECT: Self = Self("object");
-    // Go: tsoptions/commandlineoption.go:17 CommandLineOptionTypeList
+    // Go: tsoptions/commandlineoption.go:16 CommandLineOptionTypeList
     pub const LIST: Self = Self("list");
-    // Go: tsoptions/commandlineoption.go:18 CommandLineOptionTypeListOrElement
+    // Go: tsoptions/commandlineoption.go:17 CommandLineOptionTypeListOrElement
     pub const LIST_OR_ELEMENT: Self = Self("listOrElement");
-    // Go: tsoptions/commandlineoption.go:19 CommandLineOptionTypeEnum
+    // Go: tsoptions/commandlineoption.go:18 CommandLineOptionTypeEnum
     pub const ENUM: Self = Self("enum"); // map
 }
 
 /// Go `any` in option code (`CompilerOptionsValue`, enum map values,
 /// `DefaultValueDescription`, and values read from tsconfig JSON).
-// Go: tsoptions/commandlineoption.go:145 CompilerOptionsValue
+// Go: tsoptions/commandlineoption.go:204 CompilerOptionsValue
 // PORT: Go `any` becomes a closed enum with one variant per dynamic type
 // that tsoptions stores in an `any`. `Nil` is Go untyped nil. `Int` is a Go
 // `int`, `Number` a JSON `float64`. `List` is a non-nil `[]any`, `NilList`
@@ -53,6 +53,9 @@ pub enum CompilerOptionsValue {
     ModuleDetectionKind(ModuleDetectionKind),
     JsxEmit(JsxEmit),
     NewLineKind(NewLineKind),
+    WatchFileKind(WatchFileKind),
+    WatchDirectoryKind(WatchDirectoryKind),
+    PollingKind(PollingKind),
     List(Vec<CompilerOptionsValue>),
     /// Go `[]any(nil)` in an `any`, which is not Go nil. It is a slice to
     /// `reflect` and `.([]any)` with no elements, and it stays nil through
@@ -88,7 +91,7 @@ impl CompilerOptionsValue {
     }
 }
 
-// Go: tsoptions/commandlineoption.go:85 CommandLineOption
+// Go: tsoptions/commandlineoption.go:21 CommandLineOption
 // PORT: Go `string` fields of the static declarations are `&'static str`.
 // Go `*diagnostics.Message` fields are `Option<&'static Message>`. Go
 // unexported fields are plain `pub` fields. Declarations are leaked
@@ -146,21 +149,22 @@ pub struct CommandLineOption {
     pub element_options: CommandLineOptionNameMap,
 }
 
-// Go: tsoptions/commandlineoption.go:115 extraValidation
-// PORT: Go string type kept as a string newtype. ts#64457 removed
-// extraValidationNone and extraValidationSpec (only the removed watch options
-// used "spec"); `NONE` stays as the Rust name of the zero value.
+// Go: tsoptions/commandlineoption.go:71 extraValidation
+// PORT: Go string type kept as a string newtype.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ExtraValidation(pub &'static str);
 
 impl ExtraValidation {
+    // Go: tsoptions/commandlineoption.go:74 extraValidationNone
     pub const NONE: Self = Self("");
-    // Go: tsoptions/commandlineoption.go:117 extraValidationLocale
+    // Go: tsoptions/commandlineoption.go:75 extraValidationSpec
+    pub const SPEC: Self = Self("spec");
+    // Go: tsoptions/commandlineoption.go:76 extraValidationLocale
     pub const LOCALE: Self = Self("locale");
 }
 
 impl CommandLineOption {
-    // Go: tsoptions/commandlineoption.go:119 DeprecatedKeys
+    // Go: tsoptions/commandlineoption.go:79 DeprecatedKeys
     #[must_use]
     pub fn deprecated_keys(&self) -> Option<&'static FxHashSet<String>> {
         if self.kind != CommandLineOptionKind::ENUM {
@@ -169,7 +173,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_DEPRECATED.get(self.name)
     }
 
-    // Go: tsoptions/commandlineoption.go:126 EnumMap
+    // Go: tsoptions/commandlineoption.go:86 EnumMap
     #[must_use]
     pub fn enum_map(&self) -> Option<&'static CommandLineOptionEnumMap> {
         if self.kind != CommandLineOptionKind::ENUM {
@@ -178,7 +182,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_ENUM_MAP.get(self.name).copied()
     }
 
-    // Go: tsoptions/commandlineoption.go:133 Elements
+    // Go: tsoptions/commandlineoption.go:93 Elements
     #[must_use]
     pub fn elements(&self) -> Option<&'static CommandLineOption> {
         if self.kind != CommandLineOptionKind::LIST
@@ -189,7 +193,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_ELEMENTS.get(self.name).copied()
     }
 
-    // Go: tsoptions/commandlineoption.go:140 DisallowNullOrUndefined
+    // Go: tsoptions/commandlineoption.go:100 DisallowNullOrUndefined
     #[must_use]
     pub fn disallow_null_or_undefined(&self) -> bool {
         self.name == "extends"
@@ -202,7 +206,7 @@ fn opt(o: CommandLineOption) -> &'static CommandLineOption {
 }
 
 // CommandLineOption.Elements()
-// Go: tsoptions/declarations_generated.go:984 commandLineOptionElements
+// Go: tsoptions/commandlineoption.go:105 commandLineOptionElements
 // PORT: Go package-level vars are `LazyLock` statics.
 pub static COMMAND_LINE_OPTION_ELEMENTS: LazyLock<
     FxHashMap<&'static str, &'static CommandLineOption>,
@@ -317,6 +321,27 @@ pub static COMMAND_LINE_OPTION_ELEMENTS: LazyLock<
                 ..Default::default()
             }),
         ),
+        // For Watch options
+        (
+            "excludeDirectories",
+            opt(CommandLineOption {
+                name: "excludeDirectory",
+                kind: CommandLineOptionKind::STRING,
+                is_file_path: true,
+                extra_validation: ExtraValidation::SPEC,
+                ..Default::default()
+            }),
+        ),
+        (
+            "excludeFiles",
+            opt(CommandLineOption {
+                name: "excludeFile",
+                kind: CommandLineOptionKind::STRING,
+                is_file_path: true,
+                extra_validation: ExtraValidation::SPEC,
+                ..Default::default()
+            }),
+        ),
         // Test infra options
         (
             "libFiles",
@@ -332,11 +357,11 @@ pub static COMMAND_LINE_OPTION_ELEMENTS: LazyLock<
 });
 
 // CommandLineOption.EnumMap()
-// Go: tsoptions/declarations_generated.go:1354 commandLineOptionEnumMap
+// Go: tsoptions/commandlineoption.go:183 commandLineOptionEnumMap
 pub static COMMAND_LINE_OPTION_ENUM_MAP: LazyLock<
     FxHashMap<&'static str, &'static CommandLineOptionEnumMap>,
 > = LazyLock::new(|| {
-    let entries: [(&'static str, &'static CommandLineOptionEnumMap); 7] = [
+    let entries: [(&'static str, &'static CommandLineOptionEnumMap); 10] = [
         ("lib", &LIB_MAP),
         ("moduleResolution", &MODULE_RESOLUTION_OPTION_MAP),
         ("module", &MODULE_OPTION_MAP),
@@ -344,12 +369,15 @@ pub static COMMAND_LINE_OPTION_ENUM_MAP: LazyLock<
         ("moduleDetection", &MODULE_DETECTION_OPTION_MAP),
         ("jsx", &JSX_OPTION_MAP),
         ("newLine", &NEW_LINE_OPTION_MAP),
+        ("watchFile", &WATCH_FILE_ENUM_MAP),
+        ("watchDirectory", &WATCH_DIRECTORY_ENUM_MAP),
+        ("fallbackPolling", &FALLBACK_ENUM_MAP),
     ];
     entries.into_iter().collect()
 });
 
 // CommandLineOption.DeprecatedKeys()
-// Go: tsoptions/declarations_generated.go:1364 commandLineOptionDeprecated
+// Go: tsoptions/commandlineoption.go:197 commandLineOptionDeprecated
 pub static COMMAND_LINE_OPTION_DEPRECATED: LazyLock<FxHashMap<&'static str, FxHashSet<String>>> =
     LazyLock::new(|| {
         let set = |items: &[&str]| {

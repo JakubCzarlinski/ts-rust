@@ -1854,9 +1854,7 @@ impl Checker {
             }
 
             let type_node = member.type_();
-            // ts#64243 (Go N' grammarchecks.go:2261): a no-substitution template
-            // literal type is no string literal type here.
-            if !is_literal_type_node(type_node) || !is_string_literal(type_node.literal()) {
+            if !is_string_literal_like_type(type_node) {
                 return self.grammar_error_on_node(
                     type_node,
                     diag::An_import_attributes_property_must_have_a_string_literal_type_annotation,

@@ -21,5 +21,3 @@ and limitations under the License.
 /// <reference lib="esnext.sharedmemory" />
 /// <reference lib="esnext.temporal" />
 /// <reference lib="esnext.date" />
-/// <reference lib="esnext.modulesource" />
-/// <reference lib="esnext.promise" />

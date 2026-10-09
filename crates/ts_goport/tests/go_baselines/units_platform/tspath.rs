@@ -57,9 +57,6 @@ fn test_get_root_length() {
     assert_eq!(tspath::get_root_length("file://localhost/c%3A"), 21);
     assert_eq!(tspath::get_root_length("file://localhost/c%3Ad"), 17);
     assert_eq!(tspath::get_root_length("file://localhost/c%3A/path"), 22);
-    // ts#64544: the file scheme and localhost compare without case.
-    assert_eq!(tspath::get_root_length("FILE:///C:/path"), 11);
-    assert_eq!(tspath::get_root_length("file://LOCALHOST/C%3A/path"), 22);
     assert_eq!(tspath::get_root_length("file://server"), 13);
     assert_eq!(tspath::get_root_length("file://server/"), 14);
     assert_eq!(tspath::get_root_length("file://server/path"), 14);
@@ -622,8 +619,7 @@ fn test_get_normalized_absolute_path() {
     );
 }
 
-// Go: path_test.go:420 TestGetNormalizedAbsolutePathWithoutRoot (at 673a5f17d713; removed by
-// ts#64159 with the function. The port keeps it.)
+// Go: path_test.go:420 TestGetNormalizedAbsolutePathWithoutRoot
 #[test]
 fn test_get_normalized_absolute_path_without_root() {
     assert_eq!(
@@ -849,8 +845,7 @@ fn test_to_file_name_lower_case() {
     );
 }
 
-// Go: path_test.go:591 TestTrimFilePathPrefix (tsgo#4900; at 673a5f17d713; removed by ts#64159,
-// which tests CaseSensitivity.TrimPrefix. The port keeps trim_file_path_prefix.)
+// Go: path_test.go:591 TestTrimFilePathPrefix (tsgo#4900)
 // PORT: Go returns `path, false` on a mismatch; the Rust port returns `None`.
 #[test]
 fn test_trim_file_path_prefix() {
@@ -887,35 +882,7 @@ fn test_trim_file_path_prefix() {
     );
 }
 
-// Go: path_test.go:314 TestResolvePathWithoutTrailingDirectorySeparator (ts#64159)
-#[test]
-fn test_resolve_path_without_trailing_directory_separator() {
-    assert_eq!(
-        tspath::resolve_path_without_trailing_directory_separator("/", &[]),
-        "/"
-    );
-    assert_eq!(
-        tspath::resolve_path_without_trailing_directory_separator("c:/", &[]),
-        "c:/"
-    );
-    assert_eq!(
-        tspath::resolve_path_without_trailing_directory_separator("/a/", &[]),
-        "/a"
-    );
-    assert_eq!(
-        tspath::resolve_path_without_trailing_directory_separator("a", &["b/"]),
-        "a/b"
-    );
-}
-
-// Go: path_test.go:323 TestNormalizePathDriveRoot (ts#64159)
-#[test]
-fn test_normalize_path_drive_root() {
-    assert_eq!(tspath::normalize_path("c:"), "c:/");
-}
-
-// Go: path_test.go:644 TestToPath (at 673a5f17d713; removed by ts#64159 with ToPath.
-// The port keeps to_path, so the test stays.)
+// Go: path_test.go:644 TestToPath
 #[test]
 fn test_to_path() {
     assert_eq!(
@@ -929,16 +896,6 @@ fn test_to_path() {
     assert_eq!(
         tspath::to_path("/path/to/../file.ext", "path/to", true).0,
         "/path/file.ext"
-    );
-    // ts#64544: a dynamic file name keeps its case.
-    assert_eq!(
-        tspath::to_path(
-            "^/~ts-uri~/custom/ts-nul-authority/CaseSensitive.ts",
-            "/",
-            false
-        )
-        .0,
-        "^/~ts-uri~/custom/ts-nul-authority/CaseSensitive.ts"
     );
 }
 

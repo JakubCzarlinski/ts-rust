@@ -888,15 +888,13 @@ impl ClassFieldsTransformer {
         }
 
         // leave invalid code untransformed
-        let env = self.get_private_identifier_environment();
-        let info = self.get_private_identifier(&env, node.name());
+        let info = self.access_private_identifier(node.name());
         go_assert!(
             info.is_some(),
             "Undeclared private name for property declaration."
         );
         if let Some(info) = &info {
-            let info = info.borrow();
-            if info.kind == PrivateIdentifierKind::UNTRANSFORMED || !info.is_valid {
+            if !info.borrow().is_valid {
                 return node;
             }
         }
@@ -1175,24 +1173,17 @@ impl ClassFieldsTransformer {
         let f = ec.factory();
         if self.should_transform_class_element_to_weak_map(node) {
             // If we are transforming private elements into WeakMap/WeakSet, we should elide the node.
-            let env = self.get_private_identifier_environment();
-            let info = self.get_private_identifier(&env, node.name());
+            let info = self.access_private_identifier(node.name());
             go_assert!(
                 info.is_some(),
                 "Undeclared private name for property declaration."
             );
-            let (untransformed, is_valid, is_static) =
-                info.as_ref().map_or((false, false, false), |i| {
-                    let i = i.borrow();
-                    (
-                        i.kind == PrivateIdentifierKind::UNTRANSFORMED,
-                        i.is_valid,
-                        i.is_static,
-                    )
-                });
+            let (is_valid, is_static) = info.as_ref().map_or((false, false), |i| {
+                (i.borrow().is_valid, i.borrow().is_static)
+            });
 
             // Leave invalid code untransformed
-            if untransformed || !is_valid {
+            if !is_valid {
                 return node;
             }
 

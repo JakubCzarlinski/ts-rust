@@ -47,9 +47,6 @@ pub struct CompositeTypeCacheIdentity {
     pub type_id: TypeId,
     pub flags: NodeBuilderFlags,
     pub internal_flags: InternalNodeBuilderFlags,
-    // ts#64556 (Go N' nodebuilderimpl.go:47): the zero key when the context
-    // has no infer type parameters.
-    pub infer_type_parameters: CacheHashKey,
 }
 
 // Go: checker/nodebuilderimpl.go:49 NodeBuilderLinks

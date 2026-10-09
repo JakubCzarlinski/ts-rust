@@ -49,7 +49,7 @@ fn info_exists(info: &Option<Rc<InfoCacheEntry>>) -> bool {
 }
 
 impl ResolutionState<'_> {
-    // Go: module/resolver.go:1355 createResolvedModuleHandlingSymlink
+    // Go: module/resolver.go:1153 createResolvedModuleHandlingSymlink
     pub fn create_resolved_module_handling_symlink(
         &mut self,
         mut resolved: Option<Resolved>,
@@ -80,7 +80,7 @@ impl ResolutionState<'_> {
         self.create_resolved_module(resolved, is_external_library_import)
     }
 
-    // Go: module/resolver.go:1370 createResolvedModule
+    // Go: module/resolver.go:1168 createResolvedModule
     pub fn create_resolved_module(
         &self,
         resolved: Option<Resolved>,
@@ -102,7 +102,7 @@ impl ResolutionState<'_> {
         resolved_module
     }
 
-    // Go: module/resolver.go:1391 createResolvedTypeReferenceDirective
+    // Go: module/resolver.go:1183 createResolvedTypeReferenceDirective
     pub fn create_resolved_type_reference_directive(
         &mut self,
         resolved: Option<Resolved>,
@@ -134,7 +134,7 @@ impl ResolutionState<'_> {
         resolved_type_reference_directive
     }
 
-    // Go: module/resolver.go:1416 getOriginalAndResolvedFileName
+    // Go: module/resolver.go:1209 getOriginalAndResolvedFileName
     pub fn get_original_and_resolved_file_name(&mut self, file_name: &str) -> (String, String) {
         let resolved_file_name = self.real_path(file_name);
         let current_directory = self.resolver.host.get_current_directory();
@@ -150,7 +150,7 @@ impl ResolutionState<'_> {
         (file_name.to_string(), resolved_file_name)
     }
 
-    // Go: module/resolver.go:1427 tryLoadModuleUsingOptionalResolutionSettings
+    // Go: module/resolver.go:1223 tryLoadModuleUsingOptionalResolutionSettings
     pub fn try_load_module_using_optional_resolution_settings(&mut self) -> Option<Resolved> {
         let resolved = self.try_load_module_using_paths_if_eligible();
         if resolved.is_some() {
@@ -171,7 +171,7 @@ impl ResolutionState<'_> {
             .get_parsed_patterns_for_paths(&self.compiler_options)
     }
 
-    // Go: module/resolver.go:1444 tryLoadModuleUsingPathsIfEligible
+    // Go: module/resolver.go:1246 tryLoadModuleUsingPathsIfEligible
     pub fn try_load_module_using_paths_if_eligible(&mut self) -> Option<Resolved> {
         let compiler_options = self.compiler_options.clone();
         // Go `Paths.Size()` is 0 for a nil map.
@@ -205,7 +205,7 @@ impl ResolutionState<'_> {
         )
     }
 
-    // Go: module/resolver.go:1466 tryLoadModuleUsingPaths
+    // Go: module/resolver.go:1266 tryLoadModuleUsingPaths
     // PORT: Go `resolutionKindSpecificLoader` closures capture `r`. Here the
     // loader gets the state as its first argument.
     pub fn try_load_module_using_paths(
@@ -236,11 +236,7 @@ impl ResolutionState<'_> {
             for subst in &substitutions {
                 // PORT: Go joins the bytes (see `scanner_util::go_value`).
                 let path = go_value_owned(subst.replacen('*', &matched_star, 1));
-                let candidate = resolve_path_for_module(
-                    containing_directory,
-                    &path,
-                    has_trailing_directory_separator(&path),
-                );
+                let candidate = normalize_path(&combine_paths(containing_directory, &[&path]));
                 trace_write!(
                     self,
                     diag::Trying_substitution_0_candidate_module_location_Colon_1,
@@ -275,7 +271,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1504 tryLoadModuleUsingRootDirs
+    // Go: module/resolver.go:1304 tryLoadModuleUsingRootDirs
     pub fn try_load_module_using_root_dirs(&mut self) -> Option<Resolved> {
         if self
             .compiler_options
@@ -293,11 +289,7 @@ impl ResolutionState<'_> {
             self.name
         );
 
-        let candidate = resolve_path_for_module(
-            &self.containing_directory,
-            &self.name,
-            has_trailing_directory_separator(&self.name),
-        );
+        let candidate = normalize_path(&combine_paths(&self.containing_directory, &[&self.name]));
 
         let root_dirs = self.compiler_options.root_dirs.clone().unwrap_or_default();
         let mut matched_root_dir = String::new();
@@ -363,36 +355,7 @@ impl ResolutionState<'_> {
                     // skip the initially matched entry
                     continue;
                 }
-                // ts#64544: a suffix and a root dir that are dynamic paths
-                // map between their encoded and logical forms.
-                let directory_only = suffix.is_empty() || has_trailing_directory_separator(&suffix);
-                let logical_suffix = suffix.as_str();
-                let candidate = match (
-                    is_encoded_dynamic_file_name(root_dir),
-                    is_encoded_dynamic_file_name(&matched_root_dir),
-                ) {
-                    (true, true) => resolve_dynamic_logical_path(
-                        &normalize_path(root_dir),
-                        &decode_dynamic_uri_path(logical_suffix),
-                        directory_only,
-                    ),
-                    (true, false) => resolve_dynamic_logical_path(
-                        &normalize_path(root_dir),
-                        logical_suffix,
-                        directory_only,
-                    ),
-                    (false, true) => {
-                        let Some(decoded) = decode_dynamic_uri_path_for_disk(logical_suffix) else {
-                            continue;
-                        };
-                        resolve_path_for_module(&normalize_path(root_dir), &decoded, directory_only)
-                    }
-                    (false, false) => resolve_path_for_module(
-                        &normalize_path(root_dir),
-                        logical_suffix,
-                        directory_only,
-                    ),
-                };
+                let candidate = combine_paths(&normalize_path(root_dir), &[&suffix]);
                 trace_write!(
                     self,
                     diag::Loading_0_from_the_root_dir_1_candidate_location_2,
@@ -411,7 +374,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1588 nodeLoadModuleByRelativeName
+    // Go: module/resolver.go:1382 nodeLoadModuleByRelativeName
     pub fn node_load_module_by_relative_name(
         &mut self,
         extensions: Extensions,
@@ -442,8 +405,10 @@ impl ResolutionState<'_> {
             let resolved_from_file = self.load_module_from_file(extensions, candidate);
             if let Some(mut resolved_from_file) = resolved_from_file {
                 if consider_package_json {
-                    let package_directory =
-                        node_module_package_root_for_file(&resolved_from_file.path);
+                    let package_directory = parse_node_module_from_path(
+                        &resolved_from_file.path,
+                        false, /*isFolder*/
+                    );
                     if !package_directory.is_empty() {
                         let package_info = self.get_package_json_info(&package_directory);
                         let path = resolved_from_file.path.clone();
@@ -453,16 +418,7 @@ impl ResolutionState<'_> {
                 return Some(resolved_from_file);
             }
         }
-        // ts#64544: a dynamic candidate is looked up as a directory segment.
-        // ts#64159 (resolver.go:1610): Go checks `candidate.AsDirectoryPath()`
-        // and traces the candidate itself, not its directory spelling.
-        let directory_candidate = candidate_directory_path(candidate);
-        if !self
-            .resolver
-            .host
-            .fs()
-            .directory_exists(&directory_candidate)
-        {
+        if !self.resolver.host.fs().directory_exists(candidate) {
             trace_write!(
                 self,
                 diag::Directory_0_does_not_exist_skipping_all_lookups_in_it,
@@ -476,14 +432,14 @@ impl ResolutionState<'_> {
         if !self.esm_mode {
             return self.load_node_module_from_directory(
                 extensions,
-                &directory_candidate,
+                candidate,
                 consider_package_json,
             );
         }
         continue_searching()
     }
 
-    // Go: module/resolver.go:1625 loadModuleFromFile
+    // Go: module/resolver.go:1418 loadModuleFromFile
     pub fn load_module_from_file(
         &mut self,
         extensions: Extensions,
@@ -498,41 +454,34 @@ impl ResolutionState<'_> {
 
         // ./foo -> ./foo.ts
         if !self.esm_mode {
-            // ts#64159: Go adds extensions to `candidate.path`, the name
-            // without the trailing separator of a directory-only candidate.
-            return self.try_adding_extensions(candidate_path(candidate), extensions, "");
+            return self.try_adding_extensions(candidate, extensions, "");
         }
 
         continue_searching()
     }
 
-    // Go: module/resolver.go:1640 loadModuleFromFileNoImplicitExtensions
+    // Go: module/resolver.go:1433 loadModuleFromFileNoImplicitExtensions
     pub fn load_module_from_file_no_implicit_extensions(
         &mut self,
         extensions: Extensions,
         candidate: &str,
     ) -> Option<Resolved> {
-        // ts#64159 (resolver.go:48 resolutionCandidate): a directory-only
-        // candidate ("pkg/v.d/") splits its extension on the name without the
-        // trailing separator (Go `candidate.path`, SplitExtension :208), and
-        // the trace prints the candidate with it (Go `candidate.String()`).
-        let path = candidate_path(candidate);
-        let base = get_base_file_name(path);
+        let base = get_base_file_name(candidate);
         if !base.contains('.') {
             return continue_searching(); // extensionless import, no lookups performed, since we don't support extensionless files
         }
-        let mut extensionless = remove_file_extension(path);
-        if extensionless == path {
+        let mut extensionless = remove_file_extension(candidate);
+        if extensionless == candidate {
             // Once TS native extensions are handled, handle arbitrary extensions for declaration file mapping
             let mut extension =
-                get_longest_extension_from_path(path, &self.resolver.extra_extensions, false);
+                get_longest_extension_from_path(candidate, &self.resolver.extra_extensions, false);
             if extension.is_empty() {
-                extension = path[path.rfind('.').unwrap()..].to_string();
+                extension = candidate[candidate.rfind('.').unwrap()..].to_string();
             }
-            extensionless = remove_extension(path, &extension);
+            extensionless = remove_extension(candidate, &extension);
         }
 
-        let extension = &path[extensionless.len()..];
+        let extension = &candidate[extensionless.len()..];
         trace_write!(
             self,
             diag::File_name_0_has_a_1_extension_stripping_it,
@@ -542,7 +491,7 @@ impl ResolutionState<'_> {
         self.try_adding_extensions(extensionless, extensions, extension)
     }
 
-    // Go: module/resolver.go:1652 tryAddingExtensions
+    // Go: module/resolver.go:1450 tryAddingExtensions
     pub fn try_adding_extensions(
         &mut self,
         extensionless: &str,
@@ -717,7 +666,7 @@ impl ResolutionState<'_> {
         }
     }
 
-    // Go: module/resolver.go:1775 tryExtension
+    // Go: module/resolver.go:1575 tryExtension
     pub fn try_extension(
         &mut self,
         extension: &str,
@@ -738,12 +687,8 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1787 tryFile
+    // Go: module/resolver.go:1587 tryFile
     pub fn try_file(&mut self, file_name: &str) -> (String, bool) {
-        // ts#64159: a directory-only candidate is never a file.
-        if has_trailing_directory_separator(file_name) {
-            return (String::new(), false);
-        }
         if self
             .compiler_options
             .module_suffixes
@@ -770,7 +715,7 @@ impl ResolutionState<'_> {
         (file_name.to_string(), false)
     }
 
-    // Go: module/resolver.go:1810 tryFileLookup
+    // Go: module/resolver.go:1603 tryFileLookup
     pub fn try_file_lookup(&mut self, file_name: &str) -> bool {
         if self.resolver.host.fs().file_exists(file_name) {
             trace_write!(
@@ -785,7 +730,7 @@ impl ResolutionState<'_> {
         false
     }
 
-    // Go: module/resolver.go:1822 loadNodeModuleFromDirectory
+    // Go: module/resolver.go:1615 loadNodeModuleFromDirectory
     pub fn load_node_module_from_directory(
         &mut self,
         extensions: Extensions,
@@ -800,7 +745,7 @@ impl ResolutionState<'_> {
         self.load_node_module_from_directory_worker(extensions, candidate, &package_info)
     }
 
-    // Go: module/resolver.go:1832 loadNodeModuleFromDirectoryWorker
+    // Go: module/resolver.go:1624 loadNodeModuleFromDirectoryWorker
     pub fn load_node_module_from_directory_worker(
         &mut self,
         ext: Extensions,
@@ -896,12 +841,6 @@ impl ResolutionState<'_> {
                     &ComparePathsOptions::default(),
                 )
             };
-            // ts#64544: the typesVersions patterns match the logical name.
-            let module_name = if is_encoded_dynamic_file_name(candidate) {
-                decode_dynamic_uri_path(&module_name)
-            } else {
-                module_name
-            };
             trace_write!(
                 self,
                 diag::X_package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2,
@@ -949,7 +888,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1928 loadFileNameFromPackageJSONField
+    // Go: module/resolver.go:1703 loadFileNameFromPackageJSONField
     // This function is only ever called with paths written in package.json files - never
     // module specifiers written in source files - and so it always allows the
     // candidate to end with a TS extension (but will also try substituting a JS extension for a TS extension).
@@ -959,10 +898,6 @@ impl ResolutionState<'_> {
         candidate: &str,
         package_json_value: &str,
     ) -> Option<Resolved> {
-        // ts#64159: a directory-only candidate is never a file.
-        if has_trailing_directory_separator(candidate) {
-            return continue_searching();
-        }
         if extensions.intersects(Extensions::TYPE_SCRIPT)
             && has_implementation_ts_file_extension(candidate)
             || extensions.intersects(Extensions::DECLARATION) && is_declaration_file_name(candidate)
@@ -1005,7 +940,7 @@ impl ResolutionState<'_> {
         self.load_module_from_file_no_implicit_extensions(extensions, candidate)
     }
 
-    // Go: module/resolver.go:1964 getPackageFile
+    // Go: module/resolver.go:1735 getPackageFile
     pub fn get_package_file(
         &mut self,
         extensions: Extensions,
@@ -1052,7 +987,7 @@ impl ResolutionState<'_> {
         (String::new(), false)
     }
 
-    // Go: module/resolver.go:1985 getPackageJsonInfo
+    // Go: module/resolver.go:1756 getPackageJsonInfo
     pub fn get_package_json_info(&mut self, package_directory: &str) -> Option<Rc<InfoCacheEntry>> {
         let package_json_path = combine_paths(package_directory, &["package.json"]);
 
@@ -1125,7 +1060,7 @@ impl ResolutionState<'_> {
         None
     }
 
-    // Go: module/resolver.go:2035 getPackageId
+    // Go: module/resolver.go:1800 getPackageId
     pub fn get_package_id(
         &mut self,
         resolved_file_name: &str,
@@ -1160,7 +1095,7 @@ impl ResolutionState<'_> {
         PackageId::default()
     }
 
-    // Go: module/resolver.go:2056 readPackageJsonPeerDependencies
+    // Go: module/resolver.go:1821 readPackageJsonPeerDependencies
     pub fn read_package_json_peer_dependencies(
         &mut self,
         package_json_info: &Rc<InfoCacheEntry>,
@@ -1185,8 +1120,7 @@ impl ResolutionState<'_> {
         crate::gostd::slices::stable_sort_by(&mut names, |a, b| compare_go_bytes(a, b));
         let mut builder = String::new();
         for name in &names {
-            let peer_package_json =
-                self.get_package_json_info(&resolve_path_for_module(&node_modules, name, true));
+            let peer_package_json = self.get_package_json_info(&format!("{node_modules}{name}"));
             if let Some(peer_package_json) = peer_package_json.filter(|p| p.exists()) {
                 let version = peer_package_json
                     .contents
@@ -1214,14 +1148,14 @@ impl ResolutionState<'_> {
         builder
     }
 
-    // Go: module/resolver.go:2091 realPath
+    // Go: module/resolver.go:1856 realPath
     pub fn real_path(&mut self, path: &str) -> String {
         let rp = normalize_path(&self.resolver.host.fs().realpath(path));
         trace_write!(self, diag::Resolving_real_path_for_0_result_1, path, rp);
         rp
     }
 
-    // Go: module/resolver.go:2099 validatePackageJSONField
+    // Go: module/resolver.go:1864 validatePackageJSONField
     pub fn validate_package_json_field(
         &mut self,
         field_name: &str,
@@ -1247,7 +1181,7 @@ impl ResolutionState<'_> {
         false
     }
 
-    // Go: module/resolver.go:2114 getPackageJSONPathField
+    // Go: module/resolver.go:1878 getPackageJSONPathField
     pub fn get_package_json_path_field(
         &mut self,
         field_name: &str,
@@ -1261,11 +1195,7 @@ impl ResolutionState<'_> {
             trace_write!(self, diag::X_package_json_had_a_falsy_0_field, field_name);
             return (String::new(), false);
         }
-        let path = resolve_path_for_module(
-            directory,
-            &field.value,
-            has_trailing_directory_separator(&field.value),
-        );
+        let path = normalize_path(&combine_paths(directory, &[&field.value]));
         trace_write!(
             self,
             diag::X_package_json_has_0_field_1_that_references_2,
@@ -1276,7 +1206,7 @@ impl ResolutionState<'_> {
         (path, true)
     }
 
-    // Go: module/resolver.go:2131 conditionMatches
+    // Go: module/resolver.go:1894 conditionMatches
     pub fn condition_matches(&self, condition: &str) -> bool {
         if condition == "default" || self.conditions.iter().any(|c| c == condition) {
             return true;
@@ -1287,7 +1217,7 @@ impl ResolutionState<'_> {
         is_applicable_versioned_types_key(condition)
     }
 
-    // Go: module/resolver.go:2141 getTraceFunc
+    // Go: module/resolver.go:1904 getTraceFunc
     // PORT: the Go method value `r.tracer.write` is a closure over the shared tracer.
     pub fn get_trace_func(
         &self,
@@ -1300,7 +1230,7 @@ impl ResolutionState<'_> {
     }
 }
 
-// Go: module/resolver.go:2148 GetConditions
+// Go: module/resolver.go:1911 GetConditions
 pub fn get_conditions(options: &CompilerOptions, resolution_mode: ResolutionMode) -> Vec<String> {
     let mut resolution_mode = resolution_mode;
     let module_resolution = options.get_module_resolution_kind();
@@ -1325,7 +1255,7 @@ pub fn get_conditions(options: &CompilerOptions, resolution_mode: ResolutionMode
     conditions
 }
 
-// Go: module/resolver.go:2170 getNodeResolutionFeatures
+// Go: module/resolver.go:1934 getNodeResolutionFeatures
 pub fn get_node_resolution_features(options: &CompilerOptions) -> NodeResolutionFeatures {
     let mut features = NodeResolutionFeatures::NONE;
 
@@ -1348,7 +1278,7 @@ pub fn get_node_resolution_features(options: &CompilerOptions) -> NodeResolution
     features
 }
 
-// Go: module/resolver.go:2194 moveToNextDirectorySeparatorIfAvailable
+// Go: module/resolver.go:1958 moveToNextDirectorySeparatorIfAvailable
 pub fn move_to_next_directory_separator_if_available(
     path: &str,
     prev_separator_index: i32,
@@ -1459,7 +1389,7 @@ pub fn find_best_pattern_match(values: &[Pattern], candidate: &str) -> Pattern {
     best_pattern
 }
 
-// Go: module/resolver.go:2209 ParsedPatterns
+// Go: module/resolver.go:1971 ParsedPatterns
 #[derive(Clone, Debug, Default)]
 pub struct ParsedPatterns {
     matchable_string_set: FxHashSet<String>,
@@ -1476,7 +1406,7 @@ impl DefaultResolver {
     }
 }
 
-// Go: module/resolver.go:2218 TryParsePatterns
+// Go: module/resolver.go:1988 TryParsePatterns
 // PORT: a nil `*OrderedMap` is `None`.
 pub fn try_parse_patterns(
     path_mappings: Option<&IndexMap<String, Option<Vec<String>>>>,
@@ -1523,7 +1453,7 @@ pub fn try_parse_patterns(
     }
 }
 
-// Go: module/resolver.go:2257 MatchPatternOrExact
+// Go: module/resolver.go:2023 MatchPatternOrExact
 pub fn match_pattern_or_exact(patterns: &ParsedPatterns, candidate: &str) -> Pattern {
     if patterns.matchable_string_set.contains(candidate) {
         return Pattern {
@@ -1537,23 +1467,14 @@ pub fn match_pattern_or_exact(patterns: &ParsedPatterns, candidate: &str) -> Pat
     find_best_pattern_match(&patterns.patterns, candidate)
 }
 
-// Go: module/resolver.go:2275 normalizePathForCJSResolution
+// Go: module/resolver.go:2041 normalizePathForCJSResolution
 // If you import from "." inside a containing directory "/foo", the result of `tspath.NormalizePath`
 // would be "/foo", but this loses the information that `foo` is a directory and we intended
 // to look inside of it. The Node CommonJS resolution algorithm doesn't call this out
 // (https://nodejs.org/api/modules.html#all-together), but it seems that module paths ending
 // in `.` are actually normalized to `./` before proceeding with the resolution algorithm.
 pub fn normalize_path_for_cjs_resolution(containing_directory: &str, module_name: &str) -> String {
-    // ts#64159: a name with a trailing separator is encoded as a directory
-    // (Go resolutionCandidateFromDirectoryPath).
-    let combined = combine_paths(
-        containing_directory,
-        &[&path_for_dynamic_resolution(
-            containing_directory,
-            module_name,
-            has_trailing_directory_separator(module_name),
-        )],
-    );
+    let combined = combine_paths(containing_directory, &[module_name]);
     // PORT: Go builds `GetPathComponents(combined, "")` only to read its last
     // entry. `last_path_component` reads that entry in place.
     let last_part = last_path_component(&combined);
@@ -1587,7 +1508,7 @@ fn last_path_component(path: &str) -> &str {
     }
 }
 
-// Go: module/resolver.go:2288 matchesPatternWithTrailer
+// Go: module/resolver.go:2051 matchesPatternWithTrailer
 // PORT: compares the Go bytes of the port forms (see
 // `scanner_util::GO_STRING_MARKER`).
 pub fn matches_pattern_with_trailer(target: &str, name: &str) -> bool {
@@ -1620,7 +1541,7 @@ pub fn extension_is_ok(extensions: Extensions, extension: &str) -> bool {
         || (extensions.intersects(Extensions::JSON) && extension == EXTENSION_JSON)
 }
 
-// Go: module/resolver.go:2320 ResolveConfig
+// Go: module/resolver.go:2070 ResolveConfig
 pub fn resolve_config(
     module_name: &str,
     containing_file: &str,
@@ -1637,7 +1558,7 @@ pub fn resolve_config(
     resolver.resolve_config(module_name, containing_file)
 }
 
-// Go: module/resolver.go:2328 GetAutomaticTypeDirectiveNames
+// Go: module/resolver.go:2075 GetAutomaticTypeDirectiveNames
 // PORT: Go returns `[]string{}` for nil `Types`; `unwrap_or_default` does the same.
 pub fn get_automatic_type_directive_names(
     options: &CompilerOptions,

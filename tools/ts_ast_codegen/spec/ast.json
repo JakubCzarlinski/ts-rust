@@ -195,9 +195,8 @@
             "BigIntKeyword",
             "OverrideKeyword",
             "OfKeyword",
-            "DeferKeyword",
             {
-                "name": "SourceKeyword",
+                "name": "DeferKeyword",
                 "comment": "LastKeyword and LastToken and LastContextualKeyword"
             },
             {
@@ -479,7 +478,7 @@
             },
             {
                 "name": "LastKeyword",
-                "value": "SourceKeyword"
+                "value": "DeferKeyword"
             },
             {
                 "name": "FirstFutureReservedWord",
@@ -571,7 +570,7 @@
             },
             {
                 "name": "LastContextualKeyword",
-                "value": "SourceKeyword"
+                "value": "DeferKeyword"
             },
             {
                 "name": "LastUnaryOperator",
@@ -679,8 +678,7 @@
             },
             "ImportPhaseModifierSyntaxKind": [
                 "TypeKeyword",
-                "DeferKeyword",
-                "SourceKeyword"
+                "DeferKeyword"
             ],
             "PostfixUnaryOperator": [
                 "PlusPlusToken",

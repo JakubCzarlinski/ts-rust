@@ -590,9 +590,8 @@ impl Checker {
                 return;
             }
         }
-        // ts#64566 (Go N' checker.go:7125): run the check once per merged
-        // symbol, on whichever declaration is checked first.
-        if self.sym(symbol).declarations.len() < 2 || !self.merged_exports_checked.insert(symbol) {
+        // Run the check only for the first declaration in the list.
+        if get_declaration_of_kind(&self.symbols, symbol, node.kind()) != node {
             return;
         }
         let mut exported_declaration_spaces = DeclarationSpaces::NONE;
