@@ -46,6 +46,12 @@ impl Checker {
         t: TypeId,
         transform: NodeBuilderTypeTransform,
     ) -> Node {
+        // ts#63969 (Go N' nodebuilderimpl.go:3213): past the truncation length,
+        // elide before the declared type cache can clone a cached node.
+        if self.check_truncation_length(b) {
+            return self.create_elided_information_placeholder(b);
+        }
+
         let ctx = nb_ctx(b);
         let type_id = t;
         let (t_flags, t_object_flags, t_symbol) = {
