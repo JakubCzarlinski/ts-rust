@@ -604,10 +604,11 @@ child_test! {
     // computes the groups in map order, so its answer varies. Go N
     // (tsgo-oracle-673a5f17d713, trace aispec1 augment-two, 2 sets of 40
     // runs) gives 3 answers: no "." in 28 and 31 runs, "." for the four
-    // exports of `a` in 5 and 7, and of `b` in 7 and 2. The test accepts
-    // each of them. goport always gives no ".": it merges the last Path in
-    // program order (`src/mw/b`) and computes augmentation groups last
-    // (autoimport/view.rs get_completions).
+    // exports of `a` in 5 and 7, and of `b` in 7 and 2. The first assert
+    // accepts each of them. goport always gives no ".": it merges the last
+    // Path in program order (`src/mw/b`) and computes augmentation groups
+    // last (autoimport/view.rs get_completions). The second assert keeps
+    // that fixed choice.
     fn single_completion_computes_the_augmentation_last() {
         let (client, main_uri) = augmentation_client(&[
             ("a", &["aOne", "aTwo", "aThree", "aFour"]),
@@ -631,5 +632,6 @@ child_test! {
         };
         let got = auto_import_specifiers(&client, &main_uri, 2, "", &labels);
         assert!(["", "a", "b"].map(answer).contains(&got), "{got:?}");
+        assert_eq!(got, answer(""), "goport computes augmentation groups last");
     }
 }
