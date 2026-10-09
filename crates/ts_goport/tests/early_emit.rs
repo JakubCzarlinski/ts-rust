@@ -36,6 +36,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ts_goport::core::enter_program;
@@ -780,14 +781,20 @@ fn read_files(root: &Path, dir: &Path, files: &mut BTreeMap<String, Vec<u8>>) {
 }
 
 /// A new directory under the system temp dir, by its real path (the
-/// program sees real paths).
+/// program sees real paths). The name holds the process id, the time and a
+/// count of this process: two tests that start at once can read the same
+/// time (3 of 20 runs on 2 CPUs failed so).
 fn scratch_dir() -> PathBuf {
+    static MADE: AtomicUsize = AtomicUsize::new(0);
+    let count = MADE.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after 1970")
         .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("goport-early-emit-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "goport-early-emit-{}-{nanos}-{count}",
+        std::process::id()
+    ));
     fs::create_dir(&dir).unwrap_or_else(|error| panic!("create {}: {error}", dir.display()));
     fs::canonicalize(&dir).expect("canonical scratch dir")
 }
