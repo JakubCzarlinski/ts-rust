@@ -131,13 +131,43 @@ impl Checker {
             }
         }
 
+        // ts#64558 (Go N' nodebuilderimpl.go:3293)
+        // PORT: Go restores the origin depth in a `defer`; the port restores
+        // it on each return below (`restore_origin`).
+        let mut origin_depth: Option<(CompositeSymbolIdentity, i32)> = None;
+        if t_object_flags.intersects(ObjectFlags::REVERSE_MAPPED) {
+            // Growing type arguments can prevent a reverse mapped type from repeating.
+            // Bound expansion by its mapped declaration as well as its type identity.
+            let mapped_type = self.ty(t).as_reverse_mapped_type().mapped_type;
+            let declaration = self.ty(mapped_type).as_mapped_type().declaration;
+            let origin = CompositeSymbolIdentity {
+                is_constructor_node: false,
+                symbol_id: 0,
+                node_id: get_node_id(declaration),
+            };
+            let depth = ctx.borrow().symbol_depth.get(&origin).copied().unwrap_or(0);
+            if depth >= 100 {
+                ctx.borrow_mut().truncating = true;
+                return self.create_elided_information_placeholder(b);
+            }
+            ctx.borrow_mut().symbol_depth.insert(origin, depth + 1);
+            origin_depth = Some((origin, depth));
+        }
+        let restore_origin = |ctx: &Rc<RefCell<NodeBuilderContext>>| {
+            if let Some((origin, depth)) = origin_depth {
+                ctx.borrow_mut().symbol_depth.insert(origin, depth);
+            }
+        };
+
         let mut depth = 0;
         if let Some(id) = id {
             depth = ctx.borrow().symbol_depth.get(&id).copied().unwrap_or(0);
             if depth > 10 {
                 // ts#64461 (Go N' nodebuilderimpl.go:3310): the depth limit truncates.
                 ctx.borrow_mut().truncating = true;
-                return self.create_elided_information_placeholder(b);
+                let result = self.create_elided_information_placeholder(b);
+                restore_origin(&ctx);
+                return result;
             }
             ctx.borrow_mut().symbol_depth.insert(id, depth + 1);
         }
@@ -190,6 +220,7 @@ impl Checker {
             }
             c.tracked_symbols = prev_tracked_symbols;
         }
+        restore_origin(&ctx);
         result
 
         // !!! TODO: Attempt node reuse or parse nodes to minimize copying once text range setting is set up

@@ -350,6 +350,14 @@ impl Checker {
         b: &Rc<RefCell<NodeBuilderImpl>>,
         property_symbol: SymbolId,
     ) -> bool {
+        // Reverse mapped type placeholders are for display, not declaration emit.
+        // (ts#64558, Go N' nodebuilderimpl.go:2374)
+        if !nb_ctx(b, |c| {
+            c.flags
+                .intersects(NodeBuilderFlags::ALLOW_ANONYMOUS_IDENTIFIER)
+        }) {
+            return false;
+        }
         // Use placeholders for reverse mapped types we've either
         // (1) already descended into, or
         // (2) are nested reverse mappings within a mapping over a non-anonymous type, or
@@ -1027,15 +1035,18 @@ impl Checker {
             ));
         }
         for info in index_infos {
-            // PORT: Go `core.IfElse` evaluates both arguments, so the
-            // placeholder is always created (it adds to approximateLength).
-            let placeholder = self.create_elided_information_placeholder(b);
+            // ts#64558 (Go N' nodebuilderimpl.go:2742): the placeholder is
+            // made (and adds to approximateLength) only for a reverse mapped
+            // type in display.
             let type_node = if self
                 .ty(resolved_type)
                 .object_flags
                 .intersects(ObjectFlags::REVERSE_MAPPED)
-            {
-                placeholder
+                && nb_ctx(b, |c| {
+                    c.flags
+                        .intersects(NodeBuilderFlags::ALLOW_ANONYMOUS_IDENTIFIER)
+                }) {
+                self.create_elided_information_placeholder(b)
             } else {
                 Node::NIL
             };
@@ -1485,8 +1496,22 @@ impl Checker {
             } else {
                 self.visit_and_transform_type(b, t, Checker::create_type_node_from_object_type)
             }
+        } else if self
+            .ty(t)
+            .object_flags
+            .intersects(ObjectFlags::REVERSE_MAPPED)
+            && !nb_ctx(b, |c| {
+                c.flags
+                    .intersects(NodeBuilderFlags::ALLOW_ANONYMOUS_IDENTIFIER)
+            })
+        {
+            // ts#64558 (Go N' nodebuilderimpl.go:2979)
+            if nb_ctx(b, |c| c.visited_types.contains(&type_id)) {
+                return self.create_cyclic_structure_placeholder(b);
+            }
+            self.visit_and_transform_type(b, t, Checker::create_type_node_from_object_type)
         } else {
-            // Anonymous types without a symbol are never circular.
+            // Reverse mapped types use property and index signature placeholders for display.
             self.create_type_node_from_object_type(b, t)
         }
     }
