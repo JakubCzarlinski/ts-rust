@@ -466,7 +466,7 @@ fn has_function_like_data_p4(node: Node) -> bool {
     )
 }
 
-// Go: ast/utilities.go:3106 GetTypeAnnotationNode
+// Go: ast/utilities.go:3137 GetTypeAnnotationNode
 pub fn get_type_annotation_node(node: Node) -> Node {
     match node.kind() {
         SyntaxKind::VariableDeclaration
@@ -487,6 +487,7 @@ pub fn get_type_annotation_node(node: Node) -> Node {
         | SyntaxKind::RestType
         | SyntaxKind::TemplateLiteralTypeSpan
         | SyntaxKind::JsDocTypeExpression
+        | SyntaxKind::JsDocParameterTag
         | SyntaxKind::JsDocPropertyTag
         | SyntaxKind::JsDocNullableType
         | SyntaxKind::JsDocNonNullableType
