@@ -53,7 +53,7 @@ is not the default.
 
 `tsc-rs` is the same set under the port's own names: the main package `tsc-rs` (bin `tsc-rs`, so it
 does not clash with the `tsc` of a `typescript` install) and one platform package per platform,
-`@tsc-rs/linux-x64` and `@tsc-rs/darwin-arm64`. Its `lib/getExePath.js` finds
+`@tsc-rs/linux-x64`, `@tsc-rs/linux-arm64` and `@tsc-rs/darwin-arm64`. Its `lib/getExePath.js` finds
 `@tsc-rs/<platform>-<arch>`.
 
 The npm version (`--package-version`) is the port's own. The tsc is not stamped with it: it reports
@@ -66,11 +66,13 @@ The release workflow (`.github/workflows/release.yml`) makes a release:
 
 1. Push a tag `v<version>`, for example `git tag v0.1.0 && git push origin v0.1.0`. The npm
    version is the tag without the `v`.
-2. It builds the tsc on Linux (static musl, non-PIE: it starts on any x86-64 Linux) and on a Mac
-   (jemalloc does not cross-build for macOS with zig), from the same source.
-3. It packs the set with `npm-pack.sh --name tsc-rs --package-version <v> --also darwin-arm64=<tsc>`,
+2. It builds the tsc on Linux x64 and Linux arm64 (static musl, non-PIE: it starts on any Linux of
+   its arch; each builds natively on a Blacksmith runner of that arch) and on a Mac (jemalloc does
+   not cross-build for macOS with zig), from the same source.
+3. It packs the set with `npm-pack.sh --name tsc-rs --package-version <v> --also linux-arm64=<tsc> --also darwin-arm64=<tsc>`,
    makes one archive per platform (the tsc, the lib files, LICENSE and NOTICE.txt) and installs
-   the packages in a fresh project on each platform.
+   the packages in a fresh project on each platform (GitHub-hosted `ubuntu-latest`,
+   `ubuntu-24.04-arm` and `macos-latest`).
 4. It publishes the platform packages, then `tsc-rs`, and creates a GitHub release with the
    archives, the .tgz files and `SHA256SUMS`. A stable version goes to the dist-tag `latest` and a
    normal release. A version with a prerelease part (`0.2.0-beta.1`) goes to `next` and a GitHub
@@ -89,6 +91,7 @@ and pack and test it by hand:
 
 ```sh
 GOPORT_PIN=<pin> scripts/goport/npm-pack.sh --name tsc-rs --package-version <v> \
+  --also linux-arm64=<linux-arm64 tsc from the release workflow> \
   --also darwin-arm64=<darwin tsc from the release workflow> <out>/pkg <out>/linux-x64/bin/tsgo
 scripts/goport/npm-test.sh --name tsc-rs <out>/pkg <out>/test
 ```
@@ -96,7 +99,7 @@ scripts/goport/npm-test.sh --name tsc-rs <out>/pkg <out>/test
 ### Trusted publishing
 
 npm trusts the workflow file `release.yml` of `pingdotgg/ts-rust`, in the GitHub environment
-`npm`, to publish each of the 3 packages (OIDC, no token). Set it up once with
+`npm`, to publish each of the 4 packages (OIDC, no token). Set it up once with
 `npm/trust-setup.sh`, logged in to npm with 2FA and npm 11.15.0 or later. It publishes a
 `0.0.0-placeholder` version of a package that is not on npm yet, because npm can only trust a
 workflow for a package that exists. The workflow refuses `0.0.x` tags, so a release never
@@ -104,9 +107,11 @@ collides with a placeholder. npm drops a new trust that publishes nothing in 2 d
 shortly before the first tag. Add required reviewers to the `npm` environment (repo settings,
 Environments) to approve each publish by hand.
 
-The first publish binds each trust to the repo's GitHub ID, not only its name. The repo was
-recreated on 2026-10-07 (history cleanup), so before the next release run
-`npm/trust-setup.sh --relink`: it revokes the old trusts and creates new ones for the new repo.
+The first publish binds each trust to the repo's GitHub ID, not only its name. After the repo is
+recreated, run `npm/trust-setup.sh --relink`: it revokes the old trusts and creates new ones for
+the new repo. The 2026-10-07 recreation needs no relink: v0.1.0 already published from the new
+repo. To add a platform package, run plain `npm/trust-setup.sh` shortly before the next tag: it
+publishes the new package's placeholder, adds its trust and leaves the other packages as they are.
 
 While the repo is private, npm publishes with no provenance. From a public repo it adds
 provenance by itself.
