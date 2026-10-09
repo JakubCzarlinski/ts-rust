@@ -856,10 +856,13 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   relation and emit resolver maps), so one checker counts ids as Go does.
   Late-bound names hold ids (`__@k@<id>`), and the node builder counts their
   length toward truncation. Go's checkers share one counter: a worker skips
-  the ids of the other checkers' `NewChecker` (`program::new_pool_checker`),
-  but not the ids that other checkers give while they check, which race in
-  Go. Go also gives each class with private names an id at bind time; the
-  port does not (`get_symbol_name_for_private_identifier`).
+  the ids that the other checkers' `NewChecker` gave to their own symbols
+  (`program::new_pool_checker`). It does not skip the ids of binder
+  symbols that `NewChecker` gave (merge error texts): Go gives each of those
+  once in the pool. It also does not skip the ids that other checkers give
+  while they check, which race in Go. Go also gives each class with private
+  names an id at bind time; the port does not
+  (`get_symbol_name_for_private_identifier`).
 - One thread can hold checkers of several programs (the language server's
   dispatch thread). Make a checker's program current while the checker runs
   (`core::enter_program`): the `program.rs` functions that checker code

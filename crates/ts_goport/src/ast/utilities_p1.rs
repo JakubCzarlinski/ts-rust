@@ -369,6 +369,19 @@ pub fn skip_symbol_ids(count: u64) {
     NEXT_SYMBOL_ID.with(|next| next.set(next.get() + count));
 }
 
+/// The number of ids that this thread gave to symbols that checker arenas
+/// made (not binder symbols), in every arena. A checker worker counts the
+/// ids that its `NewChecker` gave to its own symbols with it
+/// (`program::new_pool_checker`).
+#[must_use]
+pub fn own_symbol_id_count() -> u64 {
+    OWN_SYMBOL_IDS.with(|own| {
+        let own = own.borrow();
+        let given = |ids: &[IdCell]| ids.iter().filter(|&&id| id != 0).count() as u64;
+        given(&own.ids) + own.others.values().map(|ids| given(ids)).sum::<u64>()
+    })
+}
+
 /// Makes `seed` the id state of this thread.
 pub fn install_id_seed(seed: IdSeed) {
     NEXT_NODE_ID.with(|next| next.set(seed.next_node_id));

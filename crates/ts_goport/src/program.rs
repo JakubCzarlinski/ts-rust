@@ -3434,14 +3434,17 @@ fn create_checkers() -> CheckerPool {
 // check of each checker comes after the ids that all `NewChecker` calls gave
 // (`initializeChecker` gives 4 checker symbols their ids). A worker here
 // counts its ids on its own (`ast::id_seed`), so it skips the ids that the
-// other checkers' `NewChecker` gave: each makes the same calls. Late-bound
-// names hold symbol ids (`__@iterator@<id>`), and the node builder counts
-// their length toward truncation.
+// other checkers' `NewChecker` gave to their own symbols: each makes the
+// same calls. A binder symbol is shared, so Go gives it its id only once
+// in the pool (for example in the text of a merge error), and the worker
+// gave that id itself: it is not skipped. Late-bound names hold symbol ids
+// (`__@iterator@<id>`), and the node builder counts their length toward
+// truncation.
 fn new_pool_checker(index: usize, count: usize) -> Checker {
-    let (_, before) = next_ids();
+    let before = own_symbol_id_count();
     let checker = Checker::new(index);
-    let (_, after) = next_ids();
-    skip_symbol_ids((after - before) * (count as u64 - 1));
+    let own = own_symbol_id_count() - before;
+    skip_symbol_ids(own * (count as u64 - 1));
     checker
 }
 

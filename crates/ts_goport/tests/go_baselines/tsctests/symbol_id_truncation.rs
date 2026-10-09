@@ -19,6 +19,9 @@
 //! expected texts are the output of `tsgo-oracle-673a5f17d713 -p
 //! tsconfig.json --pretty false` (with and without `--checkers 1`) on the
 //! same files.
+//!
+//! followups38 adds the ids that `NewChecker` gives to binder symbols (merge
+//! errors), which Go gives once in a pool.
 
 use ts_goport::execute::tsc::ExitStatus;
 
@@ -45,30 +48,44 @@ fn members(count: usize) -> String {
     (0..count).map(|i| format!("w{i}: number; ")).collect()
 }
 
-/// The diagnostics of `tsc -p tsconfig.json --pretty false` plus `extra`.
-fn check(extra: &[&str]) -> String {
-    let text = format!(
+/// The `a.ts` of every test: `k4` follows 4 other symbols with ids, and a
+/// name of `pad` letters `a` pads the type text.
+fn a_ts(pad: usize) -> String {
+    format!(
         "declare const a0: number;
 declare const a1: number;
 declare const a2: number;
 declare const a3: number;
 declare const k4: unique symbol;
-declare const x: {{ [k4]: void; aaaaaaaaa: number; {}q: string }};
+declare const x: {{ [k4]: void; {}: number; {}q: string }};
 const n: number = x;
 ",
+        "a".repeat(pad),
         members(20)
+    )
+}
+
+/// The diagnostics of `tsc -p tsconfig.json --pretty false` plus `extra`
+/// on `files` (name and text) and `a_ts(pad)`, in that order.
+fn check_files(files: &[(&str, String)], pad: usize, extra: &[&str]) -> String {
+    let names: Vec<String> = files
+        .iter()
+        .map(|(name, _)| format!("\"{name}\""))
+        .chain(["\"a.ts\"".to_string()])
+        .collect();
+    let tsconfig = format!(
+        r#"{{"compilerOptions":{{"noLib":true,"skipLibCheck":true,"strict":true,"noEmit":true}},"files":[{}]}}"#,
+        names.join(",")
     );
     let input = TscInput {
-        files: [
-            (format!("{PROJECT}/globals.d.ts"), GLOBALS.into()),
-            (format!("{PROJECT}/a.ts"), text.into()),
-            (
-                format!("{PROJECT}/tsconfig.json"),
-                r#"{"compilerOptions":{"noLib":true,"skipLibCheck":true,"strict":true,"noEmit":true},"files":["globals.d.ts","a.ts"]}"#.into(),
-            ),
-        ]
-        .into_iter()
-        .collect(),
+        files: files
+            .iter()
+            .map(|(name, text)| (format!("{PROJECT}/{name}"), text.clone().into()))
+            .chain([
+                (format!("{PROJECT}/a.ts"), a_ts(pad).into()),
+                (format!("{PROJECT}/tsconfig.json"), tsconfig.into()),
+            ])
+            .collect(),
         ..Default::default()
     };
     let sys = new_test_sys(&input, false);
@@ -91,10 +108,21 @@ const n: number = x;
         .to_string()
 }
 
+/// The diagnostics of `tsc -p tsconfig.json --pretty false` plus `extra`.
+fn check(extra: &[&str]) -> String {
+    check_files(&[("globals.d.ts", GLOBALS.into())], 9, extra)
+}
+
 /// Go's error with the members up to `w{shown - 1}` and `more` hidden.
 fn expected(shown: usize, more: usize) -> String {
+    expected_with_pad(9, shown, more)
+}
+
+/// `expected` for `a_ts(pad)`.
+fn expected_with_pad(pad: usize, shown: usize, more: usize) -> String {
     format!(
-        "a.ts(7,7): error TS2322: Type '{{ [k4]: void; aaaaaaaaa: number; {}... {more} more ...; q: string; }}' is not assignable to type 'number'.\n",
+        "a.ts(7,7): error TS2322: Type '{{ [k4]: void; {}: number; {}... {more} more ...; q: string; }}' is not assignable to type 'number'.\n",
+        "a".repeat(pad),
         members(shown)
     )
 }
@@ -108,4 +136,27 @@ fn unique_symbol_ids_count_as_go_in_the_default_pool() {
 #[test]
 fn unique_symbol_ids_count_as_go_with_one_checker() {
     assert_eq!(check(&["--checkers", "1"]), expected(15, 5));
+}
+
+/// `declare let d0: number;` to `d{count - 1}`, one per line.
+fn lets(count: usize) -> String {
+    (0..count)
+        .map(|i| format!("declare let d{i}: number;\n"))
+        .collect()
+}
+
+#[test]
+fn pool_checkers_skip_only_the_ids_of_their_own_symbols() {
+    // Each `NewChecker` merges the globals, and its merge errors (TS2451,
+    // hidden by skipLibCheck) give `d0` to `d25` their ids. They are binder
+    // symbols, so Go gives each id once in the pool of 4 checkers: k4 gets
+    // id 47 (4 * 4 + 26 + 5), not 125 ((4 + 26) * 4 + 5), and with a pad
+    // of 8 w14 stays. Go's merge errors race in the pool, so a few ids can
+    // burn (k4 49), but k4 keeps 2 digits.
+    let files = [
+        ("globals.d.ts", format!("{GLOBALS}{}", lets(26))),
+        ("dup1.d.ts", lets(26)),
+        ("dup2.d.ts", "declare const z: number;\n".into()),
+    ];
+    assert_eq!(check_files(&files, 8, &[]), expected_with_pad(8, 15, 5));
 }
