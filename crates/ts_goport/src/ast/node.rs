@@ -6204,6 +6204,13 @@ pub fn source_file_span_map(file: Node) -> Option<&'static crate::spanmap::SpanM
     source_file_content_mapper_info(file)?.span_map.as_deref()
 }
 
+// Go: ast/ast.go:2571 (*SourceFile).IsContentMapped (ts#64518)
+// IsContentMapped reports whether this file was produced by a content mapper.
+#[must_use]
+pub fn source_file_is_content_mapped(file: Node) -> bool {
+    source_file_content_mapper_info(file).is_some()
+}
+
 // Go: ast/ast.go:2575 (*SourceFile).ContentMapper
 // ContentMapper returns the identity of the content mapper that produced this file, or "" if the file
 // was not produced by a content mapper (or the mapper did not identify itself).
