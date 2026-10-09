@@ -33,7 +33,7 @@ pub(crate) fn relative_file_name_from_directory(
     )
 }
 
-// Go: fileInclude.go:15 fileIncludeKind
+// Go: fileInclude.go:14 fileIncludeKind
 // PORT: Go `int` enum with iota constants. The newtype keeps the Go order,
 // so `is_referenced_file` can compare with `<=`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,7 +90,7 @@ pub fn new_file_include_reason(
     Rc::new(FileIncludeReason { kind, data })
 }
 
-// Go: fileInclude.go:41 referencedFileData
+// Go: fileInclude.go:38 referencedFileData
 // PORT: `synthetic` is `Node::NIL` for the Go nil.
 #[derive(Clone, Debug, Default)]
 pub struct ReferencedFileData {
@@ -99,7 +99,7 @@ pub struct ReferencedFileData {
     pub synthetic: Node,
 }
 
-// Go: fileInclude.go:47 referenceFileLocation
+// Go: fileInclude.go:44 referenceFileLocation
 // PORT: `node` is `Node::NIL` for the Go nil. `ref_` is `None` for the Go nil.
 #[derive(Clone)]
 pub struct ReferenceFileLocation {
@@ -111,7 +111,7 @@ pub struct ReferenceFileLocation {
 }
 
 impl ReferenceFileLocation {
-    // Go: fileInclude.go:55 (*referenceFileLocation).text
+    // Go: fileInclude.go:52 (*referenceFileLocation).text
     #[must_use]
     pub fn text(&self) -> String {
         if !self.node.is_nil() {
@@ -132,7 +132,7 @@ impl ReferenceFileLocation {
         }
     }
 
-    // Go: fileInclude.go:67 (*referenceFileLocation).diagnosticAt
+    // Go: fileInclude.go:64 (*referenceFileLocation).diagnosticAt
     #[must_use]
     pub fn diagnostic_at(&self, message: &'static Message, args: Vec<String>) -> Diagnostic {
         if !self.node.is_nil() {
@@ -148,7 +148,7 @@ impl ReferenceFileLocation {
     }
 }
 
-// Go: fileInclude.go:75 automaticTypeDirectiveFileData
+// Go: fileInclude.go:72 automaticTypeDirectiveFileData
 #[derive(Clone, Debug, Default)]
 pub struct AutomaticTypeDirectiveFileData {
     pub type_reference: String,
@@ -156,7 +156,7 @@ pub struct AutomaticTypeDirectiveFileData {
 }
 
 impl FileIncludeReason {
-    // Go: fileInclude.go:80 (*FileIncludeReason).asIndex
+    // Go: fileInclude.go:77 (*FileIncludeReason).asIndex
     // PORT: a Go failed type assertion panics.
     #[must_use]
     pub fn as_index(&self) -> i32 {
@@ -166,7 +166,7 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:84 (*FileIncludeReason).asLibFileIndex
+    // Go: fileInclude.go:81 (*FileIncludeReason).asLibFileIndex
     #[must_use]
     pub fn as_lib_file_index(&self) -> (i32, bool) {
         match &self.data {
@@ -175,14 +175,14 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:89 (*FileIncludeReason).isReferencedFile
+    // Go: fileInclude.go:85 (*FileIncludeReason).isReferencedFile
     // PORT: the Go nil receiver check is on the caller (`Option`).
     #[must_use]
     pub fn is_referenced_file(&self) -> bool {
         self.kind <= FileIncludeKind::LIB_REFERENCE_DIRECTIVE
     }
 
-    // Go: fileInclude.go:93 (*FileIncludeReason).asReferencedFileData
+    // Go: fileInclude.go:89 (*FileIncludeReason).asReferencedFileData
     #[must_use]
     pub fn as_referenced_file_data(&self) -> &ReferencedFileData {
         match &self.data {
@@ -191,7 +191,7 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:97 (*FileIncludeReason).asAutomaticTypeDirectiveFileData
+    // Go: fileInclude.go:93 (*FileIncludeReason).asAutomaticTypeDirectiveFileData
     #[must_use]
     pub fn as_automatic_type_directive_file_data(&self) -> &AutomaticTypeDirectiveFileData {
         match &self.data {
@@ -202,7 +202,7 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:101 (*FileIncludeReason).getReferencedLocation
+    // Go: fileInclude.go:97 (*FileIncludeReason).getReferencedLocation
     // PORT: Go dereferences a nil file or resolution and panics; `expect`
     // does the same.
     #[must_use]
@@ -315,7 +315,7 @@ impl FileIncludeReason {
             .clone()
     }
 
-    // Go: fileInclude.go:162 (*FileIncludeReason).computeDiagnostic
+    // Go: fileInclude.go:165 (*FileIncludeReason).computeDiagnostic
     #[must_use]
     pub fn compute_diagnostic(
         &self,
@@ -425,7 +425,7 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:215 (*FileIncludeReason).computeReferenceFileDiagnostic
+    // Go: fileInclude.go:219 (*FileIncludeReason).computeReferenceFileDiagnostic
     #[must_use]
     pub fn compute_reference_file_diagnostic(
         &self,
@@ -516,7 +516,7 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:253 (*FileIncludeReason).toRelatedInfo
+    // Go: fileInclude.go:258 (*FileIncludeReason).toRelatedInfo
     // PORT: Go nil is `None`. The tsoptions syntax helpers return
     // `Node::NIL` for the Go nil.
     #[must_use]
@@ -641,7 +641,7 @@ impl FileIncludeReason {
         None
     }
 
-    // Go: fileInclude.go:302 (*FileIncludeReason).computeReferenceFileRelatedInfo
+    // Go: fileInclude.go:303 (*FileIncludeReason).computeReferenceFileRelatedInfo
     #[must_use]
     pub fn compute_reference_file_related_info(&self, program: &NewProgram) -> Option<Diagnostic> {
         let reference_location = program

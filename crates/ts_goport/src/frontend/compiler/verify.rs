@@ -286,7 +286,7 @@ impl NewProgram {
         }
     }
 
-    // Go: program.go:724 (*Program).verifyCompilerOptions
+    // Go: program.go:909 (*Program).verifyCompilerOptions
     pub fn verify_compiler_options(&mut self) {
         // PORT: Go holds a `*core.CompilerOptions`. The `Rc` is cloned so
         // `self` can be borrowed mutably.
@@ -1026,20 +1026,20 @@ impl NewProgram {
         }
     }
 
-    // Go: program.go:1220 (*Program).blockEmittingOfFile
+    // Go: program.go:1409 (*Program).blockEmittingOfFile
     pub fn block_emitting_of_file(&mut self, emit_file_name: &str, diag: Diagnostic) {
         let path = self.to_path(emit_file_name);
         self.has_emit_blocking_diagnostics.insert(path);
         self.program_diagnostics.push(diag);
     }
 
-    // Go: program.go:1225 (*Program).IsEmitBlocked
+    // Go: program.go:1414 (*Program).IsEmitBlocked
     pub fn is_emit_blocked(&self, emit_file_name: &str) -> bool {
         self.has_emit_blocking_diagnostics
             .contains(&self.to_path(emit_file_name))
     }
 
-    // Go: program.go:1229 (*Program).verifyProjectReferences
+    // Go: program.go:1418 (*Program).verifyProjectReferences
     pub fn verify_project_references(&mut self) {
         let build_info_file_name = if !self.options().suppress_output_path_check.is_true() {
             self.opts.config.get_build_info_file_name()
@@ -1125,7 +1125,7 @@ impl NewProgram {
     }
 }
 
-// Go: program.go:1431 hasZeroOrOneAsteriskCharacter
+// Go: program.go:1455 hasZeroOrOneAsteriskCharacter
 pub fn has_zero_or_one_asterisk_character(str: &str) -> bool {
     let mut seen_asterisk = false;
     for ch in str.chars() {
@@ -1141,7 +1141,7 @@ pub fn has_zero_or_one_asterisk_character(str: &str) -> bool {
     true
 }
 
-// Go: program.go:1446 moduleResolutionSupportsPackageJsonExportsAndImports
+// Go: program.go:1470 moduleResolutionSupportsPackageJsonExportsAndImports
 pub fn module_resolution_supports_package_json_exports_and_imports(
     module_resolution: ModuleResolutionKind,
 ) -> bool {
@@ -1150,7 +1150,7 @@ pub fn module_resolution_supports_package_json_exports_and_imports(
         || module_resolution == ModuleResolutionKind::BUNDLER
 }
 
-// Go: program.go:1451 emitModuleKindIsNonNodeESM
+// Go: program.go:1475 emitModuleKindIsNonNodeESM
 pub fn emit_module_kind_is_non_node_esm(module_kind: ModuleKind) -> bool {
     module_kind >= ModuleKind::ES2015 && module_kind <= ModuleKind::ES_NEXT
 }

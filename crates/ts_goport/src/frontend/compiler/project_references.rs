@@ -127,7 +127,7 @@ impl<'a> ProjectReferenceParser<'a> {
         }
     }
 
-    // Go: projectreferenceparser.go:55 (*projectReferenceParser).start
+    // Go: projectreferenceparser.go:54 (*projectReferenceParser).start
     pub fn start(&mut self, tasks: &mut [ProjectReferenceParseTaskRef]) {
         for task in tasks.iter_mut() {
             let path = self.loader.to_path(&task.borrow().config_name);
@@ -141,7 +141,7 @@ impl<'a> ProjectReferenceParser<'a> {
         }
     }
 
-    // Go: projectreferenceparser.go:70 (*projectReferenceParser).initMapper
+    // Go: projectreferenceparser.go:69 (*projectReferenceParser).initMapper
     pub fn init_mapper(&mut self, tasks: &[ProjectReferenceParseTaskRef]) {
         let total_references = self.tasks_by_file_name.len() + 1;
         {
@@ -184,7 +184,7 @@ impl<'a> ProjectReferenceParser<'a> {
         }
     }
 
-    // Go: projectreferenceparser.go:82 (*projectReferenceParser).initMapperWorker
+    // Go: projectreferenceparser.go:79 (*projectReferenceParser).initMapperWorker
     // PORT: Go `collections.Set[*projectReferenceParseTask]` keys by pointer;
     // `seen` keys by the `Rc` pointer.
     pub fn init_mapper_worker(
@@ -294,7 +294,7 @@ impl MapperLoader {
         }
     }
 
-    // Go: fileloader.go:187 (*fileLoader).toPath
+    // Go: fileloader.go:238 (*fileLoader).toPath
     #[must_use]
     pub fn to_path(&self, file: &str) -> Path {
         to_path(
@@ -584,7 +584,7 @@ impl ProjectReferenceFileMapper {
         self.range_resolved_reference_worker(&refs, &mut f, Some(&self.config), &mut seen_ref)
     }
 
-    // Go: projectreferencefilemapper.go:158 (*projectReferenceFileMapper).getSourceToDtsIfSymlink
+    // Go: projectreferencefilemapper.go:163 (*projectReferenceFileMapper).getSourceToDtsIfSymlink (at 673a5f17d713; removed by ts#64519)
     // (at 673a5f17d713; ts#64519 splits it: the builder's resolveSymlink,
     // projectreferencefilemapper.go:197, fills `realpathDtsToSource` while
     // the program loads, and the mapper then only reads it)
@@ -734,7 +734,7 @@ impl ProjectReferenceDtsFakingVfs {
         self.host.fs()
     }
 
-    // Go: projectreferencedtsfakinghost.go:131 (*projectReferenceDtsFakingVfs).toPath
+    // Go: projectreferencedtsfakinghost.go:125 (*projectReferenceDtsFakingVfs).toPath (at 673a5f17d713; ts#64159 makes it pathKey, compiler/projectreferencedtsfakinghost.go:122)
     fn to_path(&self, path: &str) -> Path {
         let current_directory = self.host.get_current_directory();
         to_path(
@@ -744,7 +744,7 @@ impl ProjectReferenceDtsFakingVfs {
         )
     }
 
-    // Go: projectreferencedtsfakinghost.go:135 (*projectReferenceDtsFakingVfs).handleDirectoryCouldBeSymlink
+    // Go: projectreferencedtsfakinghost.go:126 (*projectReferenceDtsFakingVfs).handleDirectoryCouldBeSymlink
     fn handle_directory_could_be_symlink(&self, directory: &str) {
         if contains_ignored_path(directory) {
             return;
@@ -887,7 +887,7 @@ impl ProjectReferenceDtsFakingVfs {
         exists
     }
 
-    // Go: projectreferencedtsfakinghost.go:213 (*projectReferenceDtsFakingVfs).fileExistsIfProjectReferenceDts
+    // Go: projectreferencedtsfakinghost.go:235 (*projectReferenceDtsFakingVfs).fileExistsIfProjectReferenceDts
     fn file_exists_if_project_reference_dts(&self, file: &str) -> Tristate {
         let source = self
             .project_reference_file_mapper
@@ -903,7 +903,7 @@ impl ProjectReferenceDtsFakingVfs {
         Tristate::Unknown
     }
 
-    // Go: projectreferencedtsfakinghost.go:221 (*projectReferenceDtsFakingVfs).directoryExistsIfProjectReferenceDeclDir
+    // Go: projectreferencedtsfakinghost.go:243 (*projectReferenceDtsFakingVfs).directoryExistsIfProjectReferenceDeclDir
     // PORT: Go ranges over the set keys in map order; the result does not
     // depend on the order.
     fn directory_exists_if_project_reference_decl_dir(&self, dir: &str) -> Tristate {
@@ -918,12 +918,12 @@ impl ProjectReferenceDtsFakingVfs {
 }
 
 impl Fs for ProjectReferenceDtsFakingVfs {
-    // Go: projectreferencedtsfakinghost.go:56 (*projectReferenceDtsFakingVfs).UseCaseSensitiveFileNames
+    // Go: projectreferencedtsfakinghost.go:55 (*projectReferenceDtsFakingVfs).UseCaseSensitiveFileNames (at 673a5f17d713; ts#64159 makes it CaseSensitivity, compiler/projectreferencedtsfakinghost.go:52)
     fn use_case_sensitive_file_names(&self) -> bool {
         self.host_fs().use_case_sensitive_file_names()
     }
 
-    // Go: projectreferencedtsfakinghost.go:61 (*projectReferenceDtsFakingVfs).FileExists
+    // Go: projectreferencedtsfakinghost.go:57 (*projectReferenceDtsFakingVfs).FileExists
     fn file_exists(&self, path: &str) -> bool {
         if self.host_fs().file_exists(path) {
             return true;
@@ -935,28 +935,28 @@ impl Fs for ProjectReferenceDtsFakingVfs {
         self.file_or_directory_exists_using_source(path, /*isFile*/ true)
     }
 
-    // Go: projectreferencedtsfakinghost.go:73 (*projectReferenceDtsFakingVfs).ReadFile
+    // Go: projectreferencedtsfakinghost.go:69 (*projectReferenceDtsFakingVfs).ReadFile
     fn read_file(&self, path: &str) -> (String, bool) {
         // Dont need to override as we cannot mimick read file
         self.host_fs().read_file(path)
     }
 
-    // Go: projectreferencedtsfakinghost.go:79 (*projectReferenceDtsFakingVfs).WriteFile
+    // Go: projectreferencedtsfakinghost.go:75 (*projectReferenceDtsFakingVfs).WriteFile
     fn write_file(&self, _path: &str, _data: &str) -> Result<(), FsError> {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:84 (*projectReferenceDtsFakingVfs).AppendFile
+    // Go: projectreferencedtsfakinghost.go:80 (*projectReferenceDtsFakingVfs).AppendFile
     fn append_file(&self, _path: &str, _data: &str) -> Result<(), FsError> {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:89 (*projectReferenceDtsFakingVfs).Remove
+    // Go: projectreferencedtsfakinghost.go:85 (*projectReferenceDtsFakingVfs).Remove
     fn remove(&self, _path: &str) -> Result<(), FsError> {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:94 (*projectReferenceDtsFakingVfs).Chtimes
+    // Go: projectreferencedtsfakinghost.go:90 (*projectReferenceDtsFakingVfs).Chtimes
     fn chtimes(
         &self,
         _path: &str,
@@ -966,7 +966,7 @@ impl Fs for ProjectReferenceDtsFakingVfs {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:99 (*projectReferenceDtsFakingVfs).DirectoryExists
+    // Go: projectreferencedtsfakinghost.go:95 (*projectReferenceDtsFakingVfs).DirectoryExists
     fn directory_exists(&self, path: &str) -> bool {
         if self.host_fs().directory_exists(path) {
             self.handle_directory_could_be_symlink(path);
@@ -975,17 +975,17 @@ impl Fs for ProjectReferenceDtsFakingVfs {
         self.file_or_directory_exists_using_source(path, /*isFile*/ false)
     }
 
-    // Go: projectreferencedtsfakinghost.go:108 (*projectReferenceDtsFakingVfs).GetAccessibleEntries
+    // Go: projectreferencedtsfakinghost.go:104 (*projectReferenceDtsFakingVfs).GetAccessibleEntries
     fn get_accessible_entries(&self, _path: &str) -> Entries {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:113 (*projectReferenceDtsFakingVfs).Stat
+    // Go: projectreferencedtsfakinghost.go:109 (*projectReferenceDtsFakingVfs).Stat
     fn stat(&self, _path: &str) -> Option<FileInfo> {
         panic!("should not be called by resolver")
     }
 
-    // Go: projectreferencedtsfakinghost.go:123 (*projectReferenceDtsFakingVfs).Realpath
+    // Go: projectreferencedtsfakinghost.go:114 (*projectReferenceDtsFakingVfs).Realpath
     fn realpath(&self, path: &str) -> String {
         if let Some(result) = self
             .known_symlinks

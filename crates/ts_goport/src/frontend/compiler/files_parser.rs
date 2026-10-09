@@ -58,7 +58,7 @@ impl ParseTask {
         self.normalized_file_path.clone()
     }
 
-    // Go: filesparser.go:55 (*parseTask).Path
+    // Go: filesparser.go:55 (*parseTask).Path (at 673a5f17d713; ts#64159 renames it PathKey, compiler/filesparser.go:55)
     pub fn path(&self) -> Path {
         self.path.clone()
     }
@@ -230,7 +230,7 @@ impl ParseTask {
         }
     }
 
-    // Go: filesparser.go:185 (*parseTask).redirect
+    // Go: filesparser.go:187 (*parseTask).redirect
     pub fn redirect(&mut self, _loader: &FileLoader, file_name: &str) {
         let redirected = Rc::new(RefCell::new(ParseTask {
             normalized_file_path: normalize_path(file_name),
@@ -243,7 +243,7 @@ impl ParseTask {
         self.sub_tasks = vec![redirected];
     }
 
-    // Go: filesparser.go:195 (*parseTask).loadAutomaticTypeDirectives
+    // Go: filesparser.go:198 (*parseTask).loadAutomaticTypeDirectives
     pub fn load_automatic_type_directives(&mut self, loader: &FileLoader) {
         let _trace = crate::tracing::get().map(|tr| {
             tr.push(
@@ -263,7 +263,7 @@ impl ParseTask {
         }
     }
 
-    // Go: filesparser.go:216 (*parseTask).addSubTask
+    // Go: filesparser.go:220 (*parseTask).addSubTask
     pub fn add_sub_task(&mut self, ref_: ResolvedRef, lib_file: Option<Rc<LibFile>>) {
         // PERF: a resolved name is normal already (Go normalizes it again);
         // then the name moves, with no copy.
@@ -285,7 +285,7 @@ impl ParseTask {
     }
 }
 
-// Go: filesparser.go:208 resolvedRef
+// Go: filesparser.go:211 resolvedRef
 #[derive(Clone, Default)]
 pub struct ResolvedRef {
     pub file_name: String,
@@ -304,7 +304,7 @@ pub(crate) struct QueuedParseTask {
     depth: i32,
 }
 
-// Go: filesparser.go:229 filesParser
+// Go: filesparser.go:233 filesParser
 // PORT: Go `core.WorkGroup` is single threaded here (contract 10). Go
 // `singleThreadedWorkGroup` keeps queued functions in a slice and
 // `RunAndWait` pops the last one first, so `queue` is a stack with the same
@@ -358,7 +358,7 @@ impl Drop for ParseTaskLinks {
     }
 }
 
-// Go: filesparser.go:243 getParseTaskData
+// Go: filesparser.go:247 getParseTaskData
 // PORT: Go takes the value from `parseTaskDataPool`; `putParseTaskData`
 // (filesparser.go:226) returns an unused one. No pool is needed here.
 fn get_parse_task_data(task: &ParseTaskRef) -> Rc<RefCell<ParseTaskData>> {
@@ -373,7 +373,7 @@ fn get_parse_task_data(task: &ParseTaskRef) -> Rc<RefCell<ParseTaskData>> {
     }))
 }
 
-// Go: filesparser.go:255 parseTaskData
+// Go: filesparser.go:259 parseTaskData
 // PORT: Go iterates `tasks` (a Go map) in random order. `IndexMap` keeps
 // insertion order. The map holds more than one task only when one path is
 // reached through file names that differ in casing.
@@ -416,7 +416,7 @@ fn all_roots_cached(
 }
 
 impl FilesParser {
-    // Go: filesparser.go:264 (*filesParser).parse
+    // Go: filesparser.go:268 (*filesParser).parse
     pub fn parse(&mut self, loader: &FileLoader, tasks: &[ParseTaskRef]) {
         if PREFETCH.with(|p| p.borrow().is_some()) {
             self.run(loader, tasks);
@@ -590,7 +590,7 @@ impl FilesParser {
         }
     }
 
-    // Go: filesparser.go:269 (*filesParser).start
+    // Go: filesparser.go:273 (*filesParser).start
     pub fn start(&mut self, loader: &FileLoader, tasks: &[ParseTaskRef], depth: i32) {
         let prefetch = PREFETCH.with(|p| p.borrow().clone());
         let mut requests = Vec::new();
@@ -830,7 +830,7 @@ impl FilesParser {
         }
     }
 
-    // Go: filesparser.go:330 (*filesParser).getProcessedFiles
+    // Go: filesparser.go:337 (*filesParser).getProcessedFiles
     pub fn get_processed_files(&self, loader: &FileLoader) -> ProcessedFiles {
         let total_file_count = loader.total_file_count.get() as usize;
         let lib_file_count = loader.lib_file_count.get() as usize;
@@ -1322,7 +1322,7 @@ impl FilesParser {
         }
     }
 
-    // Go: filesparser.go:589 (*filesParser).addIncludeReason
+    // Go: filesparser.go:594 (*filesParser).addIncludeReason
     // PORT: Go can append a nil reason. Only the automatic type directive
     // root task has no reason, and `collectFiles` never passes it here, so a
     // nil reason is skipped.

@@ -119,7 +119,7 @@ impl JsPrint {
     }
 }
 
-// Go: compiler/emitter.go:55 declarationTransformer (#4712)
+// Go: compiler/emitter.go:57 declarationTransformer (#4712)
 // PORT: renamed, because `DeclarationTransformer` is the declarations
 // transformer struct.
 trait DeclarationTransformerLike {
@@ -178,7 +178,7 @@ impl Emitter {
         self.emit_result.diagnostics = self.emitter_diagnostics.get_diagnostics();
     }
 
-    // Go: compiler/emitter.go:60 emitter.getDeclarationTransformers
+    // Go: compiler/emitter.go:62 emitter.getDeclarationTransformers
     // #4712: takes the source file, and adds the supplemental references
     // transformer.
     fn get_declaration_transformers(
@@ -209,7 +209,7 @@ impl Emitter {
         transformers
     }
 
-    // Go: compiler/emitter.go:68 emitter.runScriptTransformers
+    // Go: compiler/emitter.go:70 emitter.runScriptTransformers
     fn run_script_transformers(
         &self,
         emit_context: &Rc<EmitContext>,
@@ -229,7 +229,7 @@ impl Emitter {
         source_file
     }
 
-    // Go: compiler/emitter.go:78 emitter.runDeclarationTransformers
+    // Go: compiler/emitter.go:80 emitter.runDeclarationTransformers
     fn run_declaration_transformers(
         &self,
         emit_context: &Rc<EmitContext>,
@@ -259,7 +259,7 @@ impl Emitter {
         (source_file, diags)
     }
 
-    // Go: compiler/emitter.go:181 emitter.emitJSFile
+    // Go: compiler/emitter.go:185 emitter.emitJSFile
     fn emit_js_file(&mut self, source_file: Node, js_file_path: &str, source_map_file_path: &str) {
         if let Some(print) = self.transform_js_file(source_file, js_file_path) {
             self.print_js_file(print, js_file_path, source_map_file_path);
@@ -412,7 +412,7 @@ impl Emitter {
         self.emit_result.diagnostics = self.emitter_diagnostics.get_diagnostics();
     }
 
-    // Go: compiler/emitter.go:221 emitter.emitDeclarationFile
+    // Go: compiler/emitter.go:223 emitter.emitDeclarationFile
     fn emit_declaration_file(
         &mut self,
         source_file: Node,
@@ -595,7 +595,7 @@ impl Emitter {
         emit_context.reset();
     }
 
-    // Go: compiler/emitter.go:314 emitter.printSourceFile
+    // Go: compiler/emitter.go:315 emitter.printSourceFile
     fn print_source_file(
         &mut self,
         js_file_path: &str,
@@ -758,7 +758,7 @@ impl Emitter {
         diagnostics.get_diagnostics()
     }
 
-    // Go: compiler/emitter.go:395 emitter.writeText
+    // Go: compiler/emitter.go:394 emitter.writeText
     fn write_text(
         &self,
         file_name: &str,
@@ -771,7 +771,7 @@ impl Emitter {
         crate::printer::EmitHost::write_file(self.host.as_ref(), file_name, text)
     }
 
-    // Go: compiler/emitter.go:417 emitter.getSourceMapDirectory
+    // Go: compiler/emitter.go:432 emitter.getSourceMapDirectory
     fn get_source_map_directory(
         &self,
         map_options: &CompilerOptions,
@@ -803,7 +803,7 @@ impl Emitter {
         get_directory_path(&normalize_path(file_path))
     }
 
-    // Go: compiler/emitter.go:443 emitter.getSourceMappingURL
+    // Go: compiler/emitter.go:442 emitter.getSourceMappingURL
     fn get_source_mapping_url(
         &self,
         map_options: &CompilerOptions,
@@ -851,14 +851,14 @@ impl Emitter {
     }
 }
 
-// Go: compiler/emitter.go:295 declarationMapSource
+// Go: compiler/emitter.go:296 declarationMapSource
 struct DeclarationMapSource {
     file_name: &'static str,
     text: FileText,
     line_map: Vec<i32>,
 }
 
-// Go: compiler/emitter.go:301 newDeclarationMapSource
+// Go: compiler/emitter.go:302 newDeclarationMapSource
 fn new_declaration_map_source(source_file: Node) -> DeclarationMapSource {
     let text = source_file_original_text(source_file);
     DeclarationMapSource {
@@ -868,7 +868,7 @@ fn new_declaration_map_source(source_file: Node) -> DeclarationMapSource {
     }
 }
 
-// Go: compiler/emitter.go:310 declarationMapSource.FileName, Text, ECMALineMap
+// Go: compiler/emitter.go:311 declarationMapSource.FileName, Text, ECMALineMap
 impl crate::sourcemap::source::Source for DeclarationMapSource {
     fn text(&self) -> &str {
         &self.text
@@ -883,7 +883,7 @@ impl crate::sourcemap::source::Source for DeclarationMapSource {
     }
 }
 
-// Go: compiler/emitter.go:90 getModuleTransformer
+// Go: compiler/emitter.go:92 getModuleTransformer
 fn get_module_transformer(opts: &TransformOptions) -> Option<TransformerBox> {
     use crate::transformers::moduletransforms;
     match opts.compiler_options.get_emit_module_kind() {
@@ -942,7 +942,7 @@ struct ScriptTransformChoice {
     emit_resolver_references: bool,
 }
 
-// Go: compiler/emitter.go:112 getScriptTransformers (its first lines)
+// Go: compiler/emitter.go:114 getScriptTransformers (its first lines)
 fn script_transform_choice(options: &CompilerOptions, source_file: Node) -> ScriptTransformChoice {
     // JS files don't use reference calculations as they don't do import elision, no need to calculate it
     let import_elision_enabled =
@@ -1006,7 +1006,7 @@ fn may_have_enum_declaration(source_file: Node) -> bool {
             .any(|extra| is_enum(extra.local_symbol))
 }
 
-// Go: compiler/emitter.go:112 getScriptTransformers
+// Go: compiler/emitter.go:114 getScriptTransformers
 pub fn get_script_transformers(
     emit_context: &Rc<EmitContext>,
     host: &Rc<crate::program::EmitHost>,
@@ -1118,13 +1118,13 @@ pub fn parsed_source_file(file: Node) -> Node {
     file
 }
 
-// Go: compiler/emitter.go:402 shouldEmitSourceMaps
+// Go: compiler/emitter.go:401 shouldEmitSourceMaps
 fn should_emit_source_maps(map_options: &CompilerOptions, source_file: Node) -> bool {
     (map_options.source_map.is_true() || map_options.inline_source_map.is_true())
         && !file_extension_is(source_file_file_name(source_file), ".json")
 }
 
-// Go: compiler/emitter.go:407 getSourceRoot
+// Go: compiler/emitter.go:406 getSourceRoot
 fn get_source_root(map_options: &CompilerOptions) -> String {
     // Normalize source root and make sure it has trailing "/" so that it can be used to combine paths with the
     // relative paths of the sources list in the sourcemap
