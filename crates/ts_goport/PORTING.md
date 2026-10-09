@@ -798,12 +798,14 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
     PORT: signal-hook sets the handler (the bit) a moment before it
     publishes the action that the handler runs, so a signal sent on in
     between does nothing. Followups9 round b also waited for the worker's
-    thread that starts after the registration (`go-signals`,
-    `signal.NotifyContext`). A thread gets its name only when it first
-    runs, so that wait held signals longer: with a launcher, an up-to-date
-    `tsgo -b` under CPU load (zbook) lost 110 and 134 of 1000 SIGQUIT and
-    SIGHUP that came in its first 9 or 19 ms, where the same build without
-    that wait (goport-int35) lost 81 and 90 (followups9e).
+    threads that started after the registration (then `go-signals`, which
+    startexit1 removed: the main thread now waits for those signals,
+    `wait_go_signals`; and `signal.NotifyContext`). A thread gets its name
+    only when it first runs, so that wait held signals longer: with a
+    launcher, an up-to-date `tsgo -b` under CPU load (zbook) lost 110 and
+    134 of 1000 SIGQUIT and SIGHUP that came in its first 9 or 19 ms, where
+    the same build without that wait (goport-int35) lost 81 and 90
+    (followups9e).
   - The worker ends with its launcher: a parent-death SIGKILL, and a
     worker whose launcher died before that (its parent is not the named
     launcher, and the named launcher is gone or a zombie) kills itself. A

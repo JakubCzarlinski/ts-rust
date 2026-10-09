@@ -2775,9 +2775,10 @@ impl Drop for RunningJob<'_> {
 pub(crate) static PANIC_IN_JOB: Mutex<Option<String>> = Mutex::new(None);
 
 /// The worker transforms that loads took (`take_prefetched_mapped`), for
-/// the tests.
+/// the tests: the file name, and whether a worker parse of the virtual text
+/// came with the transform.
 #[cfg(test)]
-pub(crate) static MAPPED_TAKEN: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static MAPPED_TAKEN: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 
 /// A parse worker: parses queued files, newest first (the loader's queue
 /// is a stack too), until the queue closes. After each parse it queues the
@@ -3031,10 +3032,13 @@ impl WorkerResolver {
         });
         // The worker keeps what it reads for each package.json entry (`fs`
         // keeps the texts, `WorkerFs::keep_package_jsons`), and the lookups
-        // of the package scope walk for a file's metadata carry it, so the
-        // loader puts those entries into its own cache when it takes the
-        // metadata, as the Go loader finds the metadata with the program's
-        // resolver (`Caches::adopt_worker_package_jsons`).
+        // of the package scope walk for a file's metadata carry it. When the
+        // loader takes the metadata, it keeps those reads in its own cache as
+        // texts that the cache parses on the first lookup (`InfoCache::get`),
+        // as the Go loader finds the metadata with the program's resolver
+        // (`Caches::adopt_worker_package_jsons`). The other reads of the load
+        // go into that cache at its end
+        // (`SharedResolutionCache::end_package_json_reads`).
         resolver.caches.worker_package_json_reads = Some(WorkerPackageJsonReads::default());
         set_worker_lookup_log(log_lookups);
         WorkerResolver {
@@ -3704,7 +3708,9 @@ fn prefetch_parse(
 
 /// A parse worker's transform of a content-mapped file: the transform
 /// request that `transform_locked` sends, and the parse of the virtual text
-/// that `contentmapper::parse_result` would make. The loader takes both
+/// that `contentmapper::parse_result` would make. As in Go, the parse runs
+/// only for a result whose mappings and virtual extension pass the checks
+/// before it (`contentmapper::parses_canonical_output`). The loader takes both
 /// (`take_prefetched_mapped`): it reports an error and attaches the other
 /// outputs, so each file gets one request, as in Go. `None` when the file
 /// cannot be read (Go sends no request then either), or when the loader
@@ -3721,12 +3727,7 @@ fn prefetch_mapped(
     }
     let result = transform.transform(&job.opts.file_name, &content)?;
     let parse = match &result {
-        Ok(result)
-            if result.mappings.is_some()
-                && crate::contentmapper::is_supported_virtual_extension(
-                    &result.virtual_extension,
-                ) =>
-        {
+        Ok(result) if crate::contentmapper::parses_canonical_output(result, &content) => {
             let mut opts = job.opts.clone();
             if crate::contentmapper::is_module_virtual_extension(&result.virtual_extension) {
                 opts.external_module_indicator_options.force = true;
@@ -3837,7 +3838,7 @@ pub(crate) fn take_prefetched_mapped(
         Some(adopt_detached_parse(parse, &want))
     });
     #[cfg(test)]
-    MAPPED_TAKEN.fetch_add(1, AtomicOrdering::Relaxed);
+    lock(&MAPPED_TAKEN).push((opts.file_name.clone(), parse.is_some()));
     Some(PrefetchedTransform { result, parse })
 }
 

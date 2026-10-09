@@ -174,6 +174,8 @@ impl Checker {
     // repeat makes the same comparisons with the same results, and the one
     // effect of a comparison (a lazy symbol id) came with the first call.
     // A long first call searches on entries (`contains_types_by_entries`).
+    // Go's only caller is `isTypeSubsetOf` (from flow.go and relater.go:2753);
+    // `removeSubtypes` (checker.go:26399) does not call it.
     pub fn is_type_subset_of_union(&mut self, source: TypeId, target: TypeId) -> bool {
         if self.ty(source).flags.intersects(TypeFlags::UNION) {
             let n = self.ty(source).types().len();
@@ -2325,7 +2327,9 @@ mod union_subset_tests {
 
     /// `is_type_subset_of_union` gives Go's answer (each source member
     /// searched in the target) on first and repeat calls, and keeps only
-    /// the answers of long searches.
+    /// the answers of long searches. The first calls from `Huge` or `Most`
+    /// (300 and 260 types) to a target of 20 types or more search on
+    /// entries (`contains_types_by_entries`).
     #[test]
     fn kept_subset_answers_are_go_answers() {
         let literals = |r: std::ops::Range<usize>| {
@@ -2333,13 +2337,19 @@ mod union_subset_tests {
                 .collect::<Vec<_>>()
                 .join(" | ")
         };
+        let numbers =
+            |r: std::ops::Range<usize>| r.map(|i| i.to_string()).collect::<Vec<_>>().join(" | ");
         let source = format!(
             "type Big = {};\ntype Half = {};\ntype Other = {} | \"zz\";\ntype Few = \"a1\" | \"a2\";\n\
-             type Obj = {{ x: 1 }} | {{ y: 2 }} | {};\n",
+             type Obj = {{ x: 1 }} | {{ y: 2 }} | {};\ntype Huge = {} | {};\ntype Most = {} | {};\n",
             literals(0..40),
             literals(0..20),
             literals(5..25),
             literals(0..12),
+            literals(0..240),
+            numbers(0..60),
+            literals(0..200),
+            numbers(0..60),
         );
         with_alias_types(&source, |c, types| {
             let unions: Vec<TypeId> = types
@@ -2347,7 +2357,7 @@ mod union_subset_tests {
                 .copied()
                 .filter(|&t| c.ty(t).flags.intersects(TypeFlags::UNION))
                 .collect();
-            let [big, half, other, few, obj] = unions[..] else {
+            let [big, half, other, few, obj, huge, most] = unions[..] else {
                 panic!("{} unions", unions.len());
             };
             for round in 0..2 {
@@ -2368,6 +2378,9 @@ mod union_subset_tests {
             assert_eq!(kept(other, big), Some(false));
             assert_eq!(kept(big, obj), Some(false));
             assert_eq!(kept(obj, big), Some(false));
+            assert_eq!(kept(most, huge), Some(true));
+            assert_eq!(kept(huge, most), Some(false));
+            assert_eq!(kept(most, half), Some(false));
             // 2 searches of 6 steps: not kept.
             assert_eq!(kept(few, big), None);
             assert!(c.is_type_subset_of_union(few, big));

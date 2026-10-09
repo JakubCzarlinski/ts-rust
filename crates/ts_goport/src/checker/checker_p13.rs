@@ -497,8 +497,20 @@ impl Checker {
     // PERF: U4 (CH7). The walk tests kinds from the store tables
     // (`find_ancestor_with_kind`); `is_function_like(n)` is
     // `is_function_like_kind(n.kind())` for a node that is not nil.
+    // PERF (cfcache1, not in Go): the answer depends only on the tree, so a
+    // small table keeps recent answers (`control_flow_containers`). It
+    // keeps only a walk that stayed in one published store: the parents of
+    // those nodes never change. In the cfcache1 counts (11 projects), 91.6%
+    // of the calls come from `check_identifier` (the declaration, then the
+    // reference; 99.8% with its loop), and 63% of all calls (44% to 77% per
+    // project) ask again for a node that was asked before.
     pub fn get_control_flow_container(&mut self, node: Node) -> Node {
-        find_ancestor_with_kind(node.parent(), |node, kind| {
+        let slot = control_flow_container_slot(node);
+        let (key, container) = self.control_flow_containers[slot];
+        if key == node && node.is_some() {
+            return container;
+        }
+        let is_container = |node: Node, kind: SyntaxKind| {
             is_function_like_kind(kind)
                 && get_immediately_invoked_function_expression(node).is_nil()
                 || matches!(
@@ -507,7 +519,19 @@ impl Checker {
                         | SyntaxKind::SourceFile
                         | SyntaxKind::PropertyDeclaration
                 )
-        })
+        };
+        // `frozen_store_parent` is `Some` only for a published store node
+        // whose parent is in the same store.
+        match frozen_store_parent(node)
+            .and_then(|parent| frozen_find_ancestor(parent, is_container))
+        {
+            Some(AncestorWalk::Found(container)) => {
+                self.control_flow_containers[slot] = (node, container);
+                container
+            }
+            Some(AncestorWalk::Next(next)) => find_ancestor_with_kind(next, is_container),
+            None => find_ancestor_with_kind(node.parent(), is_container),
+        }
     }
 
     // Go: checker/checker.go:11644 getFlowTypeOfProperty
@@ -1709,6 +1733,21 @@ impl Checker {
     }
 }
 
+/// Slots of `Checker::control_flow_containers` (16 KiB). On T3 Code, the
+/// gate projects and 5 realworld4 repos, the misses of 1024 slots are at most
+/// 2 points more than those of a memo with no limit (effect: 38% against
+/// 23%). 256 slots cost effect 0.07% more instructions; a `LinkStore` memo
+/// costs more instructions than this table everywhere except effect.
+pub const CONTROL_FLOW_CONTAINER_SLOTS: usize = 1024;
+
+/// The slot of `node` in `Checker::control_flow_containers`: the high bits
+/// of a Fibonacci hash of the handle (file and slot index).
+#[inline]
+fn control_flow_container_slot(node: Node) -> usize {
+    const BITS: u32 = CONTROL_FLOW_CONTAINER_SLOTS.trailing_zeros();
+    (node.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - BITS)) as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1776,5 +1815,146 @@ mod tests {
         crate::program::release_program(program);
         assert!(missing.is_empty(), "not found: {missing:?}");
         assert_eq!(found, 2 * (1 + 7 + 8 + 40));
+    }
+
+    /// Go `getControlFlowContainer` (checker.go:11638) as written: a walk of
+    /// `node.Parent` and its parents with no memo.
+    fn go_control_flow_container(node: Node) -> Node {
+        let mut n = node.parent();
+        while n.is_some() {
+            if is_function_like(n) && get_immediately_invoked_function_expression(n).is_nil()
+                || is_module_block(n)
+                || is_source_file(n)
+                || is_property_declaration(n)
+            {
+                return n;
+            }
+            n = n.parent();
+        }
+        Node::NIL
+    }
+
+    // cfcache1: `get_control_flow_container` keeps answers in a small table.
+    // On every node of a TS file, a JS file and lib.es5.d.ts, in tree order
+    // and then in reverse (so that slots are taken again by other nodes),
+    // each answer must be the walk's answer, from the table or not.
+    #[test]
+    fn control_flow_container_memo_gives_the_walk_answer() {
+        let a = r#"
+namespace N { export const x = 1; function f() { return x; } namespace M { export let y = x; } }
+declare module "m" { export const z: number; }
+class C {
+    p = 1;
+    q = () => this.p;
+    static s = (function () { return 1; })();
+    static { const b = C.s; }
+    constructor(public w: number) { const v = ((() => w))(); }
+    m(this: C) { const v = [1].map(a => a + this.p); return v; }
+    get g() { return 1; }
+    set g(v: number) { this.p = v; }
+}
+const iife = (() => { const inner = 1; return inner; })();
+const iife2 = (function named() { return 2; }());
+const iife3 = ((async () => 3))();
+const obj = { method() { return 1; }, arrow: () => 2, get acc() { return 3; }, nested: { deep() { return () => 4; } } };
+function outer(a: number) {
+    function inner() { return a; }
+    label: for (const k of [1]) { if (k) { break label; } }
+    return [1, 2].map(function (b) { return b + a + inner(); });
+}
+function* gen() { yield 1; }
+enum E { A = 1, B = A + 1 }
+type T<U> = U extends string ? { [K in keyof U]: U[K] } : never;
+interface I { (x: number): string; new (y: string): I; method?(): void; prop: (z: number) => void; }
+const cls = class { field = (() => 1)(); m() { return this.field; } };
+export default class { field = 1; }
+"#;
+        let b = r#"
+/** @param {number} a @returns {number} */
+function j(a) { return a + 1; }
+/** @type {(x: number) => number} */
+const k = (x) => x;
+module.exports.k = k;
+(function () { var hidden = 1; return hidden; })();
+"#;
+        let dir = std::env::temp_dir().join(format!("ts_goport_cfcache_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.ts"), a).unwrap();
+        std::fs::write(dir.join("b.js"), b).unwrap();
+        std::fs::write(
+            dir.join("tsconfig.json"),
+            r#"{ "compilerOptions": { "target": "es2022", "types": [], "allowJs": true, "checkJs": true, "noEmit": true }, "files": ["a.ts", "b.js"] }"#,
+        )
+        .unwrap();
+        let config = dir.join("tsconfig.json");
+        let program = crate::program::try_load_version(&config.to_string_lossy(), |_| {})
+            .unwrap_or_else(|e| panic!("cannot load {}: {e}", config.display()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let scope = crate::core::enter_program(Some(program));
+        let roots: Vec<Node> = program
+            .source_files()
+            .filter(|file| {
+                let name = &file.info.file_name;
+                name.ends_with("/a.ts")
+                    || name.ends_with("/b.js")
+                    || name.ends_with("/lib.es5.d.ts")
+            })
+            .map(|file| file.root)
+            .collect();
+        assert_eq!(roots.len(), 3, "a.ts, b.js and lib.es5.d.ts");
+        let mut nodes = Vec::new();
+        fn collect(node: Node, nodes: &mut Vec<Node>) {
+            nodes.push(node);
+            node.for_each_child(|child| {
+                collect(child, nodes);
+                false
+            });
+        }
+        for &root in &roots {
+            collect(root, &mut nodes);
+        }
+        let expected: Vec<Node> = nodes
+            .iter()
+            .map(|&n| go_control_flow_container(n))
+            .collect();
+        let total = nodes.len();
+        let (wrong, kept) = crate::program::with_type_checker_for_file(roots[0], move |checker| {
+            let (mut wrong, mut kept) = (Vec::new(), 0usize);
+            let mut check = |checker: &mut Checker, i: usize| {
+                let got = checker.get_control_flow_container(nodes[i]);
+                if got != expected[i] {
+                    wrong.push((nodes[i], got, expected[i]));
+                }
+                if checker.control_flow_containers[control_flow_container_slot(nodes[i])]
+                    == (nodes[i], expected[i])
+                {
+                    kept += 1;
+                }
+            };
+            for i in 0..nodes.len() {
+                check(checker, i);
+                check(checker, i);
+            }
+            for i in (0..nodes.len()).rev() {
+                check(checker, i);
+            }
+            (wrong, kept)
+        });
+        drop(scope);
+        crate::program::release_program(program);
+        assert!(
+            wrong.is_empty(),
+            "{} wrong answers, first: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+        // More nodes than slots, so slots are taken again. Only the 3 roots
+        // (no parent) are not kept: 10,673 nodes, 32,010 of 32,019 checks.
+        assert!(total > 4 * CONTROL_FLOW_CONTAINER_SLOTS, "{total} nodes");
+        assert!(
+            kept * 10 >= total * 3 * 9,
+            "the table kept {kept} of {} answers",
+            total * 3
+        );
     }
 }

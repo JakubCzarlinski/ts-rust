@@ -2276,6 +2276,7 @@ fn table_key_name(key: TableKey<'_>) -> Name {
 /// list is short, an add scans it. From `SCAN` nodes on, an open-addressing
 /// table of the listed nodes answers instead. A node is pushed only when it
 /// is new, so the list keeps Go's order.
+// Go: core/core.go:380 AppendIfUnique
 #[derive(Default)]
 struct DeclarationSet {
     /// Empty until the list reaches `SCAN` nodes, then a power-of-two table
@@ -2288,22 +2289,34 @@ impl DeclarationSet {
     /// shorter than 8 or longer than 32; blueprint runs fastest from 8 to 16.
     const SCAN: usize = 16;
 
-    /// Pushes `node` to `list` unless the list has it. `max_len` is an
-    /// upper bound of the final list length (the table never fills).
-    fn add(&mut self, list: &mut SmallVec<[Node; 4]>, node: Node, max_len: usize) {
-        debug_assert!(node.is_some());
-        if list.len() < Self::SCAN {
+    /// Pushes `node` to `list` unless the list has it. `len_hint` is the
+    /// expected final list length, which sizes the table. The table doubles
+    /// before it is more than half full, so a longer list is also correct.
+    /// `Node::NIL` cannot go in the table and takes the scan.
+    fn add(&mut self, list: &mut SmallVec<[Node; 4]>, node: Node, len_hint: usize) {
+        if list.len() < Self::SCAN || node.is_nil() {
             if !list.contains(&node) {
                 list.push(node);
                 if list.len() == Self::SCAN {
-                    self.slots = vec![Node::NIL; (max_len * 2).next_power_of_two()];
-                    for &listed in list.iter() {
-                        self.insert(listed);
-                    }
+                    self.fill(list, (len_hint.max(Self::SCAN) * 2).next_power_of_two());
                 }
             }
-        } else if self.insert(node) {
+            return;
+        }
+        if list.len() * 2 >= self.slots.len() {
+            self.fill(list, self.slots.len() * 2);
+        }
+        if self.insert(node) {
             list.push(node);
+        }
+    }
+
+    /// Makes a table of `len` slots (a power of two) that has each listed
+    /// node.
+    fn fill(&mut self, list: &[Node], len: usize) {
+        self.slots = vec![Node::NIL; len];
+        for &listed in list {
+            self.insert(listed);
         }
     }
 
@@ -2501,6 +2514,38 @@ type I = A & M;
                 set.add(&mut got, node, nodes.len());
             }
             assert_eq!(got.as_slice(), want.as_slice());
+        }
+    }
+
+    /// `DeclarationSet::add` gives the `core.AppendIfUnique` list when the
+    /// list grows past `len_hint`: the table doubles before it is more than
+    /// half full (a full table would loop forever). `Node::NIL`, which marks
+    /// a free slot, takes the scan and is listed once.
+    #[test]
+    fn declaration_set_grows_past_its_hint() {
+        let node = |k: u64| Node(((k % 3 + 1) << 32) | k);
+        let mut nodes: Vec<Node> = (1..=300).map(node).collect();
+        nodes.extend((1..=300).step_by(7).map(node));
+        nodes.insert(40, Node::NIL);
+        nodes.push(Node::NIL);
+        let mut want: Vec<Node> = Vec::new();
+        for &node in &nodes {
+            if !want.contains(&node) {
+                want.push(node);
+            }
+        }
+        for len_hint in [0, 16, 40] {
+            let mut set = DeclarationSet::default();
+            let mut got: SmallVec<[Node; 4]> = SmallVec::new();
+            for &node in &nodes {
+                set.add(&mut got, node, len_hint);
+                let used = set.slots.iter().filter(|slot| slot.is_some()).count();
+                assert!(
+                    used * 2 <= set.slots.len(),
+                    "len_hint {len_hint}: {used} used"
+                );
+            }
+            assert_eq!(got.as_slice(), want.as_slice(), "len_hint {len_hint}");
         }
     }
 }

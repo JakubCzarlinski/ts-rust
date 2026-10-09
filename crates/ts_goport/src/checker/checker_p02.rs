@@ -514,6 +514,9 @@ impl Checker {
             for &augmentation in list {
                 if !is_global_scope_augmentation(augmentation.parent()) {
                     self.merge_module_augmentation(augmentation);
+                    // PERF (propfilt1): the merge can add names to the
+                    // members of Object or Function in place.
+                    self.rebuild_augment_filters();
                 }
             }
         }

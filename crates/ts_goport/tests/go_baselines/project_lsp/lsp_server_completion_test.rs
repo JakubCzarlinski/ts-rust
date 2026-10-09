@@ -598,25 +598,38 @@ child_test! {
 child_test! {
     // PORT: no Go counterpart (aispec1, knownprob1 S3). One completion with
     // no prefix computes the augmentation group and the groups of both
-    // files. In goport the merged augmentation export has the Path of
-    // `src/mw/b` (the last in program order), and its group is made at
-    // `src/mw/a`, before the groups of `src/mw/b`. Go merges a random last
-    // Path and computes the groups in map order: in some runs the
-    // augmentation group comes before the groups of that file and its
-    // exports get ".". goport computes augmentation groups last
-    // (autoimport/view.rs get_completions), Go's common answer: no "." in 28
-    // of 40 runs of Go N (aispec1 augment-two; in the others the four
-    // exports of one file get ".").
+    // files. The merged augmentation export has the Path of one of the two
+    // files. When its group is made before the groups of that file, the
+    // exports of that file get ".". Go merges a random last Path and
+    // computes the groups in map order, so its answer varies. Go N
+    // (tsgo-oracle-673a5f17d713, trace aispec1 augment-two, 2 sets of 40
+    // runs) gives 3 answers: no "." in 28 and 31 runs, "." for the four
+    // exports of `a` in 5 and 7, and of `b` in 7 and 2. The test accepts
+    // each of them. goport always gives no ".": it merges the last Path in
+    // program order (`src/mw/b`) and computes augmentation groups last
+    // (autoimport/view.rs get_completions).
     fn single_completion_computes_the_augmentation_last() {
         let (client, main_uri) = augmentation_client(&[
             ("a", &["aOne", "aTwo", "aThree", "aFour"]),
             ("b", &["bOne", "bTwo", "bThree", "bFour"]),
         ]);
         let labels = ["aOne", "aTwo", "aThree", "aFour", "bOne", "bTwo", "bThree", "bFour"];
-        let expected: Vec<(String, String)> = labels
-            .iter()
-            .map(|label| (label.to_string(), format!("./mw/{}", &label[..1])))
-            .collect();
-        assert_eq!(auto_import_specifiers(&client, &main_uri, 2, "", &labels), expected);
+        // The answer when the exports of the file `poisoned` get ".".
+        let answer = |poisoned: &str| -> Vec<(String, String)> {
+            labels
+                .iter()
+                .map(|label| {
+                    let file = &label[..1];
+                    let specifier = if file == poisoned {
+                        ".".to_string()
+                    } else {
+                        format!("./mw/{file}")
+                    };
+                    (label.to_string(), specifier)
+                })
+                .collect()
+        };
+        let got = auto_import_specifiers(&client, &main_uri, 2, "", &labels);
+        assert!(["", "a", "b"].map(answer).contains(&got), "{got:?}");
     }
 }
