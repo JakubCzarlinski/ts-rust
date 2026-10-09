@@ -1557,7 +1557,7 @@ impl Checker {
     ) -> String {
         let ctx = p1_ctx(b);
         // Go keys the map by `ast.GetSymbolId(symbol)`, which gives the symbol
-        // its id (`SymbolArenaLinks`).
+        // its id (`ValueSymbolLinkStore`).
         get_symbol_id(&self.symbols, symbol);
         if let Some(&result) = ctx.borrow().remapped_symbol_references.get(&symbol) {
             symbol = result;

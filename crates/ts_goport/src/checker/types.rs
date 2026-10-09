@@ -435,9 +435,10 @@ pub struct ValueSymbolLinks {
     /// `value_declaration`), set on the first call for this symbol. It fits
     /// in the padding after the bool.
     pub optional_parameter: Tristate,
-    /// PORT: no Go counterpart. The symbol has its id: a read through
-    /// `SymbolArenaLinks` gave it (Go keys the store by `ast.GetSymbolId`),
-    /// so later reads skip `get_symbol_id`. It fits in the padding too.
+    /// PORT: no Go counterpart. The symbol has its id: a read of
+    /// `ValueSymbolLinkStore` gave it (Go keys the store by
+    /// `ast.GetSymbolId`), so later reads skip `get_symbol_id`. It fits in
+    /// the padding too.
     pub has_id: bool,
 }
 

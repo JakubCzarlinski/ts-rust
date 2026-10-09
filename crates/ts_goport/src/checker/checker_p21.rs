@@ -246,9 +246,10 @@ impl Checker {
             _ => panic!("interface conversion: TypeSystemEntity is not *Type"),
         };
         match r.property_name {
+            // Go `Get` gives no id here: each push site read the symbol first.
             TypeSystemPropertyName::TYPE => self
                 .value_symbol_links
-                .get(as_symbol(r.target))
+                .get_noted(as_symbol(r.target))
                 .resolved_type
                 .is_some(),
             TypeSystemPropertyName::DECLARED_TYPE => self
@@ -292,9 +293,10 @@ impl Checker {
                     .intersects(NodeCheckFlags::INITIALIZER_IS_UNDEFINED_COMPUTED),
                 _ => panic!("interface conversion: TypeSystemEntity is not *ast.Node"),
             },
+            // Go `Get` gives no id here: each push site read the symbol first.
             TypeSystemPropertyName::WRITE_TYPE => self
                 .value_symbol_links
-                .get(as_symbol(r.target))
+                .get_noted(as_symbol(r.target))
                 .write_type
                 .is_some(),
             TypeSystemPropertyName::ALIAS_TARGET => self

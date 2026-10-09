@@ -167,6 +167,23 @@ fn pool_checkers_skip_only_the_ids_of_their_own_symbols() {
     assert_eq!(check_files(&files, 8, &[]), expected_with_pad(8, 15, 5));
 }
 
+#[test]
+fn merge_error_texts_give_ids_with_one_checker() {
+    // The node builder gives `d0` to `d25` their ids as it writes their
+    // names in the merge errors (nodebuilderimpl.go:974
+    // getNameOfSymbolAsWritten), before `NewChecker` gives its 4 ids. So
+    // with one checker k4 gets id 35, not 9, and w14 goes.
+    let files = [
+        ("globals.d.ts", format!("{GLOBALS}{}", lets(26))),
+        ("dup1.d.ts", lets(26)),
+        ("dup2.d.ts", "declare const z: number;\n".into()),
+    ];
+    assert_eq!(
+        check_files(&files, 9, &["--checkers", "1"]),
+        expected(14, 6)
+    );
+}
+
 /// Go's error for `a_ts(9)` in `file`, with the members up to
 /// `w{shown - 1}` and `more` hidden.
 fn expected_in(file: &str, shown: usize, more: usize) -> String {

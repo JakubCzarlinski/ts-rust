@@ -116,7 +116,8 @@ handles.
 Borrowing: arenas live in `Checker`. Copy what you need out of an arena entry
 before calling another `&mut self` method. Clone `Vec`s you iterate while
 calling `&mut self` methods. After a call, re-fetch links
-(`self.value_symbol_links.get(s)`) instead of holding a reference across it.
+(`self.value_symbol_links.get_by_id(&self.symbols, s)`) instead of holding a
+reference across it.
 
 ### Go `int` past the int32 range
 
@@ -175,10 +176,12 @@ Each arena has a dummy entry at index 0. New entries are pushed; ids are
 `TypeId(len as u32)` etc. Go `c.newType`, `c.newSignature`,
 `newIndexInfo`, `newTypePredicate`, mapper constructors push into these.
 Go `t.id` equals the arena index, so Go's per-checker `TypeId` counter order
-is kept. Link stores: `value_symbol_links: LinkStore<SymbolId, ValueSymbolLinks>`
-etc. with the Go field names. A store keeps its values in 64-key pages, so a
-value over 32 bytes (a compile-time check in `LinkStore`), or one that few
-keys have, goes in a `Box` (`type_node_links: LinkStore<Node, Box<TypeNodeLinks>>`).
+is kept. Link stores: `mapped_symbol_links: LinkStore<SymbolId, MappedSymbolLinks>`
+etc. with the Go field names (`value_symbol_links` is a
+`ValueSymbolLinkStore`, whose reads give symbol ids; see Threads). A store
+keeps its values in 64-key pages, so a value over 32 bytes (a compile-time
+check in `LinkStore`), or one that few keys have, goes in a `Box`
+(`type_node_links: LinkStore<Node, Box<TypeNodeLinks>>`).
 
 `checker/mapper.rs` defines `TypeMapper` (an enum over the Go mapper kinds)
 and its constructors. Go `m.Map(t)` -> `self.mapper_map(m, t)`,
@@ -852,8 +855,11 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   its own files, not on thread timing.
 - Symbol ids: the port gives a symbol its id where Go calls
   `ast.GetSymbolId` (every `valueSymbolLinks` read through
-  `SymbolArenaLinks`, and the node builder, symbol accessibility, enum
+  `ValueSymbolLinkStore`, and the node builder, symbol accessibility, enum
   relation and emit resolver maps), so one checker counts ids as Go does.
+  The store is a type of its own, so a read that gives no id does not
+  compile; the 2 reads of a pushed type resolution (`get_noted`) and the
+  parameter memo (`try_get_without_id`) are the named exceptions.
   Late-bound names hold ids (`__@k@<id>`), and the node builder counts their
   length toward truncation. Go's checkers share one counter: a worker skips
   the ids that the other checkers' `NewChecker` gave to their own symbols
