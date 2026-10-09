@@ -420,14 +420,18 @@ impl Checker {
             import_attributes_type =
                 self.get_type_from_import_attributes(get_import_attributes(declaration));
         }
+        // This is only used by emit and type printing, after checking has already reported any
+        // resolution errors for this specifier. Resolve with ignoreErrors so that these queries
+        // don't add new diagnostics (e.g. an implicit-any-module suggestion) as a side effect.
+        // (ts#64479, Go N' checker.go:15385)
         let module_symbol = self.resolve_external_module_name_worker(
             specifier,
             specifier,
-            None, /*moduleNotFoundError*/
-            false,
-            false,
+            None,  /*moduleNotFoundError*/
+            true,  /*ignoreErrors*/
+            false, /*isForAugmentation*/
             import_attributes_type,
-        ); // TODO: GH#18217
+        );
         if module_symbol.is_nil() {
             return Node::NIL;
         }
