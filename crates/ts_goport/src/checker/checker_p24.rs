@@ -675,14 +675,17 @@ impl Checker {
             s.parent = parent;
             s.value_declaration = value_declaration;
         }
+        // Go reads the links of `symbol` before those of `source`.
+        let links = self.value_symbol_links.get_by_id(&self.symbols, symbol);
+        links.resolved_type = t;
+        links.target = source;
         let source_name_type = self
             .value_symbol_links
             .get_by_id(&self.symbols, source)
             .name_type;
-        let links = self.value_symbol_links.get_by_id(&self.symbols, symbol);
-        links.resolved_type = t;
-        links.target = source;
-        links.name_type = source_name_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, symbol)
+            .name_type = source_name_type;
         symbol
     }
 

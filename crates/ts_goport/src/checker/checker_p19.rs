@@ -72,6 +72,8 @@ impl Checker {
         for e in missing_elements {
             let name = self.get_property_name_from_binding_element(e);
             let symbol = self.new_symbol(SymbolFlags::PROPERTY | SymbolFlags::OPTIONAL, &name);
+            // Go reads the links (and gives the id) before the right side.
+            self.value_symbol_links.get_by_id(&self.symbols, symbol);
             let resolved_type = self.get_type_from_binding_element(
                 e, false, /*includePatternInType*/
                 true,  /*reportErrors*/
