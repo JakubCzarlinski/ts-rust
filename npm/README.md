@@ -91,6 +91,7 @@ and pack and test it by hand:
 
 ```sh
 GOPORT_PIN=<pin> scripts/goport/npm-pack.sh --name tsc-rs --package-version <v> \
+  --also linux-arm64=<linux-arm64 tsc from the release workflow> \
   --also darwin-arm64=<darwin tsc from the release workflow> <out>/pkg <out>/linux-x64/bin/tsgo
 scripts/goport/npm-test.sh --name tsc-rs <out>/pkg <out>/test
 ```
