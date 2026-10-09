@@ -306,7 +306,8 @@ fn tsc_commandline_inputs() -> Vec<TscInput> {
             ..Default::default()
         },
         TscInput {
-            sub_scenario: "Parse watch interval option".into(),
+            // ts#64457: the watch interval option is removed (TS5023).
+            sub_scenario: "Reject removed watch interval option".into(),
             files: file_map! {
                 "/home/src/workspaces/project/first.ts" => "export const a = 1",
                 "/home/src/workspaces/project/tsconfig.json" => dedent(r#"
@@ -321,7 +322,7 @@ fn tsc_commandline_inputs() -> Vec<TscInput> {
             ..Default::default()
         },
         TscInput {
-            sub_scenario: "Parse watch interval option without tsconfig.json".into(),
+            sub_scenario: "Reject removed watch interval option without tsconfig.json".into(),
             command_line_args: args!["-w", "--watchInterval", "1000"],
             ..Default::default()
         },
@@ -1264,9 +1265,6 @@ fn tsc_extends_inputs() -> Vec<TscInput> {
 						"paths": {
 							"@myscope/*": ["${configDir}/types/*"],
 						},
-					},
-					"watchOptions": {
-						"excludeFiles": ["${configDir}/main.ts"],
 					},
 				}"#),
                 "/home/src/projects/myproject/tsconfig.json" => dedent(r#"

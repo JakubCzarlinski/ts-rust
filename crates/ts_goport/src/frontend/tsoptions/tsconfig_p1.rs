@@ -28,7 +28,7 @@ pub struct ExtendsResult {
     pub extended_source_files: FxHashSet<String>,
 }
 
-// Go: tsoptions/tsconfigparsing.go:36 compilerOptionsDeclaration
+// Go: tsoptions/declarations_generated.go:1112 compilerOptionsDeclaration (ts#64457 generates it)
 // PORT: Go package-level vars are `LazyLock` statics of leaked
 // declarations, so Go pointer identity is `std::ptr::eq`.
 pub static COMPILER_OPTIONS_DECLARATION: LazyLock<&'static CommandLineOption> =
@@ -41,7 +41,7 @@ pub static COMPILER_OPTIONS_DECLARATION: LazyLock<&'static CommandLineOption> =
         })
     });
 
-// Go: tsoptions/tsconfigparsing.go:42 compileOnSaveCommandLineOption
+// Go: tsoptions/declarations_generated.go:1135 compileOnSaveCommandLineOption (ts#64457 generates it)
 pub static COMPILE_ON_SAVE_COMMAND_LINE_OPTION: LazyLock<&'static CommandLineOption> =
     LazyLock::new(|| {
         leak_option(CommandLineOption {
@@ -52,7 +52,7 @@ pub static COMPILE_ON_SAVE_COMMAND_LINE_OPTION: LazyLock<&'static CommandLineOpt
         })
     });
 
-// Go: tsoptions/tsconfigparsing.go:48 extendsOptionDeclaration
+// Go: tsoptions/declarations_generated.go:1124 extendsOptionDeclaration (ts#64457 generates it)
 pub static EXTENDS_OPTION_DECLARATION: LazyLock<&'static CommandLineOption> = LazyLock::new(|| {
     leak_option(CommandLineOption {
         name: "extends",
@@ -67,7 +67,7 @@ pub static EXTENDS_OPTION_DECLARATION: LazyLock<&'static CommandLineOption> = La
     })
 });
 
-// Go: tsoptions/tsconfigparsing.go:57 tsconfigRootOptionsMap
+// Go: tsoptions/declarations_generated.go:1141 tsconfigRootOptionsMap (ts#64457 generates it)
 pub static TSCONFIG_ROOT_OPTIONS_MAP: LazyLock<&'static CommandLineOption> = LazyLock::new(|| {
     leak_option(CommandLineOption {
         name: "undefined", // should never be needed since this is root
@@ -1581,7 +1581,7 @@ pub fn convert_to_object(source_file: Node) -> (CompilerOptionsValue, Vec<Diagno
     )
 }
 
-// Go: tsoptions/tsconfigparsing.go:927 getDefaultCompilerOptions
+// Go: tsoptions/options_generated.go:297 getDefaultCompilerOptions (ts#64457 generates it)
 pub fn get_default_compiler_options(config_file_name: &str) -> CompilerOptions {
     let mut options = CompilerOptions::default();
     if !config_file_name.is_empty() && get_base_file_name(config_file_name) == "jsconfig.json" {

@@ -11,7 +11,7 @@ use crate::frontend::prelude::*;
 // Go `[][]string` extension groups are `Vec<Vec<String>>`. Go `int` is
 // `i32`.
 
-// Go: tsoptions/tsconfigparsing.go:941 getDefaultTypeAcquisition
+// Go: tsoptions/options_generated.go:313 getDefaultTypeAcquisition (ts#64457 generates it)
 pub fn get_default_type_acquisition(config_file_name: &str) -> TypeAcquisition {
     let mut options = TypeAcquisition::default();
     if !config_file_name.is_empty() && get_base_file_name(config_file_name) == "jsconfig.json" {
@@ -1613,7 +1613,7 @@ fn get_substituted_string_array_with_config_dir_template(
     result
 }
 
-// Go: tsoptions/tsconfigparsing.go:1823 handleOptionConfigDirTemplateSubstitution
+// Go: tsoptions/options_generated.go:1332 handleOptionConfigDirTemplateSubstitution (ts#64457 generates it)
 // PORT: Go clones the shared `Paths` map before the first change (tsgo#4362)
 // so a cached extended config keeps its value. Each options value here owns
 // its `paths`, so no clone is needed.

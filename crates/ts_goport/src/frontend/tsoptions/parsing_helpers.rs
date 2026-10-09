@@ -302,7 +302,7 @@ impl OptionParser for TypeAcquisitionParser<'_> {
 // Go: tsoptions/parsinghelpers.go:252 buildOptionsParser
 // PORT: ported next to `core.BuildOptions` in execute/build/command_line.rs.
 
-// Go: tsoptions/parsinghelpers.go:268 ParseCompilerOptions
+// Go: tsoptions/parsinghelpers.go:315 ParseCompilerOptions
 // PORT: Go `allOptions` can be nil; every Rust caller has options, so the
 // nil check is dropped.
 pub fn parse_compiler_options(
@@ -317,7 +317,7 @@ pub fn parse_compiler_options(
     Vec::new()
 }
 
-// Go: tsoptions/parsinghelpers.go:279 parseCompilerOptions
+// Go: tsoptions/options_generated.go:11 parseCompilerOptions (ts#64457 generates it)
 // PORT: renamed, because the snake_case form of the Go name is the same as
 // `ParseCompilerOptions`. Go `[]string` results go to `Option<Vec<String>>`
 // fields, so an explicit empty list stays different from nil.
@@ -632,7 +632,7 @@ fn float_or_int32_to_flag<T>(
     ))
 }
 
-// Go: tsoptions/parsinghelpers.go:606 ParseTypeAcquisition
+// Go: tsoptions/options_generated.go:322 ParseTypeAcquisition (ts#64457 generates it)
 // PORT: Go `allOptions` can be nil; every Rust caller has one, so the nil
 // check is dropped. Go `[]string` fields are `Vec<String>`.
 pub fn parse_type_acquisition(
@@ -656,7 +656,7 @@ pub fn parse_type_acquisition(
     Vec::new()
 }
 
-// Go: tsoptions/parsinghelpers.go:626 ParseBuildOptions
+// Go: tsoptions/options_generated.go:342 ParseBuildOptions (ts#64457 generates it)
 // PORT: ported in execute/build/command_line.rs.
 
 /// Effect-TS/tsgo patch 013 `mergeCompilerOptions` with the source config
@@ -683,7 +683,7 @@ pub fn merge_compiler_options_with_paths<'a>(
     target_options
 }
 
-// Go: tsoptions/parsinghelpers.go:658 mergeCompilerOptions
+// Go: tsoptions/parsinghelpers.go:336 mergeCompilerOptions
 // mergeCompilerOptions merges the source compiler options into the target compiler options
 // with optional awareness of explicitly set null values in the raw JSON.
 // Fields in the source options will overwrite the corresponding fields in the target options,

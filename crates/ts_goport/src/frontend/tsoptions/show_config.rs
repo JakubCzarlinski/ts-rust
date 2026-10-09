@@ -511,7 +511,8 @@ fn show_config_value_as_int(value: &CompilerOptionsValue) -> Option<i64> {
     }
 }
 
-// Go: tsoptions/showconfig.go:280 serializeEnumValue
+// Go: tsoptions/showconfig.go:280 serializeEnumValue (removed by ts#64457; Go N' uses
+// tsoptions/options_generated.go:1704 serializeCompilerOptionEnum)
 // serializeEnumValue converts an enum field value to its corresponding string key
 // using the option's enum map. It handles int32-based enum types.
 fn serialize_enum_value(
