@@ -307,8 +307,10 @@ impl EmitResolver {
         }
 
         // PORT: Go keys `visited` by `ast.GetSymbolId`; the symbol handle is the same identity.
+        // The Go call gives the symbol its id, so it is made too (`SymbolArenaLinks`).
         let mut visited: FxHashSet<SymbolId> = FxHashSet::default(); // guard against circular imports
         while export_symbol.is_some() {
+            get_symbol_id(&c.symbols, export_symbol);
             if !visited.insert(export_symbol) {
                 break;
             }

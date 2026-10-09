@@ -470,7 +470,9 @@ impl Checker {
                 .flags
                 .intersects(SymbolFlags::TRANSIENT)
             {
-                let links = self.value_symbol_links.get(single_prop);
+                let links = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, single_prop);
                 single_prop_type = links.resolved_type;
                 single_prop_mapper = links.mapper;
             }
@@ -481,7 +483,7 @@ impl Checker {
                 self.sym_mut(clone).parent = parent;
             }
             let write_type = self.get_write_type_of_symbol(single_prop);
-            let links = self.value_symbol_links.get(clone);
+            let links = self.value_symbol_links.get_by_id(&self.symbols, clone);
             links.containing_type = containing_type;
             links.mapper = single_prop_mapper;
             links.write_type = write_type;
@@ -528,7 +530,10 @@ impl Checker {
             let t = self.get_type_of_symbol(prop);
             if first_type.is_nil() {
                 first_type = t;
-                name_type = self.value_symbol_links.get(prop).name_type;
+                name_type = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, prop)
+                    .name_type;
             }
             let write_type = self.get_write_type_of_symbol(prop);
             if write_types.is_some() || write_type != t {
@@ -571,7 +576,7 @@ impl Checker {
             self.sym_mut(result).parent = parent;
         }
         {
-            let links = self.value_symbol_links.get(result);
+            let links = self.value_symbol_links.get_by_id(&self.symbols, result);
             links.containing_type = containing_type;
             links.name_type = name_type;
         }
@@ -589,14 +594,18 @@ impl Checker {
         } else {
             self.get_intersection_type(&prop_types)
         };
-        self.value_symbol_links.get(result).resolved_type = resolved_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, result)
+            .resolved_type = resolved_type;
         if let Some(write_types) = write_types {
             let write_type = if is_union {
                 self.get_union_type(&write_types)
             } else {
                 self.get_intersection_type(&write_types)
             };
-            self.value_symbol_links.get(result).write_type = write_type;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, result)
+                .write_type = write_type;
         }
         result
     }
@@ -606,7 +615,7 @@ impl Checker {
         // if symbol is instantiated its flags are not copied from the 'target'
         // so we'll need to get back original 'target' symbol to work with correct set of flags
         if s.is_some() && self.sym(s).check_flags.intersects(CheckFlags::INSTANTIATED) {
-            return self.value_symbol_links.get(s).target;
+            return self.value_symbol_links.get_by_id(&self.symbols, s).target;
         }
         s
     }
@@ -666,8 +675,11 @@ impl Checker {
             s.parent = parent;
             s.value_declaration = value_declaration;
         }
-        let source_name_type = self.value_symbol_links.get(source).name_type;
-        let links = self.value_symbol_links.get(symbol);
+        let source_name_type = self
+            .value_symbol_links
+            .get_by_id(&self.symbols, source)
+            .name_type;
+        let links = self.value_symbol_links.get_by_id(&self.symbols, symbol);
         links.resolved_type = t;
         links.target = source;
         links.name_type = source_name_type;

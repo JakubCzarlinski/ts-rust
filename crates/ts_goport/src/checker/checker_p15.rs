@@ -267,7 +267,9 @@ impl Checker {
                     self.new_symbol_ex(SymbolFlags::PROPERTY | member_flags, &name, check_flags)
                 };
                 if name_type.is_some() {
-                    self.value_symbol_links.get(prop).name_type = name_type;
+                    self.value_symbol_links
+                        .get_by_id(&self.symbols, prop)
+                        .name_type = name_type;
                 }
                 if in_destructuring_pattern && self.has_default_value(member_decl) {
                     // If object literal is an assignment pattern and if the assignment pattern specifies a default value
@@ -313,7 +315,7 @@ impl Checker {
                     p.value_declaration = value_declaration;
                 }
                 {
-                    let links = self.value_symbol_links.get(prop);
+                    let links = self.value_symbol_links.get_by_id(&self.symbols, prop);
                     links.resolved_type = t;
                     links.target = member;
                 }
@@ -707,7 +709,9 @@ impl Checker {
                     let right_type_without_undefined =
                         self.remove_missing_or_undefined_type(right_type);
                     if left_type_without_undefined == right_type_without_undefined {
-                        self.value_symbol_links.get(result).resolved_type = left_type;
+                        self.value_symbol_links
+                            .get_by_id(&self.symbols, result)
+                            .resolved_type = left_type;
                     } else {
                         let union = self.get_union_type_ex(
                             &[left_type, right_type_without_undefined],
@@ -715,13 +719,20 @@ impl Checker {
                             None,
                             TypeId::NIL,
                         );
-                        self.value_symbol_links.get(result).resolved_type = union;
+                        self.value_symbol_links
+                            .get_by_id(&self.symbols, result)
+                            .resolved_type = union;
                     }
                     self.spread_links.get(result).left_spread = left_prop;
                     self.spread_links.get(result).right_spread = right_prop;
                     self.sym_mut(result).declarations = declarations.into();
-                    let name_type = self.value_symbol_links.get(left_prop).name_type;
-                    self.value_symbol_links.get(result).name_type = name_type;
+                    let name_type = self
+                        .value_symbol_links
+                        .get_by_id(&self.symbols, left_prop)
+                        .name_type;
+                    self.value_symbol_links
+                        .get_by_id(&self.symbols, result)
+                        .name_type = name_type;
                     self.symbols.set(members, left_name, result);
                 }
             } else {
@@ -906,19 +917,28 @@ impl Checker {
                 let result = self.new_symbol_ex(flags, &prop_name, check_flags);
                 if is_setonly_accessor {
                     let undefined_type = self.undefined_type;
-                    self.value_symbol_links.get(result).resolved_type = undefined_type;
+                    self.value_symbol_links
+                        .get_by_id(&self.symbols, result)
+                        .resolved_type = undefined_type;
                 } else {
                     let prop_type = self.get_type_of_symbol(prop);
                     let resolved = self.add_optionality_ex(
                         prop_type, true, /*isProperty*/
                         true, /*isOptional*/
                     );
-                    self.value_symbol_links.get(result).resolved_type = resolved;
+                    self.value_symbol_links
+                        .get_by_id(&self.symbols, result)
+                        .resolved_type = resolved;
                 }
                 let declarations = self.sym(prop).declarations.clone();
                 self.sym_mut(result).declarations = declarations;
-                let name_type = self.value_symbol_links.get(prop).name_type;
-                self.value_symbol_links.get(result).name_type = name_type;
+                let name_type = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, prop)
+                    .name_type;
+                self.value_symbol_links
+                    .get_by_id(&self.symbols, result)
+                    .name_type = name_type;
                 self.mapped_symbol_links.get(result).synthetic_origin = prop;
                 self.symbols.set(members, prop_name, result);
             }
@@ -968,15 +988,24 @@ impl Checker {
         let result = self.new_symbol_ex(flags, &prop_name, check_flags);
         if is_setonly_accessor {
             let undefined_type = self.undefined_type;
-            self.value_symbol_links.get(result).resolved_type = undefined_type;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, result)
+                .resolved_type = undefined_type;
         } else {
             let prop_type = self.get_type_of_symbol(prop);
-            self.value_symbol_links.get(result).resolved_type = prop_type;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, result)
+                .resolved_type = prop_type;
         }
         let declarations = self.sym(prop).declarations.clone();
         self.sym_mut(result).declarations = declarations;
-        let name_type = self.value_symbol_links.get(prop).name_type;
-        self.value_symbol_links.get(result).name_type = name_type;
+        let name_type = self
+            .value_symbol_links
+            .get_by_id(&self.symbols, prop)
+            .name_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, result)
+            .name_type = name_type;
         self.mapped_symbol_links.get(result).synthetic_origin = prop;
         result
     }

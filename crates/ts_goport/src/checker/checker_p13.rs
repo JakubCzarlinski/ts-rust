@@ -1386,7 +1386,10 @@ impl Checker {
         if !self.sym(prop).check_flags.intersects(CheckFlags::SYNTHETIC) {
             return callback(self, prop);
         }
-        let containing_type = self.value_symbol_links.get(prop).containing_type;
+        let containing_type = self
+            .value_symbol_links
+            .get_by_id(&self.symbols, prop)
+            .containing_type;
         let types = self.ty(containing_type).types_list();
         let name = self.sym(prop).name.clone();
         for t in types {
