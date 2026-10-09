@@ -370,12 +370,16 @@ impl CommonJSModuleTransformer {
     /// Visits a top-level nested `with` statement as it may contain `var` declarations that are hoisted and may still be
     /// exported with `export {}`.
     pub(super) fn visit_top_level_nested_with_statement(&mut self, node: Node) -> Node {
-        let expression = self.visit_node_with(VisitorKind::Root, node.expression());
-        let statement =
+        let ec = self.emit_context.clone();
+        let f = ec.factory();
+        // Go visits the statement first, then the expression (an argument of the update call).
+        let mut statement =
             self.visit_embedded_statement_with(VisitorKind::TopLevelNested, node.statement());
-        self.emit_context
-            .factory()
-            .update_with_statement(node, expression, statement)
+        if statement.is_nil() {
+            statement = f.new_empty_statement();
+        }
+        let expression = self.visit_node_with(VisitorKind::Root, node.expression());
+        f.update_with_statement(node, expression, statement)
     }
 
     // Go: transformers/moduletransforms/commonjsmodule.go:1272 CommonJSModuleTransformer.visitTopLevelNestedIfStatement
