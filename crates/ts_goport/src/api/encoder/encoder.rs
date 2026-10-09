@@ -20,7 +20,10 @@
 
 use crate::api::encoder::prelude::*;
 
+use crate::ast::node::{ChildField, for_each_child_field};
 use crate::ast::source_file_ls::{SourceFileDataKey, new_source_file_data_key};
+use crate::ast::store::{FileNodeReader, FileNodes, frozen_store_text_name};
+use crate::astdata::NodeData;
 use crate::frontend::core_binarysearch::binary_search_unique_func;
 use crate::frontend::parser::{ExternalModuleIndicatorOptions, ParsedSourceFile};
 use std::borrow::Cow;
@@ -569,7 +572,7 @@ static NODE_INDEX_TABLE_KEY: LazyLock<SourceFileDataKey<Rc<NodeIndexTable>>> =
     LazyLock::new(new_source_file_data_key::<Rc<NodeIndexTable>>);
 
 impl NodeIndexTable {
-    // Go: api/encoder/encoder.go:316 (*NodeIndexTable).GetIndex
+    // Go: api/encoder/encoder.go:342 (*NodeIndexTable).GetIndex
     /// GetIndex returns the encoder index for the given node.
     /// On the first call the sortedIdx array is built (O(n log n) sort on a flat []uint32),
     /// then subsequent calls use binary search (O(log n)). This turns out to be much faster than
@@ -857,64 +860,25 @@ fn encode_tree(
         }
     }
 
+    // PERF: (apiperf2) the nodes of a published store file are encoded from
+    // their node data (`StoreFile`, `encode_visit`).
+    let file_nodes = FileNodes::of(root_node.file_index()).filter(|_| !visitor_only());
+    let store_file = file_nodes.as_ref().map(|nodes| StoreFile {
+        file: root_node.file_index(),
+        nodes: nodes.reader(root_node.file_index()),
+    });
+    let fast = store_file.as_ref();
+
     // PORT: Go builds the visitor with only `Hooks` and sets `Visit` after;
     // the Rust callbacks get the visitor as an argument instead.
     let hooks: NodeVisitorHooks<'_, EncodeTreeState> = NodeVisitorHooks {
         visit_nodes: Some(Rc::new(
-            |node_list: NodeList, visitor: &mut NodeVisitor<'_, EncodeTreeState>| -> NodeList {
-                if node_list.is_nil() {
-                    return node_list;
-                }
-
-                let st = &mut visitor.ctx;
-                st.node_count += 1;
-                st.node_table.push(Node::NIL); // NodeLists are not *ast.Node
-                if st.prev_index != 0 {
-                    // this is the next sibling of `prevNode`
-                    let (b0, b1, b2, b3) = (
-                        st.node_count as u8,
-                        (st.node_count >> 8) as u8,
-                        (st.node_count >> 16) as u8,
-                        (st.node_count >> 24) as u8,
-                    );
-                    let base = st.prev_index as usize * NODE_SIZE + NODE_OFFSET_NEXT;
-                    st.nodes[base + 0] = b0;
-                    st.nodes[base + 1] = b1;
-                    st.nodes[base + 2] = b2;
-                    st.nodes[base + 3] = b3;
-                }
-
-                let values = [
-                    SYNTAX_KIND_NODE_LIST,
-                    st.utf16(node_list.pos()),
-                    st.utf16(node_list.end()),
-                    0,
-                    st.parent_index,
-                    node_list.nodes().len() as u32,
-                    // ts#63957
-                    u32::from(bool_to_byte(node_list.has_trailing_comma())),
-                ];
-                append_uint32s(&mut st.nodes, &values);
-
-                let save_parent_index = st.parent_index;
-
-                let current_index = st.node_count;
-                st.prev_index = 0;
-                st.parent_index = current_index;
-                // PERF: (apiperf1) Go `VisitSlice` over the list in place
-                // (`visit_slice_changed`). The visit returns each node as it
-                // is, so nothing is copied.
-                let _ = visitor.visit_slice_changed(node_list.nodes().iter());
-                visitor.ctx.prev_index = current_index;
-                visitor.ctx.parent_index = save_parent_index;
-
-                node_list
+            move |node_list: NodeList, visitor: &mut EncodeVisitor<'_>| -> NodeList {
+                encode_visit_nodes(node_list, visitor, fast)
             },
         )),
         visit_modifiers: Some(Rc::new(
-            |modifiers: ModifierList,
-             visitor: &mut NodeVisitor<'_, EncodeTreeState>|
-             -> ModifierList {
+            |modifiers: ModifierList, visitor: &mut EncodeVisitor<'_>| -> ModifierList {
                 if modifiers.is_some() && !modifiers.nodes().is_empty() {
                     let visit_nodes = visitor
                         .hooks
@@ -929,66 +893,8 @@ fn encode_tree(
         ..NodeVisitorHooks::default()
     };
     let mut visitor = new_node_visitor(
-        |node: Node, visitor: &mut NodeVisitor<'_, EncodeTreeState>| -> Node {
-            let st = &mut visitor.ctx;
-            st.node_count += 1;
-            st.node_table.push(node);
-            if st.prev_index != 0 {
-                // this is the next sibling of `prevNode`
-                let (b0, b1, b2, b3) = (
-                    st.node_count as u8,
-                    (st.node_count >> 8) as u8,
-                    (st.node_count >> 16) as u8,
-                    (st.node_count >> 24) as u8,
-                );
-                let base = st.prev_index as usize * NODE_SIZE + NODE_OFFSET_NEXT;
-                st.nodes[base + 0] = b0;
-                st.nodes[base + 1] = b1;
-                st.nodes[base + 2] = b2;
-                st.nodes[base + 3] = b3;
-            }
-
-            let kind = node.kind() as u32;
-            let pos = st.utf16(node.pos());
-            let end = st.utf16(node.end());
-            let parent_index = st.parent_index;
-            let data = get_node_data(
-                node,
-                &mut st.strs,
-                &st.position_map,
-                &mut st.extended_data,
-                &mut st.structured_data,
-                None,
-            );
-            let flags = node.flags().0;
-            append_uint32s(
-                &mut st.nodes,
-                &[kind, pos, end, 0, parent_index, data, flags],
-            );
-
-            let node_count = st.node_count;
-            if let Some(map) = &mut st.node_index_map
-                && map.contains_key(&node)
-            {
-                map.insert(node, node_count);
-            }
-
-            let save_parent_index = st.parent_index;
-
-            let current_index = st.node_count;
-            st.prev_index = 0;
-            st.parent_index = current_index;
-            visitor.visit_each_child(node);
-            let source_file = visitor.ctx.source_file;
-            if source_file.is_some() {
-                for jsdoc in node.js_doc(source_file) {
-                    let visit = visitor.visit.clone().expect("NodeVisitor.Visit is nil");
-                    visit(jsdoc, visitor);
-                }
-            }
-            visitor.ctx.prev_index = current_index;
-            visitor.ctx.parent_index = save_parent_index;
-            node
+        move |node: Node, visitor: &mut EncodeVisitor<'_>| -> Node {
+            encode_visit(node, visitor, fast)
         },
         None,
         hooks,
@@ -1031,7 +937,7 @@ fn encode_tree(
         append_uint32s(&mut st.nodes, &[kind, pos, end, 0, 0, data, flags]);
     }
 
-    visitor.visit_each_child(root_node);
+    encode_each_child(root_node, &mut visitor, fast);
     if source_file.is_some() {
         for jsdoc in root_node.js_doc(source_file) {
             let visit = visitor.visit.clone().expect("NodeVisitor.Visit is nil");
@@ -1158,11 +1064,424 @@ fn encode_tree(
     ))
 }
 
+/// The visitor of `encode_tree`.
+type EncodeVisitor<'a> = NodeVisitor<'a, EncodeTreeState>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: `encode_tree` encodes every node with the visitor, as Go does.
+    static VISITOR_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True when `encode_tree` encodes every node with the visitor (tests).
+#[inline]
+fn visitor_only() -> bool {
+    #[cfg(test)]
+    return VISITOR_ONLY.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    false
+}
+
+/// The published store file of the node that `encode_tree` encodes, whose
+/// nodes `encode_visit` encodes from their node data.
+// PERF: (apiperf2) Go `encodeTree` walks the tree with `VisitEachChild`.
+// Here the visitor read each child field of a node three times (the
+// property mask, the visit, the `Update` compare), each with a store
+// lookup, and a node of a freeable file version (an API source file lease)
+// with a pin per read: the encoder took 3.7 times Go's cycles.
+struct StoreFile<'a> {
+    file: usize,
+    nodes: FileNodeReader<'a>,
+}
+
+/// True when `encode_visit` encodes the children of a node of kind `kind`
+/// of the store file from its node data: Go `VisitEachChild` visits the
+/// fields of `ForEachChild` (`for_each_child_field`) in the same order.
+/// JSDoc nodes and a SyntaxList take the visitor.
+#[inline]
+fn walks_node_data(kind: SyntaxKind) -> bool {
+    !is_js_doc_kind(kind) && kind != SyntaxKind::SyntaxList
+}
+
+/// The node data of `node`, of kind `kind`, when `encode_visit` encodes it
+/// from its node data: a node of store file `fast` (`walks_node_data`).
+#[inline]
+fn store_node_data<'f>(
+    node: Node,
+    kind: SyntaxKind,
+    fast: Option<&StoreFile<'f>>,
+) -> Option<&'f NodeData> {
+    let fast = fast?;
+    if node.file_index() != fast.file || !walks_node_data(kind) {
+        return None;
+    }
+    Some(fast.nodes.data(node))
+}
+
+// Go: api/encoder/encoder.go:540 (the visitor.Visit func of encodeTree)
+fn encode_visit(node: Node, visitor: &mut EncodeVisitor<'_>, fast: Option<&StoreFile<'_>>) -> Node {
+    // PERF: (apiperf2) a node of the store file reads its record once.
+    let in_file = fast.filter(|fast| node.file_index() == fast.file);
+    let (kind, loc, flags) = match in_file {
+        Some(fast) => fast.nodes.header(node),
+        None => (node.kind(), node.loc(), node.flags()),
+    };
+    let data_node = in_file
+        .filter(|_| walks_node_data(kind))
+        .map(|fast| fast.nodes.data(node));
+    let st = &mut visitor.ctx;
+    st.node_count += 1;
+    st.node_table.push(node);
+    if st.prev_index != 0 {
+        // this is the next sibling of `prevNode`
+        let (b0, b1, b2, b3) = (
+            st.node_count as u8,
+            (st.node_count >> 8) as u8,
+            (st.node_count >> 16) as u8,
+            (st.node_count >> 24) as u8,
+        );
+        let base = st.prev_index as usize * NODE_SIZE + NODE_OFFSET_NEXT;
+        st.nodes[base + 0] = b0;
+        st.nodes[base + 1] = b1;
+        st.nodes[base + 2] = b2;
+        st.nodes[base + 3] = b3;
+    }
+
+    let (node_pos, node_end) = (loc.pos(), loc.end());
+    let pos = st.utf16(node_pos);
+    let end = st.utf16(node_end);
+    let parent_index = st.parent_index;
+    let data_word = match data_node {
+        Some(data) => store_node_data_word(node, kind, data, node_pos, node_end, st),
+        None => get_node_data(
+            node,
+            &mut st.strs,
+            &st.position_map,
+            &mut st.extended_data,
+            &mut st.structured_data,
+            None,
+        ),
+    };
+    append_node(
+        &mut st.nodes,
+        [kind as u32, pos, end, 0, parent_index, data_word, flags.0],
+    );
+
+    let node_count = st.node_count;
+    if let Some(map) = &mut st.node_index_map
+        && map.contains_key(&node)
+    {
+        map.insert(node, node_count);
+    }
+
+    let save_parent_index = st.parent_index;
+
+    let current_index = st.node_count;
+    st.prev_index = 0;
+    st.parent_index = current_index;
+    match (data_node, fast) {
+        (Some(data), Some(fast)) => {
+            let mask = encode_store_children(kind, data, visitor, fast);
+            if data_word & NODE_DATA_TYPE_MASK == NODE_DATA_TYPE_CHILDREN {
+                // The low byte of the data word (`NODE_DATA_CHILD_MASK`).
+                visitor.ctx.nodes[current_index as usize * NODE_SIZE + NODE_OFFSET_DATA] |= mask;
+            }
+        }
+        _ => {
+            visitor.visit_each_child(node);
+        }
+    }
+    let source_file = visitor.ctx.source_file;
+    // PERF: (apiperf2) `Node::js_doc` is nil without the parser flag
+    // `HAS_JS_DOC`, which `flags` has.
+    if source_file.is_some() && flags.intersects(NodeFlags::HAS_JS_DOC) {
+        for jsdoc in node.js_doc(source_file) {
+            encode_visit(jsdoc, visitor, fast);
+        }
+    }
+    visitor.ctx.prev_index = current_index;
+    visitor.ctx.parent_index = save_parent_index;
+    node
+}
+
+/// Go `getNodeData(node, ...)` of `node` (kind `kind`, Go `Pos` and `End`
+/// `pos` and `end`), read from its node data `data`, with no children mask:
+/// `encode_store_children` gives it.
+fn store_node_data_word(
+    node: Node,
+    kind: SyntaxKind,
+    data: &NodeData,
+    pos: i32,
+    end: i32,
+    st: &mut EncodeTreeState,
+) -> u32 {
+    let t = node_data_type_of_kind(kind);
+    let common = match data {
+        // Go `getNodeCommonData`: `n.MultiLine`, read from the node data.
+        NodeData::Block(d) => u32::from(d.multi_line) << 24,
+        NodeData::ArrayLiteralExpression(d) => u32::from(d.multi_line) << 24,
+        NodeData::ObjectLiteralExpression(d) => u32::from(d.multi_line) << 24,
+        _ => node_common_data_of_kind(node, kind),
+    };
+    match t {
+        NODE_DATA_TYPE_CHILDREN => t | common,
+        // Go `recordNodeStrings`.
+        NODE_DATA_TYPE_STRING => {
+            t | common
+                | match data {
+                    // Go `node.AsIdentifier().Text`: the name of the slot
+                    // (`Node::text`).
+                    NodeData::Identifier(_) | NodeData::PrivateIdentifier(_) => {
+                        let text = frozen_store_text_name(node)
+                            .map_or_else(|| node.text(), |name| name.as_str());
+                        st.strs.add(text, kind, pos, end)
+                    }
+                    NodeData::JsxText(d) => st.strs.add(&d.text, kind, pos, end),
+                    _ => record_node_strings(node, &mut st.strs),
+                }
+        }
+        // Go `recordExtendedData`: the text and flags of a literal, and the
+        // raw text of a template literal part.
+        _ => {
+            let (text, raw_text, flags) = match data {
+                NodeData::StringLiteral(d) => (d.text.as_str(), None, d.token_flags.0),
+                NodeData::NumericLiteral(d) => (d.text.as_str(), None, d.token_flags.0),
+                NodeData::BigIntLiteral(d) => (d.text.as_str(), None, d.token_flags.0),
+                NodeData::RegularExpressionLiteral(d) => (d.text.as_str(), None, d.token_flags.0),
+                NodeData::NoSubstitutionTemplateLiteral(d) => {
+                    (d.text.as_str(), None, d.template_flags.0)
+                }
+                NodeData::TemplateHead(d) => (
+                    d.text.as_str(),
+                    Some(d.raw_text.as_str()),
+                    d.template_flags.0,
+                ),
+                NodeData::TemplateMiddle(d) => (
+                    d.text.as_str(),
+                    Some(d.raw_text.as_str()),
+                    d.template_flags.0,
+                ),
+                NodeData::TemplateTail(d) => (
+                    d.text.as_str(),
+                    Some(d.raw_text.as_str()),
+                    d.template_flags.0,
+                ),
+                _ => {
+                    return t
+                        | common
+                        | record_extended_data(
+                            node,
+                            &mut st.strs,
+                            &st.position_map,
+                            &mut st.extended_data,
+                            &mut st.structured_data,
+                            None,
+                        );
+                }
+            };
+            let offset = st.extended_data.len() as u32;
+            let text_index = st.strs.add(text, kind, pos, end);
+            match raw_text {
+                Some(raw_text) => {
+                    let raw_text_index = st.strs.add(raw_text, kind, pos, end);
+                    append_uint32s(&mut st.extended_data, &[text_index, raw_text_index, flags]);
+                }
+                None => append_uint32s(&mut st.extended_data, &[text_index, flags]),
+            }
+            t | common | offset
+        }
+    }
+}
+
+/// Go `visitor.VisitEachChild(node)` in `encodeTree`, for any node: from its
+/// node data when it has some (`store_node_data`), else with the visitor.
+fn encode_each_child(node: Node, visitor: &mut EncodeVisitor<'_>, fast: Option<&StoreFile<'_>>) {
+    let kind = node.kind();
+    match (store_node_data(node, kind, fast), fast) {
+        (Some(data), Some(fast)) => {
+            encode_store_children(kind, data, visitor, fast);
+        }
+        _ => {
+            visitor.visit_each_child(node);
+        }
+    }
+}
+
+/// Go `visitor.VisitEachChild(node)` in `encodeTree` for a node of kind
+/// `kind` of store file `fast` with node data `data`: the fields of
+/// `for_each_child_field`, each visited as Go `VisitEachChild` visits it
+/// with the encoder's hooks. Returns Go `getChildrenPropertyMask(node)`: a
+/// bit per field, in field order, for a field that is not Go `nil` (a
+/// modifier list that is not empty, Go `hasModifiers`). `FullSignature` has
+/// no bit.
+fn encode_store_children(
+    kind: SyntaxKind,
+    data: &NodeData,
+    visitor: &mut EncodeVisitor<'_>,
+    fast: &StoreFile<'_>,
+) -> u8 {
+    let mut mask: u8 = 0;
+    let mut bit: u32 = 0;
+    // Go shifts a byte: a bit from 8 on is lost.
+    let mut field = |present: bool| {
+        if present && bit < 8 {
+            mask |= 1 << bit;
+        }
+        bit += 1;
+    };
+    for_each_child_field(kind, fast.file, data, |child| match child {
+        // Go `v.visitNode(child)`.
+        ChildField::Node(child) => {
+            field(child.is_some());
+            if child.is_some() {
+                encode_visit(child, visitor, Some(fast));
+            }
+        }
+        ChildField::FullSignature(child) => {
+            if child.is_some() {
+                encode_visit(child, visitor, Some(fast));
+            }
+        }
+        // Go `v.visitNodes(list)`: the VisitNodes hook.
+        ChildField::List(list) => {
+            field(list.is_some());
+            if let Some(list) = list {
+                encode_store_list(list, visitor, fast);
+            }
+        }
+        // Go `v.visitModifiers(modifiers)`: the VisitModifiers hook.
+        ChildField::Modifiers(modifiers) => {
+            let modifiers = modifiers.filter(|modifiers| !modifiers.list.nodes.is_empty());
+            field(modifiers.is_some());
+            if let Some(modifiers) = modifiers {
+                encode_store_list(&modifiers.list, visitor, fast);
+            }
+        }
+        ChildField::Ids(_) => unreachable!("a SyntaxList or a JSDoc node takes the visitor"),
+    });
+    mask
+}
+
+// Go: api/encoder/encoder.go:503 (the VisitNodes hook of encodeTree)
+fn encode_visit_nodes(
+    node_list: NodeList,
+    visitor: &mut EncodeVisitor<'_>,
+    fast: Option<&StoreFile<'_>>,
+) -> NodeList {
+    if node_list.is_nil() {
+        return node_list;
+    }
+
+    let nodes = node_list.nodes();
+    let current_index = begin_node_list(
+        &mut visitor.ctx,
+        node_list.pos(),
+        node_list.end(),
+        nodes.len(),
+        node_list.has_trailing_comma(),
+    );
+    let save_parent_index = visitor.ctx.parent_index;
+    visitor.ctx.prev_index = 0;
+    visitor.ctx.parent_index = current_index;
+    // PERF: (apiperf1) Go `VisitSlice` over the list in place
+    // (`visit_slice_changed`). The visit returns each node as it is, so
+    // nothing is copied.
+    let _ = visitor.visit_slice_changed(nodes.iter());
+    visitor.ctx.prev_index = current_index;
+    visitor.ctx.parent_index = save_parent_index;
+
+    node_list
+}
+
+/// `encode_visit_nodes` for a non-nil list of the node data of store file
+/// `fast`.
+fn encode_store_list(
+    list: &crate::astdata::NodeList,
+    visitor: &mut EncodeVisitor<'_>,
+    fast: &StoreFile<'_>,
+) {
+    let file = fast.file;
+    // Go `NodeList.Loc` and `HasTrailingComma` (the last node ends before
+    // the list).
+    let (pos, end) = (list.range.start.get() as i32, list.range.end.get() as i32);
+    let has_trailing_comma = list
+        .nodes
+        .last()
+        .is_some_and(|&last| Node::new(file, last).end() < end);
+    let current_index = begin_node_list(
+        &mut visitor.ctx,
+        pos,
+        end,
+        list.nodes.len(),
+        has_trailing_comma,
+    );
+    let save_parent_index = visitor.ctx.parent_index;
+    visitor.ctx.prev_index = 0;
+    visitor.ctx.parent_index = current_index;
+    // Go `visitor.VisitSlice(nodeList.Nodes)`.
+    for &id in &list.nodes {
+        encode_visit(Node::new(file, id), visitor, Some(fast));
+    }
+    visitor.ctx.prev_index = current_index;
+    visitor.ctx.parent_index = save_parent_index;
+}
+
+/// The start of the VisitNodes hook of Go `encodeTree`: the entry of a
+/// list at `pos`..`end` with `len` nodes. Returns its index.
+fn begin_node_list(
+    st: &mut EncodeTreeState,
+    pos: i32,
+    end: i32,
+    len: usize,
+    has_trailing_comma: bool,
+) -> u32 {
+    st.node_count += 1;
+    st.node_table.push(Node::NIL); // NodeLists are not *ast.Node
+    if st.prev_index != 0 {
+        // this is the next sibling of `prevNode`
+        let (b0, b1, b2, b3) = (
+            st.node_count as u8,
+            (st.node_count >> 8) as u8,
+            (st.node_count >> 16) as u8,
+            (st.node_count >> 24) as u8,
+        );
+        let base = st.prev_index as usize * NODE_SIZE + NODE_OFFSET_NEXT;
+        st.nodes[base + 0] = b0;
+        st.nodes[base + 1] = b1;
+        st.nodes[base + 2] = b2;
+        st.nodes[base + 3] = b3;
+    }
+
+    let values = [
+        SYNTAX_KIND_NODE_LIST,
+        st.utf16(pos),
+        st.utf16(end),
+        0,
+        st.parent_index,
+        len as u32,
+        // ts#63957
+        u32::from(bool_to_byte(has_trailing_comma)),
+    ];
+    append_uint32s(&mut st.nodes, &values);
+    st.node_count
+}
+
 // Go: api/encoder/encoder.go:655 appendUint32s
 pub fn append_uint32s(buf: &mut Vec<u8>, values: &[u32]) {
     for &value in values {
         buf.extend_from_slice(&value.to_le_bytes());
     }
+}
+
+/// Go `appendUint32s(nodes, ...)` of the 7 fields of one node entry.
+// PERF: (apiperf2) one 28-byte append, not 7 of 4 bytes.
+#[inline]
+fn append_node(buf: &mut Vec<u8>, values: [u32; 7]) {
+    let mut bytes = [0u8; NODE_SIZE];
+    for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
+        chunk.copy_from_slice(&value.to_le_bytes());
+    }
+    buf.extend_from_slice(&bytes);
 }
 
 /// Go `binary.LittleEndian.PutUint32(buf[offset:], value)`.
@@ -1686,4 +2005,253 @@ pub fn record_extended_data_no_substitution_template_literal(
     let n = node;
     let text_index = strs.add(n.text(), node.kind(), node.pos(), node.end());
     append_uint32s(extended_data, &[text_index, n.template_flags().0 as u32]);
+}
+
+#[cfg(test)]
+mod store_data_tests {
+    use super::*;
+    use crate::ast::{FileText, FileVersion};
+    use crate::frontend::parser::{SourceFileParseOptions, parse_source_file};
+
+    /// Texts with every syntax kind that a parse makes outside JSDoc.
+    const SAMPLES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            r#"import def, { a as b, type c } from "./m";
+import * as ns from "./n";
+import x = require("x");
+import type { T } from "./t" with { type: "json" };
+export { b as default2, c };
+export * from "./star";
+export * as nsx from "./nsx";
+export default class<T extends object = {}> extends Base<T> implements I, J {
+    static #p?: number = 1;
+    declare readonly q!: string;
+    @dec() @dec2 method<U>(this: X, a?: U, ...rest: U[]): asserts a is U { super.m(); }
+    get g(): number { return this.#p ?? 0; }
+    set g(v) {}
+    constructor(private readonly z: number, public w?: string) { super(); }
+    static { label: for (;;) { break label; } }
+    [key: string]: any;
+    m2?(): void;
+    *gen() { yield* other(); yield 1; }
+    async am() { await p; for await (const v of it) {} }
+    "quoted"() {}
+    [computed]: number;
+    123: number;
+}
+abstract class A { abstract m(): void; protected abstract get p(): number; }
+function f(overload: string): void;
+function f(overload: number): void;
+function f(overload: any) {}
+declare function df(): void;
+declare module "mod" { export const x: number; }
+declare global { interface Window { w: number } }
+namespace N.M { export namespace O {} }
+module Old {}
+enum E { A = 1, B = A << 2, "C" }
+const enum CE { X }
+type U<T> = T extends (infer V extends string)[] ? V : never;
+type M = { readonly [K in keyof T as `get${K & string}`]-?: T[K] };
+type F = new (...a: any[]) => unknown;
+type F2 = abstract new () => void;
+type Tup = [a: string, b?: number, ...c: boolean[]];
+type L = "lit" | 1 | -1 | true | null | undefined | 1n | `t${string}x${number}`;
+type Q = typeof import("./q", { with: { "resolution-mode": "import" } }).Z<number>;
+type Idx = T["k"][number];
+type Pred = (x: unknown) => x is string;
+type Op = keyof T | unique symbol | readonly string[];
+type Paren = (string | number)[];
+type Opt = { a?: number; b(): void; new (): X; (): Y; get c(): number; set c(v: number) };
+type Q2 = typeof x.y<string>;
+interface I extends J, K<number> { [i: number]: string; m?<T>(): void }
+let v1: any = <any>x, v2 = x as const, v3 = x satisfies T, v4 = x!;
+var { a1, b1: [c1, , ...d1] = [], ...e1 } = obj, [f1 = 1] = arr;
+const o = { a, b: 1, [c]: 2, ...d, m() {}, get g() { return 1; }, set s(v) {}, async *ag() {}, "s": 1, 2: 3 };
+const arrow = async <T,>(a: T): Promise<T> => a, arrow2 = x => ({ x });
+const fe = function* named() {}, ce = class Named {};
+const t = tag<string>`a${b}c${d}e`, nst = `plain`, re = /ab+c/gi, big = 123n, num = 0x1F, str = 'q\'s';
+if (a) b; else if (c) { d; } else e;
+do x++; while (--y);
+while (true) continue;
+for (let i = 0, j; i < 10; i++) {}
+for (const k in o) {}
+for (const [k, v] of m) {}
+switch (s) { case 1: case 2: break; default: throw new Error(`e`); }
+try { a(); } catch { } finally { }
+try { a(); } catch (e: unknown) { }
+with (o) { }
+debugger;
+;
+x = a ? b : c, y ||= z, w ??= v, u **= 2;
+delete o.p; void 0; typeof x; ++x; x--; -x; ~x; !x; +x;
+new Foo<number>(1)?.bar?.[0]?.(2);
+new.target; import.meta.url; import("dyn"); super.x;
+a?.b!.c;
+label2: { }
+using res = getRes();
+export = something;
+"#,
+        ),
+        (
+            "b.tsx",
+            r#"const el = <div className="a" {...props} key={1} data-x='y' ns:attr="z" disabled>
+    text {expr} {/* comment */} {...spread}
+    <Child<number> a={<b />} />
+    <></>
+    <ns:tag />
+    <a.b.c>more</a.b.c>
+</div>;
+const g = <T,>(x: T) => x;
+"#,
+        ),
+        (
+            "c.js",
+            r#"/** @type {number} */
+var n = 1;
+/**
+ * @param {string} a desc
+ * @param {{ x: number }} [b]
+ * @returns {Promise<void>}
+ * @template T
+ * @typedef {Object} Td
+ * @property {string} p
+ * @callback Cb
+ * @see {@link Foo} and {@linkcode Bar} {@linkplain Baz}
+ * @deprecated
+ */
+function jsf(a, b) { return a; }
+/** @enum {string} */
+const En = { A: "a" };
+class JC { /** @private */ p = 1; #q; static s; }
+module.exports = { jsf };
+exports.x = 1;
+"#,
+        ),
+        (
+            "d.d.ts",
+            "declare const x: number;\nexport declare function f(): void;\nexport as namespace NS;\n",
+        ),
+        (
+            "e.ts",
+            "let s = '\\ud800'; let id\\u0061 = 1; let \u{e9} = 'é'; // non-ASCII\nconst bad = `\\x`;\n",
+        ),
+        ("f.ts", "class C { m( { } \nlet = ; }} ) => ;\nfunction (\n"),
+        // followups32: fields that the texts above leave out. A JS
+        // function's `@type` gives its `FullSignature`, which has no mask
+        // bit (parser/reparser.go:396), and an assignment declaration's
+        // `@type` gives its BinaryExpression a `Type` (:377).
+        (
+            "g.js",
+            r#"/** @type {(a: string, b?: number) => void} */
+function typed(a, b) {}
+/** @type {number} */
+exports.y = 1;
+/** @type {string} */
+module.exports.z = "z";
+"#,
+        ),
+        // A shorthand property with an initializer in a destructuring
+        // assignment, a definite assignment `!`, optional tuple members and
+        // two MissingDeclarations: decorators with no declaration
+        // (parser/parser.go:1188) and a decorated expression (:5790).
+        (
+            "h.ts",
+            "({ a = 1, b: [c] = [] } = o);\nlet x!: number;\ntype OptTup = [string?, number?];\n@dec;\nconst md = @dec 1;\n",
+        ),
+    ];
+
+    /// Encodes `text` as `file_name` with the node data walk and with the
+    /// visitor only, and asserts equal bytes. `freeable`: a freeable file
+    /// version with owned nodes (an API source file lease), else a static
+    /// publish. Both are published and bound, as the parse cache of the API
+    /// does (`project::acquire_bound`).
+    fn assert_same_encoding(file_name: &str, text: &str, freeable: bool) {
+        let options = SourceFileParseOptions {
+            file_name: file_name.to_string(),
+            path: tspath::Path(file_name.to_string()),
+            ..Default::default()
+        };
+        let script_kind = crate::frontend::core_ext::ensure_script_kind_from_file_name(file_name);
+        let file = {
+            let _scope = freeable.then(crate::ast::store::enter_owned_parse);
+            parse_source_file(
+                &options,
+                FileText::new(text.to_string(), freeable),
+                script_kind,
+            )
+        };
+        if freeable {
+            assert!(file.version.set(FileVersion::new(file.store)).is_ok());
+        }
+        let file = Rc::new(file);
+        crate::program::note_parsed_source_file(&file);
+        crate::program::publish_parsed_files("/");
+        crate::program::bind_file_outside_program(file.root);
+        match FileNodes::of(file.root.file_index()) {
+            Some(FileNodes::Pinned(_)) => assert!(freeable, "{file_name}: a freeable version"),
+            Some(FileNodes::Static(_)) => assert!(!freeable, "{file_name}: a static publish"),
+            None => panic!("{file_name}: the file is not published"),
+        }
+        let (walk, _) = encode_parsed_source_file(&file).expect("encode");
+        VISITOR_ONLY.with(|v| v.set(true));
+        let (visitor, _) = encode_parsed_source_file(&file).expect("encode");
+        VISITOR_ONLY.with(|v| v.set(false));
+        assert!(
+            walk == visitor,
+            "{file_name}: the node data walk and the visitor differ"
+        );
+        drop(file);
+        // The pins of this thread hold a freeable version until here.
+        crate::ast::release_file_version_pins();
+    }
+
+    #[test]
+    fn the_node_data_walk_encodes_as_the_visitor() {
+        for (i, (name, text)) in SAMPLES.iter().enumerate() {
+            assert_same_encoding(&format!("/apiperf2/static/{i}/{name}"), text, false);
+            assert_same_encoding(&format!("/apiperf2/freeable/{i}/{name}"), text, true);
+        }
+        // Not run by the test suite: set GOPORT_ENCODE_CORPUS to directories
+        // (`:` between them) to compare every .ts, .tsx, .js, .jsx, .mts and
+        // .cts file under them, outside node_modules.
+        let Ok(dirs) = std::env::var("GOPORT_ENCODE_CORPUS") else {
+            return;
+        };
+        let mut stack: Vec<std::path::PathBuf> =
+            dirs.split(':').map(std::path::PathBuf::from).collect();
+        let mut count = 0;
+        while let Some(dir) = stack.pop() {
+            let mut entries: Vec<_> = std::fs::read_dir(&dir)
+                .expect("read the corpus directory")
+                .map(|e| e.expect("a corpus entry").path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    if !path.ends_with("node_modules") {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                let name = path.to_string_lossy().to_string();
+                if ![".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"]
+                    .iter()
+                    .any(|e| name.ends_with(e))
+                {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                count += 1;
+                // A static publish is never freed: only small files.
+                if text.len() <= 16 * 1024 {
+                    assert_same_encoding(&format!("/apiperf2/c{count}/static{name}"), &text, false);
+                }
+                assert_same_encoding(&format!("/apiperf2/c{count}/freeable{name}"), &text, true);
+            }
+        }
+        eprintln!("compared {count} corpus files");
+    }
 }

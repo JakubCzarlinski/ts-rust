@@ -26,10 +26,44 @@ thread_local! {
     static OWN_SYMBOL_IDS: RefCell<OwnSymbolIds> = const { RefCell::new(OwnSymbolIds::new()) };
 }
 
+/// A symbol id as an id table keeps it: 0 for no id yet (Go ids start at
+/// 1), `BIG_ID` for an id of `BIG_ID` or more (in the table's `big` map),
+/// else the id.
+// PERF: 4 bytes per symbol. Each checker gives an id to most symbols that it
+// reads (Go `GetSymbolId` in `symbolArenaLinkStore`), up to 2 million of its
+// own on zod. Ids count per thread from 1, so a CLI run stays far below
+// `BIG_ID`.
+type IdCell = u32;
+const BIG_ID: IdCell = IdCell::MAX;
+
+/// The id in `cell`, assigned now when it has none. `big` keeps ids from
+/// `BIG_ID` on, by `place`.
+#[inline]
+fn cell_id<K: Eq + std::hash::Hash>(
+    cell: &mut IdCell,
+    big: &mut FxHashMap<K, u64>,
+    place: K,
+) -> u64 {
+    match *cell {
+        0 => {
+            let id = next_symbol_id();
+            match IdCell::try_from(id) {
+                Ok(small) if small != BIG_ID => *cell = small,
+                _ => {
+                    *cell = BIG_ID;
+                    big.insert(place, id);
+                }
+            }
+            id
+        }
+        BIG_ID => big[&place],
+        id => u64::from(id),
+    }
+}
+
 /// The ids of the binder lineage symbols on one thread, by lineage index, in
-/// chunks of the symbol chunk size of `SymbolArena` (`LINEAGE_ID_CHUNK`);
-/// 0 means no id yet (Go ids start at 1). A chunk is made at the first id
-/// in it.
+/// chunks of the symbol chunk size of `SymbolArena` (`LINEAGE_ID_CHUNK`),
+/// as `IdCell`s. A chunk is made at the first id in it.
 ///
 /// lsshells M3d: when `program::Lineage` frees the chunks of a dead file
 /// version (`free_lineage_symbol_ids`), each thread frees its id chunks of
@@ -39,7 +73,9 @@ thread_local! {
 #[derive(Clone, Debug, Default)]
 struct LineageIds {
     /// None: no id in this chunk yet, or a freed chunk (`freed`).
-    chunks: Vec<Option<Box<[u64; LINEAGE_ID_CHUNK]>>>,
+    chunks: Vec<Option<Box<[IdCell; LINEAGE_ID_CHUNK]>>>,
+    /// The ids from `BIG_ID` on, by lineage index.
+    big: FxHashMap<usize, u64>,
     /// The freed chunks, one bit each.
     freed: Vec<u64>,
     /// The entries of `FREED_LINEAGE` that this table has freed.
@@ -92,6 +128,7 @@ impl LineageIds {
     const fn new() -> Self {
         Self {
             chunks: Vec::new(),
+            big: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             freed: Vec::new(),
             seen: 0,
         }
@@ -103,11 +140,11 @@ impl LineageIds {
     #[inline]
     fn id(&mut self, index: usize) -> u64 {
         if let Some(Some(chunk)) = self.chunks.get_mut(index >> LINEAGE_ID_SHIFT) {
-            let id = &mut chunk[index & (LINEAGE_ID_CHUNK - 1)];
-            if *id == 0 {
-                *id = next_symbol_id();
-            }
-            return *id;
+            return cell_id(
+                &mut chunk[index & (LINEAGE_ID_CHUNK - 1)],
+                &mut self.big,
+                index,
+            );
         }
         self.id_in_new_chunk(index)
     }
@@ -131,9 +168,11 @@ impl LineageIds {
             self.chunks.resize_with(chunk + 1, || None);
         }
         let ids = self.chunks[chunk].insert(Box::new([0; LINEAGE_ID_CHUNK]));
-        let id = next_symbol_id();
-        ids[index & (LINEAGE_ID_CHUNK - 1)] = id;
-        id
+        cell_id(
+            &mut ids[index & (LINEAGE_ID_CHUNK - 1)],
+            &mut self.big,
+            index,
+        )
     }
 
     /// Frees the chunks of the lineage ranges freed since the last call.
@@ -182,10 +221,15 @@ fn freed_lineage_read(chunk: usize) -> ! {
 struct OwnSymbolIds {
     /// The arena whose ids are in `ids`, or 0.
     key: u32,
-    /// Dense, by place among the arena's own symbols; 0 means no id yet.
-    ids: Vec<u64>,
+    /// By place among the arena's own symbols (`SymbolIds::own_place`), as
+    /// `IdCell`s. The places are dense until a catch-up of the arena passes
+    /// its own tail. After that, each odd chunk that the lineage passed is a
+    /// gap of 256 places (1 KiB) here.
+    ids: Vec<IdCell>,
     /// The ids of the other arenas.
-    others: FxHashMap<u32, Vec<u64>>,
+    others: FxHashMap<u32, Vec<IdCell>>,
+    /// The ids from `BIG_ID` on, by arena and place.
+    big: FxHashMap<(u32, usize), u64>,
     /// The arenas whose ids stay after the arena drops
     /// (`keep_own_symbol_ids`).
     kept: Vec<u32>,
@@ -197,21 +241,45 @@ impl OwnSymbolIds {
             key: 0,
             ids: Vec::new(),
             others: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            big: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             kept: Vec::new(),
         }
     }
 
-    /// The ids of arena `key`.
-    fn ids_of(&mut self, key: u32) -> &mut Vec<u64> {
+    /// The id of the own symbol at `place` of arena `key`, assigned now when
+    /// it has none.
+    #[inline]
+    fn id(&mut self, key: u32, place: usize) -> u64 {
         if self.key != key {
-            let ids = self.others.remove(&key).unwrap_or_default();
-            let previous = std::mem::replace(&mut self.ids, ids);
-            if self.key != 0 {
-                self.others.insert(self.key, previous);
-            }
-            self.key = key;
+            self.switch_to(key);
         }
-        &mut self.ids
+        match self.ids.get_mut(place) {
+            Some(cell) => cell_id(cell, &mut self.big, (key, place)),
+            None => self.id_past_end(key, place),
+        }
+    }
+
+    /// `id` for a place past the end of `ids`: grows it to twice its length
+    /// or more (zero cells have no id), so a run of new symbols grows it
+    /// rarely.
+    #[cold]
+    #[inline(never)]
+    fn id_past_end(&mut self, key: u32, place: usize) -> u64 {
+        let len = (place + 1).max(self.ids.len() * 2).max(LINEAGE_ID_CHUNK);
+        self.ids.resize(len, 0);
+        cell_id(&mut self.ids[place], &mut self.big, (key, place))
+    }
+
+    /// Makes arena `key` the one in `ids`.
+    #[cold]
+    #[inline(never)]
+    fn switch_to(&mut self, key: u32) {
+        let ids = self.others.remove(&key).unwrap_or_default();
+        let previous = std::mem::replace(&mut self.ids, ids);
+        if self.key != 0 {
+            self.others.insert(self.key, previous);
+        }
+        self.key = key;
     }
 }
 
@@ -229,6 +297,9 @@ pub(crate) fn forget_own_symbol_ids(key: u32) {
             own.ids = Vec::new();
         } else {
             own.others.remove(&key);
+        }
+        if !own.big.is_empty() {
+            own.big.retain(|&(arena, _), _| arena != key);
         }
     });
 }
@@ -291,6 +362,13 @@ pub fn next_ids() -> (u64, u64) {
     )
 }
 
+/// Skips `count` symbol ids on this thread: the next id is `count` higher.
+/// A checker worker skips the ids that the other checkers of its pool gave
+/// as they were made (`program::new_pool_checker`).
+pub fn skip_symbol_ids(count: u64) {
+    NEXT_SYMBOL_ID.with(|next| next.set(next.get() + count));
+}
+
 /// Makes `seed` the id state of this thread.
 pub fn install_id_seed(seed: IdSeed) {
     NEXT_NODE_ID.with(|next| next.set(seed.next_node_id));
@@ -347,17 +425,6 @@ fn next_symbol_id() -> u64 {
     })
 }
 
-/// The id in `ids[index]`, assigned now when it has none.
-fn symbol_id_at(ids: &mut Vec<u64>, index: usize) -> u64 {
-    if index >= ids.len() {
-        ids.resize(index + 1, 0);
-    }
-    if ids[index] == 0 {
-        ids[index] = next_symbol_id();
-    }
-    ids[index]
-}
-
 // Go: ast/utilities.go:22 GetNodeId
 // PORT: Go `ast.NodeId` is a `uint64`; returned here as `u64`.
 pub fn get_node_id(node: Node) -> u64 {
@@ -390,7 +457,7 @@ pub fn get_symbol_id(symbols: &SymbolArena, symbol: SymbolId) -> u64 {
     if slot.key == 0 {
         SYMBOL_IDS.with(|ids| ids.borrow_mut().id(place))
     } else {
-        OWN_SYMBOL_IDS.with(|own| symbol_id_at(own.borrow_mut().ids_of(slot.key), place))
+        OWN_SYMBOL_IDS.with(|own| own.borrow_mut().id(slot.key, place))
     }
 }
 

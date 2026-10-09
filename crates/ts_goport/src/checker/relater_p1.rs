@@ -766,6 +766,10 @@ impl Checker {
             return false;
         }
         // PORT: Go keys by `ast.GetSymbolId`; `EnumRelationKey` holds symbol handles.
+        // The Go calls give the symbols their ids, so they are made too
+        // (`SymbolArenaLinks`).
+        get_symbol_id(&self.symbols, source_symbol);
+        get_symbol_id(&self.symbols, target_symbol);
         let key = EnumRelationKey {
             source_id: source_symbol,
             target_id: target_symbol,
@@ -1049,7 +1053,7 @@ impl Checker {
                 create_diagnostic_chain_from_error_chain(
                     rb.error_chain.as_deref(),
                     rb.error_node,
-                    &rb.related_info,
+                    rb.related_info.as_slice(),
                 )
             };
             // PORT: Go `reportDiagnostic` ignores a nil diagnostic.

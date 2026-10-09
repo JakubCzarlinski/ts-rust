@@ -435,9 +435,13 @@ pub struct ValueSymbolLinks {
     /// `value_declaration`), set on the first call for this symbol. It fits
     /// in the padding after the bool.
     pub optional_parameter: Tristate,
+    /// PORT: no Go counterpart. The symbol has its id: a read through
+    /// `SymbolArenaLinks` gave it (Go keys the store by `ast.GetSymbolId`),
+    /// so later reads skip `get_symbol_id`. It fits in the padding too.
+    pub has_id: bool,
 }
 
-// The memo byte must not grow the record.
+// The memo bytes must not grow the record.
 const _: () = assert!(std::mem::size_of::<ValueSymbolLinks>() == 28);
 
 // Additional links for mapped symbols
@@ -684,6 +688,8 @@ pub struct AssertionLinks {
 pub struct SourceFileLinks {
     pub type_checked: bool,
     pub unused_checked: bool,
+    /// Effect-TS/tsgo: the Effect rules ran on this file (see `check_source_file`).
+    pub effect_checked: bool,
     pub external_helpers_module: SymbolId,
     pub requested_external_emit_helpers: ExternalEmitHelpers,
     pub deferred_nodes: IndexSet<Node>,
@@ -2486,6 +2492,9 @@ pub struct ConditionalRoot {
     // PORT: Go nil map is `None`.
     pub instantiations: Option<InstantiationMap>,
     pub alias: Option<Rc<TypeAlias>>,
+    // PERF: not in Go. The answer of `is_distribution_dependent` once its
+    // first walk ends (`None` before), so a repeat call does not walk again.
+    pub distribution_dependent: Option<bool>,
 }
 
 // Go: checker/types.go:1269 ConditionalType

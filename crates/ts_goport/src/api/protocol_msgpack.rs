@@ -161,24 +161,29 @@ impl Protocol for MessagePackProtocol {
             method = id.string();
         }
 
-        let payload: Vec<u8>;
+        let json: Vec<u8>;
+        let payload: &[u8];
 
         // Check if result is raw binary (for efficient binary transport)
+        // PERF: (apiperf2) the bytes are written in place, as Go's
+        // `[]byte(raw)` does. A copy of an encoded source file was a
+        // 2 MB copy per createSourceFile answer of a 256 KB file.
         if let Some(raw) = result
             .as_deref()
             .and_then(|r| r.downcast_ref::<RawBinary>())
         {
-            payload = raw.0.clone();
+            payload = &raw.0;
         } else {
             // PORT: the text is in the port form; the connection gets its
             // Go bytes.
-            payload = match json_marshal(&result, &[]) {
+            json = match json_marshal(&result, &[]) {
                 Ok(payload) => crate::scanner_util::go_string_bytes(&payload).into_owned(),
                 Err(err) => return Err(errors::from_value(err)),
             };
+            payload = &json;
         }
 
-        self.write_tuple(MessageType::RESPONSE, &method, &payload)
+        self.write_tuple(MessageType::RESPONSE, &method, payload)
     }
 
     // Go: protocol_msgpack.go:223 WriteError

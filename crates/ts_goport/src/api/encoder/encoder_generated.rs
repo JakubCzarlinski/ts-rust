@@ -11,7 +11,14 @@ use crate::frontend::parser::ParsedSourceFile;
 
 // Go: api/encoder/encoder_generated.go:11 getNodeDataType
 pub fn get_node_data_type(node: Node) -> u32 {
-    match node.kind() {
+    node_data_type_of_kind(node.kind())
+}
+
+/// `get_node_data_type` of a node of kind `kind`.
+// PERF: (apiperf2) the encoder reads the kind of a node once.
+#[inline]
+pub fn node_data_type_of_kind(kind: SyntaxKind) -> u32 {
+    match kind {
         SyntaxKind::Identifier
         | SyntaxKind::PrivateIdentifier
         | SyntaxKind::JsxText
@@ -949,7 +956,15 @@ pub fn get_children_property_mask(node: Node) -> u8 {
 
 // Go: api/encoder/encoder_generated.go:541 getNodeCommonData
 pub fn get_node_common_data(node: Node) -> u32 {
-    match node.kind() {
+    node_common_data_of_kind(node, node.kind())
+}
+
+/// `get_node_common_data` of `node`, of kind `kind`.
+// PERF: (apiperf2) the encoder reads the kind of a node once. Inline: most
+// kinds give 0 with no node read.
+#[inline]
+pub fn node_common_data_of_kind(node: Node, kind: SyntaxKind) -> u32 {
+    match kind {
         SyntaxKind::Block => {
             // n := node.AsBlock()
             return (bool_to_byte(node.multi_line()) as u32) << 24;

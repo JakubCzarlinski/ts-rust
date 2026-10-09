@@ -98,7 +98,10 @@ impl Checker {
                 // SymbolTable.
                 let symbol = self.get_symbol_of_declaration(element);
                 let name = self.sym(symbol).name.clone();
-                let name_type = self.value_symbol_links.get(symbol).name_type;
+                let name_type = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, symbol)
+                    .name_type;
                 return self.get_type_of_property_of_contextual_type_ex(t, &name, name_type);
             }
             if has_dynamic_name(element) {
@@ -1267,7 +1270,10 @@ impl Checker {
     // Go: checker/checker.go:31147 isCircularMappedProperty
     pub fn is_circular_mapped_property(&mut self, symbol: SymbolId) -> bool {
         if self.sym(symbol).check_flags.intersects(CheckFlags::MAPPED) {
-            let resolved_type = self.value_symbol_links.get(symbol).resolved_type;
+            let resolved_type = self
+                .value_symbol_links
+                .get_by_id(&self.symbols, symbol)
+                .resolved_type;
             return resolved_type.is_nil()
                 && self.find_resolution_cycle_start_index(
                     TypeSystemEntity::Symbol(symbol),
@@ -1426,10 +1432,10 @@ impl Checker {
                 } else if is_property_assignment(p) {
                     let name = self.sym(symbol).name.clone();
                     self.is_possibly_discriminant_value(p.initializer())
-                        && self.is_discriminant_property(contextual_type, &name)
+                        && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
                 } else if is_shorthand_property_assignment(p) {
                     let name = self.sym(symbol).name.clone();
-                    self.is_discriminant_property(contextual_type, &name)
+                    self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
                 } else {
                     false
                 };
@@ -1443,7 +1449,7 @@ impl Checker {
                 let name = self.sym(s).name.clone();
                 if self.sym(s).flags.intersects(SymbolFlags::OPTIONAL)
                     && self.symbols.get(node_members, &name).is_nil()
-                    && self.is_discriminant_property(contextual_type, &name)
+                    && self.is_discriminant_property_key(contextual_type, TableKey::Name(&name))
                 {
                     discriminant_members.push(s);
                 }

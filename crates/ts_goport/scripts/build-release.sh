@@ -96,6 +96,20 @@
 #     layout.
 #   - Sessions in PGO and BOLT at full weight or 1/4: zod and effect check
 #     lost 1.1 to 2.2%.
+# Measured on R179 source (pgotrain2, target/continuation-r97-goport/pgotrain2):
+# the effect project trained with the plugin (as before), without it, and both
+# ways (as now), two release builds each, every side in one run: tsgo -p on the
+# gate projects (effect with and without the plugin), T3 Code (5 workspaces,
+# with and without the plugin), eslint-plugin-svelte and huggingface.js; 2 runs
+# on mini-743d, 2 on alvin. Output is byte-equal.
+#   - Both ways, against the plugin only: runs without the plugin 0.2 to 1.0%
+#     faster (geometric mean of the cells), runs with it 0.4 to 0.8% faster
+#     (one alvin run: 1.1% slower, within its noise), peak RSS the same
+#     (query +0.5 to +0.7 MiB in 2 of 3 runs). BOLT hot text +6% (3.8 to
+#     4.0 MiB).
+#   - Without the plugin only: runs with the plugin 1.1 to 2.2% slower (effect
+#     check 2 to 4%, T3 Code 1 to 3%), runs without it -0.6 to +2.0%, peak
+#     RSS 0.3% less (query -0.5 to -1.1 MiB).
 #
 # Environment:
 #   RUSTUP_TOOLCHAIN  default 1.95.0. Its LLVM 22 matches the system
@@ -428,6 +442,41 @@ declare -A projects=(
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# The effect project trains twice, in PGO and BOLT (CLI runs and editor
+# sessions): as the input, whose tsconfig.base.json lists the
+# @effect/language-service plugin, so the Effect rules run; and as effectnp,
+# without the plugin entry, as most projects are (pgotrain2, see the header).
+# effect_np <dir> makes <dir> an inputs dir (like $P, with only the effect
+# project) for effectnp. A child config cannot remove the plugin (the Effect
+# options merge across extends), so <dir>/effect/source/tsconfig.base.json is
+# a copy of the input's without the "plugins" lines (a trailing comma stays;
+# tsconfig allows it). Every other entry links to the input, and the paths stay
+# under <dir>, so the config finds the same files (${configDir}, type roots,
+# node_modules) and the editor sessions open them there.
+effect_np() {
+  local np=$1/effect/source src=$P/effect/source e
+  mkdir -p "$np/packages/effect"
+  for e in "$src"/* "$src"/.[!.]*; do
+    [[ -e $e ]] || continue
+    case ${e##*/} in packages | tsconfig.base.json) ;; *) ln -s "$e" "$np/" ;; esac
+  done
+  for e in "$src"/packages/*; do
+    [[ ${e##*/} == effect ]] || ln -s "$e" "$np/packages/"
+  done
+  for e in "$src"/packages/effect/* "$src"/packages/effect/.[!.]*; do
+    [[ -e $e ]] || continue
+    ln -s "$e" "$np/packages/effect/"
+  done
+  awk '/"plugins": \[/ { skip = 1 } !skip { print } skip && /^    \}\]/ { skip = 0 }' \
+    "$src/tsconfig.base.json" > "$np/tsconfig.base.json"
+  if grep -q language-service "$np/tsconfig.base.json" || ! grep -q '"jsx"' "$np/tsconfig.base.json"; then
+    echo "error: cannot drop the plugin entry of $src/tsconfig.base.json (its format changed?)" >&2
+    exit 1
+  fi
+}
+effect_np "$tmp/np"
+projects[effectnp]="$tmp/np/effect/source/packages/effect/tsconfig.json"
+
 # 1. Instrumented build. Training runs only these three bins; the other two
 # share their code, so they use the same profile.
 profiles="$out/profiles"
@@ -449,7 +498,7 @@ train() {
     echo "training run killed (exit $rc): $*" >&2
   fi
 }
-for name in query hono zod effect elysia; do
+for name in query hono zod effect effectnp elysia; do
   train "$gen/goport" -p "${projects[$name]}"
   train "$gen/tsgo" -p "${projects[$name]}" --noEmit --tsBuildInfoFile "$tmp/$name.tsbuildinfo"
 done
@@ -466,7 +515,7 @@ for dir in "$cases"/*/; do
   fi
 done
 nprof=$(find "$profiles" -name '*.profraw' | wc -l)
-echo "trained on 5 projects and $n corpus cases, $nprof profraw files"
+echo "trained on 5 projects (effect with and without the plugin) and $n corpus cases, $nprof profraw files"
 if ((killed > 0)); then
   echo "error: $killed PGO training runs were killed by a signal (see above)" >&2
   exit 1
@@ -569,7 +618,7 @@ if [[ $static == 1 && $libc == gnu ]]; then
   bolt_opts+=("-skip-funcs=read_encoded_value_with_base.*,linear_search_fdes.*,fde_single_encoding_extract.*,fde_mixed_encoding_extract.*")
 fi
 bolt_dir="$out/bolt"
-declare -A reps=([query]=12 [hono]=6 [zod]=4 [effect]=3) # about 5 s of work per recording
+declare -A reps=([query]=12 [hono]=6 [zod]=4 [effect]=3 [effectnp]=3) # about 5 s of work per recording
 
 # rec <name> <reps> <cmd...>: one perf recording of <reps> runs, each without
 # old .tsbuildinfo or emit output in $tmp. freq (default BOLT_PERF_FREQ) sets
@@ -583,26 +632,38 @@ rec() {
   [[ -s "$bolt_dir/data/$name.data" ]] || { echo "error: no perf data for $name" >&2; exit 1; }
 }
 
+# lsp_rec <name> <bin> <inputs-dir> <session>...: one recording of editor
+# sessions (lsp-train.py) at the lower sample frequency.
+lsp_rec() {
+  local name=$1 b=$2
+  shift 2
+  freq=${BOLT_LSP_PERF_FREQ:-2500} rec "$name" 1 python3 "$script_dir/lsp-train.py" "$b" "$@"
+  grep -qx 'lsp-train: ok' "$bolt_dir/data/$name.out" \
+    || { tail -5 "$bolt_dir/data/$name.out" >&2; echo "error: the editor sessions of the BOLT training failed" >&2; exit 1; }
+}
+
 # bolt_train <bin> <path>: the training runs of one bin.
 bolt_train() {
   local b=$2 name src dst e
   case $1 in
     tsgo)
-      for name in query hono zod effect; do
+      for name in query hono zod effect effectnp; do
         rec "tsgo-$name" "${reps[$name]}" "$b" -p "${projects[$name]}" --noEmit --pretty false --tsBuildInfoFile "$tmp/$name.tsbuildinfo"
       done
       for name in query hono; do
         rec "tsgo-emit-$name" "${reps[$name]}" "$b" -p "${projects[$name]}" --pretty false --outDir "$tmp/out-$name" --tsBuildInfoFile "$tmp/emit-$name.tsbuildinfo"
       done
-      # The editor sessions, in one recording at a lower sample frequency.
+      # The editor sessions, at a lower sample frequency. The effect sessions
+      # run again without the plugin, in a second recording (tsgo-lsp-np).
       if [[ -n $lsp_sessions ]]; then
+        local lsp_np=() s
+        for s in $lsp_sessions; do [[ ${s%%:*} != effect ]] || lsp_np+=("$s"); done
         # shellcheck disable=SC2086 # one argument per session
-        freq=${BOLT_LSP_PERF_FREQ:-2500} rec tsgo-lsp 1 python3 "$script_dir/lsp-train.py" "$b" "$P" $lsp_sessions
-        grep -qx 'lsp-train: ok' "$bolt_dir/data/tsgo-lsp.out" \
-          || { tail -5 "$bolt_dir/data/tsgo-lsp.out" >&2; echo "error: the editor sessions of the BOLT training failed" >&2; exit 1; }
+        lsp_rec tsgo-lsp "$b" "$P" $lsp_sessions
+        if ((${#lsp_np[@]})); then lsp_rec tsgo-lsp-np "$b" "$tmp/np" "${lsp_np[@]}"; fi
       fi ;;
     goport)
-      for name in query hono zod effect; do rec "goport-$name" "${reps[$name]}" "$b" -p "${projects[$name]}"; done ;;
+      for name in query hono zod effect effectnp; do rec "goport-$name" "${reps[$name]}" "$b" -p "${projects[$name]}"; done ;;
     goport_emit)
       for name in query hono; do rec "goport_emit-$name" "${reps[$name]}" "$b" -p "${projects[$name]}" --outDir "$tmp/out-$name"; done ;;
     goport_typesyms)
@@ -725,7 +786,7 @@ done
 {
   echo "source: $(git -C "$repo" rev-parse HEAD)$(git -C "$repo" diff --quiet HEAD -- crates Cargo.toml Cargo.lock ':(exclude,glob)crates/*/scripts/**' || echo ' (dirty)')"
   echo "rustc: $(rustc -V), target $target, cargo profile goport"
-  echo "pgo: $merged, trained on 5 projects and $n corpus cases"
+  echo "pgo: $merged, trained on 5 projects (effect with and without the plugin) and $n corpus cases"
   echo "pie: $pie"
   if [[ $libc == musl ]]; then
     echo "libc: static musl (rustc self-contained)"
@@ -742,7 +803,7 @@ done
     echo "bolt: $(llvm-bolt --version | grep -m1 'LLVM version' | xargs), ${bolt_opts[*]}"
     echo "bolt perf: -F ${BOLT_PERF_FREQ:-20000}, kernel.perf_event_max_sample_rate $(cat /proc/sys/kernel/perf_event_max_sample_rate 2> /dev/null || echo unknown) at the end"
     if [[ -n $lsp_sessions ]]; then
-      echo "bolt editor sessions (tsgo, ${BOLT_LSP_PERF_FREQ:-2500} Hz): $(sed -n 's/^lsp-train: \(.*\): [0-9]* of .*/\1/p' "$bolt_dir/data/tsgo-lsp.out" | paste -sd';' | sed 's/;/; /g'); ls_edit_bench.py sha256 $(sha256sum "$repo/scripts/goport/ls_edit_bench.py" | cut -c1-12)"
+      echo "bolt editor sessions (tsgo, ${BOLT_LSP_PERF_FREQ:-2500} Hz): $({ sed -n 's/^lsp-train: \(.*\): [0-9]* of .*/\1/p' "$bolt_dir/data/tsgo-lsp.out"; sed -n 's/^lsp-train: \(.*\): [0-9]* of .*/\1 (no plugin)/p' "$bolt_dir/data/tsgo-lsp-np.out"; } 2> /dev/null | paste -sd';' | sed 's/;/; /g'); ls_edit_bench.py sha256 $(sha256sum "$repo/scripts/goport/ls_edit_bench.py" | cut -c1-12)"
     fi
   else
     echo "bolt: off"

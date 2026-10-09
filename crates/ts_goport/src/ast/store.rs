@@ -1516,9 +1516,11 @@ fn block_resolve_slot(b: &FileBlock, file: usize, index: usize) -> Node {
 
 /// The store and `GoFile` of a freeable file version (lsshells M3b), owned
 /// by its `FileVersion` (`ast::file_version`). The publish moves them here
-/// instead of leaking them; they are freed with the version. The block of
-/// its id is its node shell (`node_shell`), whose `BlockFile` has no store
-/// and no `GoFile`.
+/// instead of leaking them. They are freed when the version dies, or after
+/// it on a free thread when a pin release of the stdio API or the build
+/// takes them out of the dying version (`FileVersion::take_data`). The
+/// block of its id is its node shell (`node_shell`), whose `BlockFile` has
+/// no store and no `GoFile`.
 pub(crate) struct VersionStore {
     /// The store, without its node columns, which are in the node shell,
     /// and without the columns that only cache node data (`node_shell`). A
@@ -1542,7 +1544,8 @@ impl VersionStore {
 
 impl Drop for VersionStore {
     // The version is dead: `FileVersion::drop` put its id in the dead ids
-    // and took it out of the registry before its fields drop.
+    // and took it out of the registry before its fields drop, or before a
+    // free thread drops this store (`FileVersion::take_data`).
     fn drop(&mut self) {
         give_back_pool_block(std::mem::take(&mut self.block));
     }
@@ -1579,7 +1582,10 @@ impl PoolBlock {
 /// reuses the 40 bytes per node (a record and its kids, 24 + 16) of an
 /// older version of the file, where each shell leaked them before. The
 /// blocks never go back to the allocator.
-/// - A version gives its block back when it dies (`VersionStore`). The
+/// - A version's store gives its block back when it drops (`VersionStore`):
+///   when the version dies, or a little after on a free thread when a pin
+///   release or the build takes the store out of the dying version
+///   (`FileVersion::take_data`). The pin epoch is read at that drop. The
 ///   block waits in `quarantine` until `QUARANTINE_RELEASES` more pin
 ///   releases (`file_version::pin_epoch`) have happened, then goes to the
 ///   free list of its size class (`pool_class`). A pin release is a
@@ -1790,6 +1796,88 @@ fn published_version(file: usize) -> Option<super::file_version::VersionPin> {
         return None;
     }
     super::file_version::pinned_file_version(file).filter(|version| version.published().is_some())
+}
+
+/// The node data of the nodes of one published store file, for a walk
+/// that reads every node of that file (the API encoder, `encode_tree`).
+/// Not in Go (perf, apiperf2): a read (`FileNodeReader::data`) is a few
+/// loads, with no file lookup and no pin per node (`with_scoped_store_node`
+/// makes both for a node of a freeable file version that is not hot).
+pub enum FileNodes {
+    /// The node column of a static publish (`FileBlock::node_column`).
+    Static(&'static [Option<&'static NodeData>]),
+    /// A freeable file version (lsshells M3c), pinned while this value
+    /// lives.
+    Pinned(super::file_version::VersionPin),
+}
+
+impl FileNodes {
+    /// The nodes of published store file `file`. `None` for a synthetic
+    /// id and for a store that is not published.
+    #[must_use]
+    pub fn of(file: usize) -> Option<Self> {
+        if let Some(nodes) = file_block(file).and_then(FileBlock::node_column) {
+            return Some(Self::Static(nodes));
+        }
+        published_version(file).map(Self::Pinned)
+    }
+
+    /// The reader of the nodes of file `file`, the file of `FileNodes::of`.
+    #[must_use]
+    pub fn reader(&self, file: usize) -> FileNodeReader<'_> {
+        // The records of a freeable version are in its node shell, which
+        // lives while the version is pinned.
+        let block = file_block(file).expect("a published store has a block");
+        check_block_owner(block, file);
+        let column = match self {
+            Self::Static(nodes) => NodeColumn::Static(nodes),
+            Self::Pinned(version) => NodeColumn::Store(
+                &version
+                    .published()
+                    .expect("a pinned file version is published")
+                    .store,
+            ),
+        };
+        FileNodeReader { block, column }
+    }
+}
+
+/// The node reads of a `FileNodes`.
+#[derive(Clone, Copy)]
+pub struct FileNodeReader<'a> {
+    block: &'a FileBlock,
+    column: NodeColumn<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum NodeColumn<'a> {
+    Static(&'static [Option<&'static NodeData>]),
+    Store(&'a FileStore),
+}
+
+impl<'a> FileNodeReader<'a> {
+    /// The node data of `n`, a node of this file (`Node::file_index`):
+    /// what `with_ast_data` reads for it.
+    #[inline]
+    #[must_use]
+    pub fn data(self, n: Node) -> &'a NodeData {
+        let index = slot_index(n);
+        match self.column {
+            NodeColumn::Static(nodes) => slot_node(nodes[index]),
+            NodeColumn::Store(store) => store.slot_ast_node(index),
+        }
+    }
+
+    /// Go `node.Kind`, `node.Loc` and `node.Flags` of `n`, a node of this
+    /// file: what `Node::kind`, `Node::loc` and `Node::flags` read, with one
+    /// record read.
+    #[inline]
+    #[must_use]
+    pub fn header(self, n: Node) -> (SyntaxKind, TextRange, NodeFlags) {
+        let index = slot_index(n);
+        let record = &self.block.records[index];
+        (self.block.kinds[index], record.loc(), record.flags())
+    }
 }
 
 /// The handle of slot `index` in store `file`. Does not resolve aliases.
@@ -2244,8 +2332,9 @@ pub fn owned_node_count() -> usize {
 
 /// The node datas, pending lists and parse lists of a freeable parse
 /// (lsshells M3c, `enter_freeable_parse`), owned by its store and so, after
-/// the publish, by its `FileVersion`: they are freed with the version. A
-/// static parse keeps them in the leaked AST arena (`AST_ARENA`).
+/// the publish, by its `FileVersion`: they are freed with its store, when
+/// the version dies or after it on a free thread (`VersionStore`). A static
+/// parse keeps them in the leaked AST arena (`AST_ARENA`).
 ///
 /// A node slot names its data by cell (`cell_of`). Its `FileStore::nodes`
 /// entry is the marker data (`owned_marker`), so the node column keeps its

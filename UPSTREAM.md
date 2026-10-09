@@ -1,18 +1,32 @@
 # Upstream provenance
 
-The port tracks [`microsoft/typescript-go`](https://github.com/microsoft/typescript-go).
+The port tracks the Go code of [`microsoft/TypeScript`](https://github.com/microsoft/TypeScript)
+(under `tsc/`, TypeScript 7.1.0-dev).
 
-- Commit: `dc37b5249ab60e2bbce936f71b883e6c8136167e`
-- Commit date: 2026-06-19
-- Local exploration cache: `~/.explore/repos/microsoft__typescript-go`
+- Commit: [`673a5f17d713`](https://github.com/microsoft/TypeScript/commit/673a5f17d713bdc8c7185f18a9c11e3c4ac5d781)
+- Commit date: 2026-09-29
+- Closest npm build: `typescript@7.1.0-dev.20260929.1`
+- Oracle: `tsc/cmd/tsc` built with Go 1.27.1 (`~/.local/bin/tsgo-oracle-673a5f17d713`)
+
+`tsc-rs` output is meant to be byte-equal to `tsc` at this commit. When you compare, use the
+pinned build, not `typescript@7.0.x` or `@typescript/native-preview` (its last build is from
+July). A difference that the pinned build also shows is upstream behavior: it changes when the
+port moves to a newer pin after upstream fixes it.
+
+## Earlier pins
+
+Before 2026-09-29 the port tracked
+[`microsoft/typescript-go`](https://github.com/microsoft/typescript-go) (now archived):
+`dc37b5249ab60e2bbce936f71b883e6c8136167e` (2026-06-19), then pin B `16c25522e123`. The tooling
+below still names `dc37b5249ab6` as the default pin in `UPSTREAM.json`; development runs select
+the current pin with `GOPORT_PIN=673a5f17d713`.
 
 Generated Rust inputs under `spec/` record their own source paths and must be
 updated intentionally. Normal Cargo builds must not depend on a Go or Node
 installation. Differential and baseline maintenance commands may use an
 external upstream checkout and compiler oracle.
 
-The development oracle used for differential checks is built from the pinned
-checkout with Go 1.26.4:
+The default development oracle (`dc37b5249ab6`) is built from that checkout with Go 1.26.4:
 
 ```sh
 CGO_ENABLED=0 go build -o ~/.local/bin/tsgo-oracle ./cmd/tsgo
@@ -39,6 +53,25 @@ mount namespace where the default oracle, Go checkout and caches show the pin's 
 
 The `tests/go_baselines` harness reads `TS_GO_REPO`; under `pin.py exec` its default path is
 the pin checkout.
+
+## Pin bump checks
+
+Some port-only shortcuts are exact only while some Go code stays as it is. At each pin bump, check
+each one against Go at the new pin (`drift.py` lists the Go changes), and fix or drop the shortcut
+when the condition no longer holds.
+
+- `crates/ts_goport/src/flags.rs` holds Go's integer flag and enum consts, kept in step by hand.
+  Compare it with `internal/{ast,binder,checker,core}` at the new pin.
+- `Checker::is_distribution_dependent` (`checker/relater_p5.rs`) keeps the answer of its first walk
+  on the conditional root (chkperf3). That is exact only while the walk
+  (`isTypeParameterPossiblyReferenced`, checker.go:22823 at `673a5f17d713`) reads only state that
+  its first read fixes: the AST; `resolvedSymbol` of TypeReference nodes, whose one writer is
+  `getSymbolFromTypeReference` (checker.go:23538; TypeScript's JS `getTypeFromTypeReference` also
+  writes it); the write-once `getResolvedSymbol` links (checker.go:14132); and the declarations of a
+  resolved value symbol (check-time `mergeSymbol` clones a non-transient target before it appends,
+  checker.go:14387-14412). Check: `grep -n 'resolvedSymbol = ' internal/checker/*.go` and the walk
+  itself. If a new writer of `resolvedSymbol` can reach a TypeReference node (or the first
+  identifier of a `typeof` query), or the walk reads other state, drop the memo or clear it there.
 
 ## Pins in microsoft/TypeScript
 

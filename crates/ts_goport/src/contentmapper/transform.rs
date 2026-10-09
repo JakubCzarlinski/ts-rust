@@ -37,20 +37,57 @@ pub fn transform_and_parse(
     mapper: &Rc<Mapper>,
     project: &dyn Project,
 ) -> std::result::Result<SourceFiles, GoError> {
+    transform_and_parse_prefetched(parse_options, content, mapper, project, None)
+}
+
+/// What a parse worker made for a content-mapped file
+/// (`files_parser::prefetch_mapped`): the result of its transform request,
+/// as `Project::transform` returns it, and its parse of the virtual text
+/// when the loader can use that parse.
+// PORT: not in Go, where the parse goroutines transform (tsgo#4712).
+pub struct PrefetchedTransform {
+    pub result: std::result::Result<Result, GoError>,
+    pub parse: Option<ParsedSourceFile>,
+}
+
+/// `transform_and_parse` with the transform that a parse worker sent
+/// (`prefetched`) in place of the call of `project.transform`, so a file
+/// gets one transform request, as in Go.
+// PORT: not in Go (see `PrefetchedTransform`).
+pub fn transform_and_parse_prefetched(
+    parse_options: &SourceFileParseOptions,
+    content: &str,
+    mapper: &Rc<Mapper>,
+    project: &dyn Project,
+    prefetched: Option<PrefetchedTransform>,
+) -> std::result::Result<SourceFiles, GoError> {
     let transform_identity = match project.identity(mapper) {
         Ok(transform_identity) => transform_identity,
         Err(err) => {
             return Err(new_transform_error(TransformErrorKind::PROJECT, Some(err)).to_go_error());
         }
     };
-    let result = project.transform(
+    let (result, parse) = match prefetched {
+        Some(PrefetchedTransform { result, parse }) => (result?, parse),
+        None => (
+            project.transform(
+                mapper,
+                Request {
+                    file_name: parse_options.file_name.clone(),
+                    content: content.to_string(),
+                },
+            )?,
+            None,
+        ),
+    };
+    parse_result_with(
+        parse_options,
+        content,
         mapper,
-        Request {
-            file_name: parse_options.file_name.clone(),
-            content: content.to_string(),
-        },
-    )?;
-    parse_result(parse_options, content, mapper, &transform_identity, result)
+        &transform_identity,
+        result,
+        parse,
+    )
 }
 
 // Go: contentmapper/transform.go:47 ParseResult
@@ -61,6 +98,39 @@ pub fn parse_result(
     mapper: &Mapper,
     transform_identity: &str,
     result: Result,
+) -> std::result::Result<SourceFiles, GoError> {
+    parse_result_with(
+        parse_options,
+        content,
+        mapper,
+        transform_identity,
+        result,
+        None,
+    )
+}
+
+/// Whether `parse_result` parses the canonical output of `result` for a
+/// file whose text is `content`. Go `ParseResult` checks the mappings, then
+/// the virtual extension, and parses only after both pass. A parse worker
+/// parses the virtual text only then (`files_parser::prefetch_mapped`), so
+/// no parse runs before those checks, as in Go.
+// PORT: not in Go (see `PrefetchedTransform`).
+pub(crate) fn parses_canonical_output(result: &Result, content: &str) -> bool {
+    result.mappings.as_ref().is_some_and(|mappings| {
+        spanmap::SpanMap::validate(Some(&**mappings), &result.text, content).is_none()
+    }) && is_supported_virtual_extension(&result.virtual_extension)
+}
+
+/// `parse_result` that takes `parse` as the parse of the virtual text when
+/// a parse worker made it (`PrefetchedTransform`).
+// PORT: not in Go (see `PrefetchedTransform`).
+fn parse_result_with(
+    parse_options: &SourceFileParseOptions,
+    content: &str,
+    mapper: &Mapper,
+    transform_identity: &str,
+    result: Result,
+    parse: Option<ParsedSourceFile>,
 ) -> std::result::Result<SourceFiles, GoError> {
     let Some(mappings) = result.mappings.clone() else {
         return Err(new_transform_error(TransformErrorKind::MAPPINGS, None).to_go_error());
@@ -81,12 +151,17 @@ pub fn parse_result(
     // PORT: a content-mapped parse never gets a `FileVersion`, so its store
     // is published static and its text is leaked, as the compiler host
     // leaks a static file text (`FileText::new`).
-    let text: &'static str = Box::leak(result.text.clone().into_boxed_str());
-    let mut source_file = parse_source_file(
-        &parse_options,
-        text,
-        get_script_kind_from_file_name(&virtual_file_name),
-    );
+    let mut source_file = match parse {
+        Some(parse) => parse,
+        None => {
+            let text: &'static str = Box::leak(result.text.clone().into_boxed_str());
+            parse_source_file(
+                &parse_options,
+                text,
+                get_script_kind_from_file_name(&virtual_file_name),
+            )
+        }
+    };
     if !result.diagnostics.is_empty() {
         // The runner produces diagnostics without a source file (it doesn't have one yet); associate
         // them with the file now so they are reported against it.
@@ -169,7 +244,7 @@ pub fn parse_result(
 }
 
 // Go: contentmapper/transform.go:123 isModuleVirtualExtension
-fn is_module_virtual_extension(extension: &str) -> bool {
+pub(crate) fn is_module_virtual_extension(extension: &str) -> bool {
     [
         tspath::EXTENSION_MTS,
         tspath::EXTENSION_CTS,
@@ -206,6 +281,42 @@ mod tests {
             file_name: "/component.astro".to_string(),
             path: Path("/component.astro".to_string()),
             ..Default::default()
+        }
+    }
+
+    // PORT: no Go counterpart (cmpar1). A parse worker parses the virtual
+    // text only for a result that `parse_result` parses: Go checks the
+    // mappings, then the virtual extension, before its parse
+    // (transform.go:48-58).
+    #[test]
+    fn a_worker_parses_only_what_parse_result_parses() {
+        let text = "export const a = 1;";
+        let verbatim = |end: usize| {
+            Some(spanmap::new(&[spanmap::Segment {
+                virtual_end: end as i32,
+                original_end: text.len() as i32,
+                kind: spanmap::Kind::VERBATIM,
+                ..Default::default()
+            }]))
+        };
+        let result = |mappings: Option<spanmap::SpanMap>, extension: &str| Result {
+            text: text.to_string(),
+            virtual_extension: extension.to_string(),
+            mappings: mappings.map(Arc::new),
+            ..Default::default()
+        };
+        let cases = [
+            (result(verbatim(text.len()), ".ts"), true),
+            (result(Some(spanmap::new(&[])), ".mts"), true),
+            // The mapping ends past the virtual text.
+            (result(verbatim(text.len() + 1), ".ts"), false),
+            (result(None, ".ts"), false),
+            (result(verbatim(text.len()), ".vue"), false),
+        ];
+        for (i, (result, parses)) in cases.into_iter().enumerate() {
+            assert_eq!(parses_canonical_output(&result, text), parses, "case {i}");
+            let parsed = parse_result(&astro_parse_options(), text, &Mapper::default(), "", result);
+            assert_eq!(parsed.is_ok(), parses, "case {i}");
         }
     }
 

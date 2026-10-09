@@ -38,8 +38,15 @@ pub fn new_string_table(file_text: impl Into<FileText>, string_count: usize) -> 
         Cow::Borrowed(_) => None,
         Cow::Owned(bytes) => Some(bytes),
     };
+    // PERF: (apiperf2) a text with no marker has no unit: one scan of
+    // the file text, not two.
+    let units = if go_file_bytes.is_some() {
+        port_units(&file_text)
+    } else {
+        Vec::new()
+    };
     StringTable {
-        units: port_units(&file_text),
+        units,
         file_text,
         go_file_bytes,
         other_strings: builder,
@@ -63,6 +70,31 @@ fn port_units(text: &str) -> Vec<(usize, usize)> {
         units.push((after, extra));
     }
     units
+}
+
+/// The start of `text` in `file` when Go `stringTable.add` finds it there
+/// for a node of kind `kind` at `pos`..`end` (Go offsets): the slice that
+/// ends at `end` (before the closing quote of a string literal or template
+/// tail). `None` when it does not.
+#[inline]
+fn file_slice_start(
+    file: &[u8],
+    text: &[u8],
+    kind: SyntaxKind,
+    pos: i64,
+    end: i64,
+) -> Option<usize> {
+    if end - pos <= 0 || end > file.len() as i64 {
+        return None;
+    }
+    let end_offset = i64::from(
+        kind == SyntaxKind::StringLiteral
+            || kind == SyntaxKind::TemplateTail
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral,
+    );
+    let end = usize::try_from(end - end_offset).ok()?;
+    let start = end.checked_sub(text.len())?;
+    (file[start..end] == *text).then_some(start)
 }
 
 impl StringTable {
@@ -94,6 +126,19 @@ impl StringTable {
         if kind == SyntaxKind::SourceFile {
             self.offsets.push(pos as u32);
             self.offsets.push(end as u32);
+            return index;
+        }
+        // PERF: (apiperf2) a file text with no `GO_STRING_MARKER` has its
+        // own bytes as Go bytes (`go_file_bytes` is `None`). A text equal to
+        // its slice of that file then has no marker either, so its Go bytes
+        // are its bytes and the match below finds the same slice: no
+        // marker scan (`go_string_bytes`) for it.
+        if self.go_file_bytes.is_none()
+            && let Some(start) =
+                file_slice_start(self.file_text.as_bytes(), text.as_bytes(), kind, pos, end)
+        {
+            self.offsets.push(start as u32);
+            self.offsets.push((start + text.len()) as u32);
             return index;
         }
         let text = go_string_bytes(text);

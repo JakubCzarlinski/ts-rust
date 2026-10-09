@@ -1356,8 +1356,11 @@ mod tests {
     // unknown (`read_dir_entries_typed`): the entries and their types equal
     // those of the `d_type` read (a directory, a file, a link to the
     // directory, a FIFO), an entry removed before its lstat is skipped, and
-    // a directory with no search permission is an error. The last part
-    // skips when the lstat still works there (root, CAP_DAC_OVERRIDE).
+    // a directory with no search permission is an error. A probe lstat
+    // there picks what the last part expects: the error when the probe
+    // fails (a user), else x.ts as a file (root, CAP_DAC_OVERRIDE). The
+    // probe, not the read's result, picks it, so a read that turns the
+    // error into an entry fails.
     #[cfg(target_os = "linux")]
     #[test]
     fn read_dir_lstats_entries_of_unknown_type() {
@@ -1400,11 +1403,11 @@ mod tests {
         std::fs::write(locked.join("x.ts"), "x").unwrap();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
         let locked_name = locked.to_str().unwrap();
+        let probe = std::fs::symlink_metadata(locked.join("x.ts")).map(|_| ());
         let locked_d_type = read_dir_entries(locked_name, &Rc::from(locked_name)).map(|e| e.len());
         let locked_lstat = read_dir_entries_typed(locked_name, &Rc::from(locked_name), |_, _| {
             FileType::Unknown
-        })
-        .map(|e| e.len());
+        });
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -1422,14 +1425,25 @@ mod tests {
         want_lstat.retain(|(name, _)| name != "gone.ts");
         assert_eq!(from_lstat, want_lstat);
         assert_eq!(locked_d_type.ok(), Some(1));
-        match locked_lstat {
-            // An lstat that works there (root) lists x.ts; an lstat error
-            // that the read skipped would list nothing.
-            Ok(n) => {
-                assert_eq!(n, 1, "an lstat that works there lists x.ts");
-                eprintln!("skipped: the lstat works in a directory with no search permission")
+        match probe {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "the probe");
+                assert_eq!(
+                    locked_lstat.map(|_| ()).map_err(|err| err.kind()),
+                    Err(io::ErrorKind::PermissionDenied),
+                    "the read fails as the lstat does"
+                );
             }
-            Err(err) => assert_eq!(err.kind(), io::ErrorKind::PermissionDenied),
+            Ok(()) => {
+                assert_eq!(
+                    names(locked_lstat),
+                    [("x.ts".to_string(), FileMode(0))],
+                    "an lstat that works there lists x.ts"
+                );
+                eprintln!(
+                    "skipped the error part: the lstat works in a directory with no search permission"
+                );
+            }
         }
     }
 }

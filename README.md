@@ -13,8 +13,9 @@ It [cost over $420,000](#how-did-this-go) in tokens to do it, but you could prob
 
 ## Warnings
 
-**This is an early release.** It is not yet a full replacement for `tsc` in every project. See
-[Known problems](#known-problems).
+**This is an early release.** It has 100% compatibility in every real world project we have
+tested. It should work as a drop in
+replacement for the vast majority of apps. See [Known problems](#known-problems).
 
 Also worth mentioning: I've never read a line of this code.
 
@@ -61,8 +62,8 @@ npx tsc-rs -p tsconfig.json
 with the `typescript` package. Each [release](https://github.com/pingdotgg/ts-rust/releases) also
 has a standalone archive per platform: the `tsc` binary with the lib files next to it.
 
-Platforms: Linux x64 (static, any distribution) and macOS arm64. Windows and Linux arm64 are not
-available yet.
+Platforms: Linux x64 (static, any distribution) and macOS arm64. Linux arm64 (static) comes in
+the first release after 0.1.0. Windows is not available yet.
 
 To use it in VS Code, see the [npm package README](npm/tsc-rs-readme.md#vs-code).
 
@@ -83,8 +84,12 @@ service (quick fixes, refactors, hover, completions) are not ported.
 
 ## Status
 
-The port is pinned to one upstream revision ([UPSTREAM.md](UPSTREAM.md)) and compared with Go at
-that revision:
+The port is pinned to one upstream revision, microsoft/TypeScript
+[`673a5f17d713`](https://github.com/microsoft/TypeScript/commit/673a5f17d713bdc8c7185f18a9c11e3c4ac5d781)
+(2026-09-29, TypeScript 7.1.0-dev; [UPSTREAM.md](UPSTREAM.md)), and compared with Go at that
+revision. To compare, use `typescript@7.1.0-dev.20260929.1`, not 7.0.x or
+`@typescript/native-preview`. A difference that this build also shows is upstream behavior, and it
+goes away when the port moves to a newer pin.
 
 - **Same results.** TanStack Query core and Hono check with diagnostics identical to Go's. All
   181,711 ported Go tests pass. The language server and API answers match Go on the oracle test
@@ -97,36 +102,47 @@ that revision:
 
 ## Benchmark: T3 Code
 
-Full type check of [T3 Code](https://github.com/pingdotgg/t3code), compared with `tsc` 7 and
-the new `bun check` in Bun. T3 Code uses Effect, so there are two cases: without the Effect
-diagnostics and with them. The multiplier compares with `tsc` 7 in the same case. Lower is faster.
+Full type check of [T3 Code](https://github.com/pingdotgg/t3code), compared with `tsc` 6, `tsc` 7
+and the new `bun check` in Bun. T3 Code uses Effect, so there are two cases: without the Effect
+diagnostics and with them. Each time is the sum for the five T3 Code projects. Lower is faster.
 
 **Without Effect diagnostics**
 
-| Checker     |   Time | vs `tsc` 7     |                                       |
-| ----------- | -----: | -------------- | ------------------------------------- |
-| `bun check` |  4.21s | 4.09× faster   | `████`                                |
-| `tsc-rs`    |  7.70s | 2.24× faster   | `████████`                            |
-| `tsc` 7     | 17.22s | 1.00× baseline | `█████████████████`                   |
+| Checker     |   Time | vs `tsc` 6 | vs `tsc` 7   |                                            |
+| ----------- | -----: | ---------: | ------------ | ------------------------------------------ |
+| `bun check` |  4.07s |      15.4× | 3.95× faster | `█`                                        |
+| `tsc-rs`    |  7.25s |       8.6× | 2.22× faster | `██`                                       |
+| `tsc` 7     | 16.10s |       3.9× | baseline     | `█████`                                    |
+| `tsc` 6     | 62.63s |   baseline | 3.89× slower | `██████████████████`                       |
 
 **With Effect diagnostics**
 
-| Checker                             |   Time | vs `tsc` 7 + Effect |                                         |
-| ----------------------------------- | -----: | ------------------- | --------------------------------------- |
-| `tsc-rs` (Effect built in)          | 11.35s | 1.94× faster        | `███████████`                           |
-| `tsc` 7 + `@effect/tsgo`            | 22.07s | 1.00× baseline      | `██████████████████████`                |
-| `bun check` + separate Effect pass  | 37.17s | 1.68× slower        | `█████████████████████████████████████` |
+| Checker                                         |    Time | vs `tsc` 6 | vs `tsc` 7 + Effect |                                            |
+| ----------------------------------------------- | ------: | ---------: | ------------------- | ------------------------------------------ |
+| `tsc-rs` (Effect built in)                      |  11.13s |      12.5× | 1.89× faster        | `███`                                      |
+| `tsc` 7 + `@effect/tsgo`                        |  21.07s |       6.6× | baseline            | `██████`                                   |
+| `bun check`, then `effect-tsgo diagnostics`     |  37.60s |       3.7× | 1.78× slower        | `███████████`                              |
+| `tsc` 6 + `@effect/language-service`            | 138.63s |   baseline | 6.58× slower        | `████████████████████████████████████████` |
 
 `bun check` is the fastest when you do not need the Effect diagnostics. It does not have them, so
 an Effect project needs a second pass. `tsc-rs` gets them from its one check.
 
-How it was measured: the sum of per-project medians (3 runs each) for the five T3 Code projects
-`apps/server`, `apps/web`, `apps/mobile`, `packages/client-runtime` and `packages/shared`.
-Apple M5 Max, warm filesystem cache, compiler caches cleared before each run. This is not a timed
-full-workspace or parallel CI run. Versions: `tsc-rs` 0.1.0, TypeScript 7.0.2, Bun canary
-`bd599f5af`, `@effect/tsgo` 0.46.1. The results come from separate rounds. The `tsc-rs` switch in
-T3 Code is [pingdotgg/t3code#16704](https://github.com/pingdotgg/t3code/pull/16704), with a
-per-project table.
+Errors. `tsc-rs`, `tsc` 7 + `@effect/tsgo` and the `effect-tsgo diagnostics` pass report the same
+221 Effect diagnostics. `tsc` 6 uses the JavaScript Effect plugin
+(`@effect/language-service` 0.87.4), which has a different rule set: it reports 287 on
+`apps/server` where the others report 177. `tsc-rs` and `tsc` 6 report one more error, TS2322 in
+`apps/server/scripts/record-pi-rpc-replay-fixture.ts`. TypeScript 7.1.0-dev reports it too, and
+[pingdotgg/t3code#16704](https://github.com/pingdotgg/t3code/pull/16704) fixes it.
+
+How it was measured: the same machine and method as the real-world apps below, with
+`--composite false` added (`apps/web` is composite). T3 Code at
+[`cd41c4ad`](https://github.com/pingdotgg/t3code/tree/cd41c4ada0c70cc2eec95ecd7266f3dab010c58c),
+projects `apps/server`, `apps/web`, `apps/mobile`, `packages/client-runtime` and
+`packages/shared`. Without Effect, the configs have no Effect plugin. With Effect, `tsc` 7 is the
+Effect-patched 7.0.2 from `@effect/tsgo` 0.46.1, and `tsc` 6 is 6.0.3 patched with
+`@effect/language-service`. The script is
+[scripts/bench-apps/t3code.sh](scripts/bench-apps/t3code.sh). The `tsc-rs` switch in T3 Code is
+[pingdotgg/t3code#16704](https://github.com/pingdotgg/t3code/pull/16704).
 
 ## Benchmark: real-world apps
 
@@ -162,8 +178,7 @@ default thread count. `tsc` 7 and `tsc-rs` run as native binaries, without the n
 `tsc` 6 runs on Node 24.19 with a 16 GB heap, because it runs out of memory on VS Code and Sentry
 with the default heap. Versions: `tsc-rs` 0.1.0, TypeScript 7.0.2 and 6.0.3, Bun canary
 `bd599f5af`. Lines checked is the `tsc` 7 `--extendedDiagnostics` count, with the `.d.ts` files.
-This is a different machine from the T3 Code benchmark, so do not compare times across the two
-tables.
+The T3 Code benchmark above uses the same machine and method.
 
 Four apps needed changes to check with 0 errors under `tsc` 7. Nothing else changed:
 
@@ -178,18 +193,23 @@ Two apps are not in the table:
 - date-fns uses project references. There, `tsc -p` and `bun check` do different work.
 
 The scripts are in [scripts/bench-apps](scripts/bench-apps): `setup.sh <dir>`, then
-`run.sh <dir>` and `summary.py <dir>`.
+`run.sh <dir>` and `summary.py <dir>`, and `t3code.sh <dir>` for T3 Code.
 
 ## Known problems
 
 - In some monorepos, the source files of a workspace package are reachable both through
   `node_modules` and through a direct import. There, `tsc-rs` can write output for more of those
-  files than `tsc` does.
+  files than `tsc` does, and report TS6059 (file is not under `rootDir`) for them. `tsc` decides
+  this by timing, so its own result changes between runs. `tsc-rs` gives the same result in every
+  run (the result of TypeScript 6).
 - In `tsc -b`, when one project imports the output of another project without a project reference,
-  `tsc-rs` can report TS2307 (cannot find module) where `tsc` happens to build the other project
-  first. Add the reference to fix it.
-- `tsc -b --watch` can stop with an internal error (exit code 70) after some edits.
-- In the editor, memory grows slowly during long edit sessions.
+  `tsc-rs` can still read the old or missing output (TS2305 or TS2307) where `tsc` reads the new
+  one, in a few cases: `noEmitOnError` projects, non-incremental `noCheck` projects, several large
+  projects that only need to write their outputs with the default builders, or when the reading
+  project references another project that builds before the writer. Add the reference to fix it.
+- In the editor, memory grows slowly during long edit sessions (about 20 MiB per 1,000 edits). It
+  starts 12 to 24% above `tsc`'s, and from about edit 20 it stays below `tsc`'s in the sessions we
+  measured (up to 2,190 edits).
 - `tsc-rs --version` prints the TypeScript version that it ports (7.1.0-dev), not the npm
   version. The compiler matches `typesVersions` against it.
 

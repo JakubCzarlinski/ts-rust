@@ -1001,6 +1001,12 @@ pub struct Checker {
     pub global_function_type: TypeId,
     pub global_callable_function_type: TypeId,
     pub global_newable_function_type: TypeId,
+    /// PERF (propfilt1): `get_property_of_type_ex`'s filters of the member
+    /// names of the 4 types above (`augment_lookups_miss`). A type's filter
+    /// is built when its members are set (`augment_members_set`), dropped
+    /// at the base types reset (`drop_augment_filter_of`), and built again
+    /// after each module augmentation merge (`rebuild_augment_filters`).
+    pub augment_filters: AugmentFilters,
     pub global_array_type: TypeId,
     pub global_readonly_array_type: TypeId,
     pub global_string_type: TypeId,
@@ -1036,6 +1042,9 @@ pub struct Checker {
     pub flow_analysis_disabled: bool,
     pub flow_invocation_count: i32,
     pub flow_type_cache: FxHashMap<Node, TypeId>,
+    /// PERF (cfcache1, not in Go): `get_control_flow_container`'s memo, a
+    /// direct-mapped table of (node, container). A nil key is an empty slot.
+    pub control_flow_containers: Box<[(Node, Node); CONTROL_FLOW_CONTAINER_SLOTS]>,
     pub last_flow_node: FlowNodeId,
     pub last_flow_node_reachable: bool,
     pub flow_node_reachable: FxHashMap<FlowNodeId, bool>,
@@ -1144,11 +1153,15 @@ pub struct Checker {
         FxHashMap<(SymbolTable, SymbolId), Option<crate::checker::checker_p24::NamedMembersOrder>>,
     /// PERF: not in Go. See `MatchingReferenceMemo`.
     pub(crate) matching_reference_memo: crate::checker::flow_p2::MatchingReferenceMemo,
+    /// flowskip1: the index and state of the flow walk skip (flow_skip.rs).
+    pub flow_skip: crate::checker::flow_skip::FlowSkip,
     /// PERF: not in Go. Counts the merges (`merge_symbol` and
     /// `record_merged_symbol`), so a memo of a merged symbol or of the flags
     /// a merge adds knows when to read them again (`MatchingReferenceMemo`,
     /// `global_spelling_suggestions`).
     pub(crate) merge_version: u64,
+    /// PERF: not in Go. See `is_type_subset_of_union`.
+    pub(crate) union_subset_answers: FxHashMap<(TypeId, TypeId), bool>,
 
     // Arenas (PORTING.md "Checker data"). Index 0 of each is a dummy entry
     // so handle value 0 stays nil.
@@ -1505,6 +1518,7 @@ impl Checker {
             global_function_type: TypeId::NIL,
             global_callable_function_type: TypeId::NIL,
             global_newable_function_type: TypeId::NIL,
+            augment_filters: Default::default(),
             global_array_type: TypeId::NIL,
             global_readonly_array_type: TypeId::NIL,
             global_string_type: TypeId::NIL,
@@ -1539,6 +1553,9 @@ impl Checker {
             flow_analysis_disabled: false,
             flow_invocation_count: 0,
             flow_type_cache: FxHashMap::default(),
+            control_flow_containers: Box::new(
+                [(Node::NIL, Node::NIL); CONTROL_FLOW_CONTAINER_SLOTS],
+            ),
             last_flow_node: FlowNodeId::NIL,
             last_flow_node_reachable: false,
             flow_node_reachable: FxHashMap::default(),
@@ -1633,7 +1650,9 @@ impl Checker {
             named_members_orders: FxHashMap::default(),
             alternative_module_import_misses: FxHashSet::default(),
             matching_reference_memo: Default::default(),
+            flow_skip: Default::default(),
             merge_version: 0,
+            union_subset_answers: FxHashMap::default(),
             symbols,
             types: ChunkedArena::with_nil(Type::default()),
             object_type_instantiations: vec![InstantiationMap::default()],

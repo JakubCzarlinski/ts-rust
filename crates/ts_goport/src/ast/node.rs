@@ -3836,6 +3836,12 @@ trait ChildVisit<'d> {
     fn ids(&mut self, ids: &'d [crate::astdata::NodeId]) -> bool;
     /// Go `CaseOrDefaultClause.Expression` (see `case_expression`).
     fn case_expression(&mut self, id: crate::astdata::NodeId) -> bool;
+    /// The Go `FullSignature` field of a function-like node: an optional
+    /// child field (Go `visit`). Only `ChildFields` tells it apart.
+    #[inline(always)]
+    fn full_signature(&mut self, id: Option<crate::astdata::NodeId>) -> bool {
+        self.opt(id)
+    }
 }
 
 /// The generic walk of `for_each_child_impl`.
@@ -3989,6 +3995,112 @@ impl<'d> ChildVisit<'d> for ScopedChildVisit<'_, '_> {
     }
 }
 
+/// One child field of node data, in Go `ForEachChild` order
+/// (`for_each_child_field`).
+pub(crate) enum ChildField<'d> {
+    /// A single child (Go `visit`). `Node::NIL` for Go `nil`.
+    Node(Node),
+    /// The `FullSignature` child of a function-like node (Go `visit`).
+    /// `Node::NIL` for Go `nil`. The API encoder's property mask has no bit
+    /// for it.
+    FullSignature(Node),
+    /// A list (Go `visitNodeList`). `None` for Go `nil`: no list, or the nil
+    /// marker of a required list field (`is_nil_list_marker`).
+    List(Option<&'d crate::astdata::NodeList>),
+    /// A modifier list (Go `visitModifiers`). `None` for Go `nil`.
+    Modifiers(Option<&'d crate::astdata::ModifierList>),
+    /// A Go `[]*Node` field with no list (Go `visitNodes`): the children of
+    /// a SyntaxList and the property tags of a JSDocTypeLiteral.
+    Ids(&'d [crate::astdata::NodeId]),
+}
+
+/// Calls `f` with each child field of `data`, the node data of a node of
+/// Go kind `kind` in store `file`, in Go `ForEachChild` order. Each child
+/// id becomes a `Node` as the field accessors make it (`Node::new`).
+/// Not in Go (perf, apiperf2): the API encoder (`encode_tree`) reads the
+/// fields of a node of the encoded file once for its property mask and its
+/// children. Go `VisitEachChild` visits the same fields in the same order,
+/// except in a SyntaxList, a JSDocTypeLiteral and a JSDoc parameter or
+/// property tag.
+pub(crate) fn for_each_child_field<'d>(
+    kind: SyntaxKind,
+    file: usize,
+    data: &'d NodeData,
+    f: impl FnMut(ChildField<'d>),
+) {
+    walk_children(data, &mut ChildFields { kind, file, f });
+}
+
+/// The walk of `for_each_child_field`. It never stops early.
+struct ChildFields<F> {
+    /// The Go kind of the node (`case_expression`).
+    kind: SyntaxKind,
+    file: usize,
+    f: F,
+}
+
+impl<'d, F: FnMut(ChildField<'d>)> ChildVisit<'d> for ChildFields<F> {
+    #[inline(always)]
+    fn node(&mut self, id: crate::astdata::NodeId) -> bool {
+        (self.f)(ChildField::Node(Node::new(self.file, id)));
+        false
+    }
+
+    #[inline(always)]
+    fn opt(&mut self, id: Option<crate::astdata::NodeId>) -> bool {
+        (self.f)(ChildField::Node(
+            id.map_or(Node::NIL, |id| Node::new(self.file, id)),
+        ));
+        false
+    }
+
+    #[inline(always)]
+    fn list(&mut self, l: &'d crate::astdata::NodeList) -> bool {
+        (self.f)(ChildField::List((!is_nil_list_marker(l)).then_some(l)));
+        false
+    }
+
+    #[inline(always)]
+    fn opt_list(&mut self, l: &'d Option<crate::astdata::NodeList>) -> bool {
+        (self.f)(ChildField::List(
+            l.as_ref().filter(|l| !is_nil_list_marker(l)),
+        ));
+        false
+    }
+
+    #[inline(always)]
+    fn mods(&mut self, m: &'d Option<crate::astdata::ModifierList>) -> bool {
+        (self.f)(ChildField::Modifiers(m.as_ref()));
+        false
+    }
+
+    #[inline(always)]
+    fn ids(&mut self, ids: &'d [crate::astdata::NodeId]) -> bool {
+        (self.f)(ChildField::Ids(ids));
+        false
+    }
+
+    // Go `CaseOrDefaultClause.Expression`: nil for `default:`.
+    #[inline(always)]
+    fn case_expression(&mut self, id: crate::astdata::NodeId) -> bool {
+        let n = if self.kind == SyntaxKind::CaseClause {
+            Node::new(self.file, id)
+        } else {
+            Node::NIL
+        };
+        (self.f)(ChildField::Node(n));
+        false
+    }
+
+    #[inline(always)]
+    fn full_signature(&mut self, id: Option<crate::astdata::NodeId>) -> bool {
+        (self.f)(ChildField::FullSignature(
+            id.map_or(Node::NIL, |id| Node::new(self.file, id)),
+        ));
+        false
+    }
+}
+
 /// R3-2: the walk of `for_each_store_child_id`. The ids are slot indexes of
 /// the store of the node. Slot 0 resolves to Go `nil`
 /// (`resolve_store_id`), so a single child field with id 0 is skipped.
@@ -4120,7 +4232,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || o!(d.body)
         }
         NodeData::ClassDeclaration(d) => {
@@ -4173,7 +4285,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || o!(d.body)
         }
         NodeData::GetAccessorDeclaration(d) => {
@@ -4182,7 +4294,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || o!(d.body)
         }
         NodeData::SetAccessorDeclaration(d) => {
@@ -4191,7 +4303,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || o!(d.body)
         }
         NodeData::IndexSignatureDeclaration(d) => {
@@ -4213,7 +4325,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || o!(d.body)
         }
         NodeData::PropertySignatureDeclaration(d) => {
@@ -4234,7 +4346,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || n!(d.equals_greater_than_token)
                 || n!(d.body)
         }
@@ -4245,7 +4357,7 @@ fn walk_children<'d>(data: &'d NodeData, w: &mut impl ChildVisit<'d>) -> bool {
                 || ol!(d.type_parameters)
                 || l!(d.parameters)
                 || o!(d.type_)
-                || o!(d.full_signature)
+                || w.full_signature(d.full_signature)
                 || n!(d.body)
         }
         NodeData::AsExpression(d) => n!(d.expression) || n!(d.type_),

@@ -1002,8 +1002,12 @@ mod intern {
 /// nothing and a single declaration is stored inline. Longer lists share one
 /// `Vec` between clones; the first write copies it, so each symbol still owns
 /// its own list, like a Go slice that is copied before an append. Program
-/// symbols keep longer lists in a leaked slice (`make_static`), with the same
+/// symbols keep longer lists in a leaked `Vec` (`make_static`), with the same
 /// copy on the first write.
+// PERF (memper1): every list is behind a thin pointer, so a `Declarations`
+// is 16 bytes and a `Symbol` 56 (a leaked `&'static [Node]` made both 8
+// bytes larger). A static list reads through its `Vec` header, as a shared
+// list reads through its `Arc`.
 #[derive(Clone, Default)]
 pub struct Declarations(DeclarationList);
 
@@ -1013,7 +1017,7 @@ enum DeclarationList {
     Empty,
     One(Node),
     Many(Arc<Vec<Node>>),
-    Static(&'static [Node]),
+    Static(&'static Vec<Node>),
 }
 
 impl Declarations {
@@ -1034,7 +1038,7 @@ impl Declarations {
         }
     }
 
-    /// Moves a `Many` list into a leaked slice. Call it only for symbols
+    /// Moves a `Many` list into a leaked `Vec`. Call it only for symbols
     /// that live until exit (program symbols, like the AST).
     // PERF: a clone of a `Static` list copies a pointer. A clone of a `Many`
     // list changes a reference count that the checker threads share
@@ -1042,7 +1046,7 @@ impl Declarations {
     fn make_static(&mut self) {
         if matches!(self.0, DeclarationList::Many(_)) {
             if let DeclarationList::Many(list) = std::mem::take(&mut self.0) {
-                self.0 = DeclarationList::Static(Arc::unwrap_or_clone(list).leak());
+                self.0 = DeclarationList::Static(Box::leak(Box::new(Arc::unwrap_or_clone(list))));
             }
         }
     }
@@ -1159,6 +1163,11 @@ pub struct Symbol {
     pub parent: SymbolId,
     pub export_symbol: SymbolId,
 }
+
+// PERF (memper1): a checker makes millions of symbols, in chunks of
+// `COW_CHUNK_LEN` (14 KiB at 56 bytes, a jemalloc size class).
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Symbol>() == 56);
 
 /// A growable array split into fixed-size chunks that clones share. Index
 /// `i` is value `i % COW_CHUNK_LEN` of chunk `i / COW_CHUNK_LEN`. The values
@@ -1735,11 +1744,25 @@ impl<T: Clone + Default> CowChunks<T> {
         // The last even chunk with indexes below the lineage length.
         let last = ((from.len - 1) >> COW_CHUNK_SHIFT) & !1;
         if last >= self.chunks.len() {
-            let own = std::mem::take(&mut self.tail);
+            let mut own = std::mem::take(&mut self.tail);
             self.chunks.push(match own.len() {
                 0 => Chunk::Freed,
                 COW_CHUNK_LEN => full_chunk(own),
-                _ => Chunk::Shared(Arc::new(own)),
+                // The tail has room for a whole chunk (`make_room`), and no
+                // value goes in this chunk again: keep only its values.
+                // PERF (followups31): the shrink copies the values (1 to 255)
+                // to an allocation of their size. On the apisym1c catch-up
+                // traces (alvin, THP off for the server, 20 runs per side,
+                // alternating, medians) it lowered peak RSS from 87.8 to
+                // 86.1 MiB on k3-memloop-60 and from 76.1 to 75.7 MiB on
+                // k3-memloop-10. m-kl-loop-10 and m-kl-loop-50 stayed at
+                // 182.2 and 194.8 MiB. Server CPU and wall time did not
+                // change (each p > 0.29). A first reading on zbook showed a
+                // rise of 2 to 4%, inside zbook's noise.
+                _ => {
+                    own.shrink_to_fit();
+                    Chunk::Shared(Arc::new(own))
+                }
             });
             self.chunks.resize_with(last + 1, || Chunk::Freed);
             self.len = self.tail_start();
@@ -2082,6 +2105,35 @@ mod hole_tests {
         assert_eq!(*checker.get(own[299]), 10_299);
     }
 
+    // followups31 (R177 reviewer item 4): when a catch-up passes the own
+    // tail, the tail becomes a shared chunk with its values only, not the
+    // room of a whole chunk that it had for later values.
+    #[test]
+    fn a_catch_up_past_the_own_tail_keeps_only_its_values() {
+        let mut lineage = CowChunks::new_interleaved();
+        push_indexes(&mut lineage, 10);
+        let mut checker = lineage.for_checker();
+        let seen = lineage.len();
+        let own: Vec<usize> = (0..44)
+            .map(|n| {
+                checker.push(10_000 + n);
+                checker.len() - 1
+            })
+            .collect();
+        let own_chunk = own[0] >> COW_CHUNK_SHIFT;
+        assert_eq!(checker.tail.capacity(), COW_CHUNK_LEN, "room for a chunk");
+        let later = push_indexes(&mut lineage, 3 * COW_CHUNK_LEN);
+        checker.catch_up(seen, &lineage);
+        match &checker.chunks[own_chunk] {
+            Chunk::Shared(values) => assert_eq!((values.len(), values.capacity()), (44, 44)),
+            _ => panic!("the own tail is a shared chunk"),
+        }
+        for (n, &index) in own.iter().enumerate() {
+            assert_eq!(*checker.get(index), 10_000 + n, "own {index}");
+        }
+        assert!(later.iter().all(|&index| *checker.get(index) == index));
+    }
+
     // apisym1c: a checker arena makes its own symbols and tables in the odd
     // chunks. It catches up to the lineage: it reads a later binder symbol,
     // its table and its members by the lineage ids, keeps its own symbols,
@@ -2184,13 +2236,28 @@ pub fn zeroed_vec<T: Copy + Default + PartialEq + From<u8>>(len: usize) -> Vec<T
     vec
 }
 
-/// One symbol table entry. `hash` is the low half of `intern::hash_str` of
-/// the name, so a lookup by text skips most entries without reading them.
+/// One symbol table entry: a name id and its symbol. The table hash of the
+/// name is in the interner (`TableEntry::hash`), not here.
+// PERF (memper1 B): 8 bytes, not 12 with the hash. A lookup by `Name` (most
+// lookups) compares ids. A lookup by text and a reindex read the interner's
+// hash of each entry they compare or index. One-byte index slots for tables
+// of up to 255 entries (half the index) were measured and dropped: the slot
+// width test kept the lookup and insert loops out of line (+1.6%
+// instructions on zod, single-threaded).
 #[derive(Clone, Copy, Debug)]
 struct TableEntry {
-    hash: u32,
     name: u32,
     symbol: SymbolId,
+}
+
+const _: () = assert!(std::mem::size_of::<TableEntry>() == 8);
+
+impl TableEntry {
+    /// The table hash of the name.
+    #[inline]
+    fn hash(&self) -> u32 {
+        intern::table_hash(self.name)
+    }
 }
 
 /// Tables up to this size are searched linearly and have no index.
@@ -2342,7 +2409,7 @@ impl Table {
         if len > TABLE_LINEAR_MAX && self.index.len() < len * 2 {
             let mut index = Self::empty_index(len);
             for (position, entry) in self.entries.iter().enumerate() {
-                Self::index_insert(&mut index, entry.hash, position);
+                Self::index_insert(&mut index, entry.hash(), position);
             }
             self.index = index;
         }
@@ -2351,7 +2418,7 @@ impl Table {
     /// The position of `name`, whose `table_hash` is `hash`.
     #[inline]
     fn find(&self, hash: u32, name: &str) -> Option<usize> {
-        self.find_by(hash, |e| intern::text(e.name) == name)
+        self.find_by(hash, |e| e.hash() == hash && intern::text(e.name) == name)
     }
 
     /// The position of name id `id`, whose `table_hash` is `hash`. Equal
@@ -2368,10 +2435,7 @@ impl Table {
             return None;
         }
         if self.index.is_empty() {
-            return self
-                .entries
-                .iter()
-                .position(|e| e.hash == hash && is_name(e));
+            return self.entries.iter().position(is_name);
         }
         let mask = self.index.len() - 1;
         let mut slot = hash as usize & mask;
@@ -2383,7 +2447,7 @@ impl Table {
             let mut position = stored as usize - 1;
             while position < self.entries.len() {
                 let entry = &self.entries[position];
-                if entry.hash == hash && is_name(entry) {
+                if is_name(entry) {
                     return Some(position);
                 }
                 position += INDEX_MOD;
@@ -2403,17 +2467,22 @@ impl Table {
     }
 
     /// Rebuilds the index and the filter for the current entries.
+    // PERF: one hash read per entry, for the filter and the index. Out of
+    // line, so `push`, which calls it when a table grows, stays small enough
+    // to inline into its callers.
+    #[inline(never)]
     fn reindex(&mut self) {
-        self.filter = self
-            .entries
-            .iter()
-            .fold(0, |filter, entry| filter | filter_bit(entry.hash));
+        let mut filter = 0;
         let mut index = Self::empty_index(self.entries.len());
-        if !index.is_empty() {
-            for (position, entry) in self.entries.iter().enumerate() {
-                Self::index_insert(&mut index, entry.hash, position);
+        let indexed = !index.is_empty();
+        for (position, entry) in self.entries.iter().enumerate() {
+            let hash = entry.hash();
+            filter |= filter_bit(hash);
+            if indexed {
+                Self::index_insert(&mut index, hash, position);
             }
         }
+        self.filter = filter;
         self.index = index;
     }
 
@@ -2431,7 +2500,7 @@ impl Table {
     // paid a call per new entry (+0.2% instructions on Hono).
     #[inline]
     fn push(&mut self, hash: u32, name: u32, symbol: SymbolId) {
-        self.entries.push(TableEntry { hash, name, symbol });
+        self.entries.push(TableEntry { name, symbol });
         self.filter |= filter_bit(hash);
         let len = self.entries.len();
         // A table can have an index before it passes `TABLE_LINEAR_MAX`
@@ -2568,7 +2637,12 @@ impl SymbolIds {
     }
 
     /// The place of own symbol index `index` among the own symbols: its
-    /// index without the lineage chunks, from `own_base` on.
+    /// index without the even chunks, from chunk pair `own_base` on. The
+    /// places are dense until the first catch-up that passes the own tail
+    /// (`CowChunks::catch_up`): the next own symbol then starts after the
+    /// lineage, so each odd chunk that the lineage passed is a gap of
+    /// `COW_CHUNK_LEN` places, 2 KiB in the own id table once a later own
+    /// symbol has an id (`ast::utilities_p1::OwnSymbolIds`).
     #[inline]
     fn own_place(&self, index: u32) -> u32 {
         (((index >> (COW_CHUNK_SHIFT + 1)) - self.own_base) << COW_CHUNK_SHIFT)
@@ -2867,7 +2941,6 @@ impl SymbolArena {
         table
             .entries
             .extend(entries.map(|(name, symbol)| TableEntry {
-                hash: name.table_hash(),
                 name: name.0,
                 symbol,
             }));
@@ -2877,7 +2950,7 @@ impl SymbolArena {
                 .entries
                 .iter()
                 .enumerate()
-                .all(|(position, e)| table.find_id(e.hash, e.name) == Some(position)),
+                .all(|(position, e)| table.find_id(e.hash(), e.name) == Some(position)),
             "table entries with the same name"
         );
         self.push_table(table)
@@ -3137,7 +3210,6 @@ impl SymbolArena {
                     if name.0 != entry.name {
                         renamed = true;
                         entry.name = name.0;
-                        entry.hash = name.table_hash();
                     }
                 }
                 entry.symbol = offsets.symbol(entry.symbol);
@@ -4120,7 +4192,7 @@ mod table_filter_tests {
     fn table_filter_keeps_every_entry_findable() {
         let mut arena = SymbolArena::new();
         let name = |n: usize| Name::from(format!("corefix1_name_{n}").as_str());
-        for size in [0, 1, 7, 8, 9, 40, 300] {
+        for size in [0, 1, 7, 8, 9, 40, 255, 256, 300] {
             let set = arena.new_table();
             let built =
                 arena.push_table_from_entries((0..size).map(|n| (name(n), SymbolId(n as u32 + 1))));
@@ -4157,6 +4229,24 @@ mod table_filter_tests {
                     arena.get_name(set, &name(n))
                 );
             }
+        }
+        // A table made with room for 200 entries grows past its index, and
+        // `reserve` grows it again.
+        let grown = arena.new_table_with_capacity(200);
+        for n in 0..300 {
+            arena.set(grown, name(n), SymbolId(n as u32 + 1));
+            if n == 280 {
+                arena.reserve(grown, 1000);
+            }
+        }
+        for n in 0..350 {
+            let expected = if n < 300 {
+                SymbolId(n as u32 + 1)
+            } else {
+                SymbolId::NIL
+            };
+            assert_eq!(arena.get_name(grown, &name(n)), expected, "grown {n}");
+            assert_eq!(arena.get(grown, name(n).as_str()), expected, "grown {n}");
         }
     }
 }
