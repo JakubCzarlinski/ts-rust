@@ -767,7 +767,7 @@ impl Checker {
         }
         // PORT: Go keys by `ast.GetSymbolId`; `EnumRelationKey` holds symbol handles.
         // The Go calls give the symbols their ids, so they are made too
-        // (`SymbolArenaLinks`).
+        // (`ValueSymbolLinkStore`).
         get_symbol_id(&self.symbols, source_symbol);
         get_symbol_id(&self.symbols, target_symbol);
         let key = EnumRelationKey {

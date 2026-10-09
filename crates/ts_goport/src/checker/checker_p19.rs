@@ -72,6 +72,8 @@ impl Checker {
         for e in missing_elements {
             let name = self.get_property_name_from_binding_element(e);
             let symbol = self.new_symbol(SymbolFlags::PROPERTY | SymbolFlags::OPTIONAL, &name);
+            // Go reads the links (and gives the id) before the right side.
+            self.value_symbol_links.get_by_id(&self.symbols, symbol);
             let resolved_type = self.get_type_from_binding_element(
                 e, false, /*includePatternInType*/
                 true,  /*reportErrors*/
@@ -463,13 +465,14 @@ impl Checker {
     /// `ValueSymbolLinks::optional_parameter`. The record is the one
     /// `get_type_of_symbol` has just read. When it has no record (a symbol
     /// with an error type), the test runs with no memo, so no record is added
-    /// that `value_symbol_links.has` could see.
+    /// that `value_symbol_links.has` could see. Go reads no links here, so
+    /// the read gives no symbol id (`try_get_without_id`).
     fn parameter_declaration_is_optional(&mut self, symbol: SymbolId, declaration: Node) -> bool {
         let test =
             |d: Node| d.is_some() && (d.initializer().is_some() || is_optional_declaration(d));
         match self
             .value_symbol_links
-            .try_get_by_id(&self.symbols, symbol)
+            .try_get_without_id(symbol)
             .map(|links| links.optional_parameter)
         {
             Some(Tristate::Unknown) => {

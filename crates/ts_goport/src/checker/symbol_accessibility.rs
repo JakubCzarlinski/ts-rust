@@ -656,7 +656,7 @@ impl Checker {
     ) -> Vec<SymbolId> {
         // PORT: Go keys the visited map by `ast.GetSymbolId`; the `SymbolId`
         // handle has the same identity. The Go call gives the symbol its id,
-        // so it is made too (`SymbolArenaLinks`).
+        // so it is made too (`ValueSymbolLinkStore`).
         get_symbol_id(&self.symbols, ctx.symbol);
         {
             let mut visited = ctx.visited_symbol_tables_map.borrow_mut();

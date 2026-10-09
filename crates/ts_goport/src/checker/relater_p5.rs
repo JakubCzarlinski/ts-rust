@@ -902,11 +902,8 @@ impl Checker {
             && self.sym(source_symbol).flags.intersects(SymbolFlags::CLASS)
         {
             let private_identifier_description = value_declaration.name().text().to_string();
-            let symbol_table_key = get_symbol_name_for_private_identifier(
-                &self.symbols,
-                source_symbol,
-                &private_identifier_description,
-            );
+            let symbol_table_key =
+                self.private_identifier_symbol_name(source_symbol, &private_identifier_description);
             if self
                 .get_property_of_type(source, &symbol_table_key)
                 .is_some()
