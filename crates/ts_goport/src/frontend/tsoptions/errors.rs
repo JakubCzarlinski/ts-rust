@@ -176,7 +176,7 @@ pub fn extra_key_diagnostics(s: &str) -> Option<&'static Message> {
     }
 }
 
-// Go: tsoptions/errors.go:118 extraKeyDidYouMeanDiagnostics
+// Go: tsoptions/errors.go:116 extraKeyDidYouMeanDiagnostics
 pub fn extra_key_did_you_mean_diagnostics(s: &str) -> Option<&'static Message> {
     match s {
         "compilerOptions" => Some(diag::Unknown_compiler_option_0_Did_you_mean_1),
@@ -242,7 +242,7 @@ pub fn get_parse_command_line_worker_diagnostics(
     }
 }
 
-// Go: tsoptions/diagnostics.go:56 buildOptionsDidYouMeanDiagnostics
+// Go: tsoptions/diagnostics.go:46 buildOptionsDidYouMeanDiagnostics
 pub static BUILD_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS: LazyLock<ParseCommandLineWorkerDiagnostics> =
     LazyLock::new(|| ParseCommandLineWorkerDiagnostics {
         did_you_mean: DidYouMeanOptionsDiagnostics {
