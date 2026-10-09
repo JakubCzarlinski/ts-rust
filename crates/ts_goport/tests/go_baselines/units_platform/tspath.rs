@@ -622,7 +622,8 @@ fn test_get_normalized_absolute_path() {
     );
 }
 
-// Go: path_test.go:420 TestGetNormalizedAbsolutePathWithoutRoot
+// Go: path_test.go:420 TestGetNormalizedAbsolutePathWithoutRoot (at 673a5f17d713; removed by
+// ts#64159 with the function. The port keeps it.)
 #[test]
 fn test_get_normalized_absolute_path_without_root() {
     assert_eq!(
@@ -848,7 +849,8 @@ fn test_to_file_name_lower_case() {
     );
 }
 
-// Go: path_test.go:591 TestTrimFilePathPrefix (tsgo#4900)
+// Go: path_test.go:591 TestTrimFilePathPrefix (tsgo#4900; at 673a5f17d713; removed by ts#64159,
+// which tests CaseSensitivity.TrimPrefix. The port keeps trim_file_path_prefix.)
 // PORT: Go returns `path, false` on a mismatch; the Rust port returns `None`.
 #[test]
 fn test_trim_file_path_prefix() {
@@ -885,7 +887,35 @@ fn test_trim_file_path_prefix() {
     );
 }
 
-// Go: path_test.go:644 TestToPath
+// Go: path_test.go:314 TestResolvePathWithoutTrailingDirectorySeparator (ts#64159)
+#[test]
+fn test_resolve_path_without_trailing_directory_separator() {
+    assert_eq!(
+        tspath::resolve_path_without_trailing_directory_separator("/", &[]),
+        "/"
+    );
+    assert_eq!(
+        tspath::resolve_path_without_trailing_directory_separator("c:/", &[]),
+        "c:/"
+    );
+    assert_eq!(
+        tspath::resolve_path_without_trailing_directory_separator("/a/", &[]),
+        "/a"
+    );
+    assert_eq!(
+        tspath::resolve_path_without_trailing_directory_separator("a", &["b/"]),
+        "a/b"
+    );
+}
+
+// Go: path_test.go:323 TestNormalizePathDriveRoot (ts#64159)
+#[test]
+fn test_normalize_path_drive_root() {
+    assert_eq!(tspath::normalize_path("c:"), "c:/");
+}
+
+// Go: path_test.go:644 TestToPath (at 673a5f17d713; removed by ts#64159 with ToPath.
+// The port keeps to_path, so the test stays.)
 #[test]
 fn test_to_path() {
     assert_eq!(

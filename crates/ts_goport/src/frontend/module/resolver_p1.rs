@@ -928,7 +928,7 @@ impl Tracer {
 }
 
 impl ResolutionState<'_> {
-    // Go: module/resolver.go:388 resolveTypeReferenceDirective
+    // Go: module/resolver.go:606 resolveTypeReferenceDirective
     pub fn resolve_type_reference_directive(
         &mut self,
         type_roots: &[String],
@@ -953,7 +953,9 @@ impl ResolutionState<'_> {
                     );
                     continue;
                 }
-                if from_config {
+                // ts#64159: a name with a trailing separator is only a
+                // directory.
+                if from_config && !has_trailing_directory_separator(&candidate) {
                     // Custom typeRoots resolve as file or directory just like we do modules
                     let resolved_from_file =
                         self.load_module_from_file(Extensions::DECLARATION, &candidate);
@@ -1019,7 +1021,7 @@ impl ResolutionState<'_> {
         self.create_resolved_type_reference_directive(resolved, false /*primary*/)
     }
 
-    // Go: module/resolver.go:439 getCandidateFromTypeRoot
+    // Go: module/resolver.go:659 getCandidateFromTypeRoot
     pub fn get_candidate_from_type_root(&mut self, type_root: &str) -> String {
         let mut name_for_lookup = self.name.clone();
         if type_root.ends_with("/node_modules/@types")
@@ -1028,7 +1030,13 @@ impl ResolutionState<'_> {
             let name = self.name.clone();
             name_for_lookup = self.mangle_scoped_package_name(&name);
         }
-        combine_paths(type_root, &[&name_for_lookup])
+        // ts#64159: the candidate is normalized and keeps the directory
+        // intent of a trailing separator (Go resolutionCandidateFromDirectoryPath).
+        resolve_path_for_module(
+            type_root,
+            &name_for_lookup,
+            has_trailing_directory_separator(&name_for_lookup),
+        )
     }
 
     // Go: module/resolver.go:447 resolutionState.mangleScopedPackageName
@@ -1040,7 +1048,7 @@ impl ResolutionState<'_> {
         mangled
     }
 
-    // Go: module/resolver.go:458 resolveFromTypeRoot
+    // Go: module/resolver.go:678 resolveFromTypeRoot
     // resolveFromTypeRoot tries to resolve a module name from the configured typeRoots.
     // This is used as a fallback after node_modules resolution fails, for declaration file lookups.
     // Returns nil if typeRoots is not configured or if no matching module is found in any typeRoot directory.
@@ -1059,16 +1067,20 @@ impl ResolutionState<'_> {
                 );
                 continue;
             }
-            let resolved_from_file =
-                self.load_module_from_file(Extensions::DECLARATION, &candidate);
-            if let Some(mut resolved_from_file) = resolved_from_file {
-                let package_directory = node_module_package_root_for_file(&resolved_from_file.path);
-                if !package_directory.is_empty() {
-                    let package_info = self.get_package_json_info(&package_directory);
-                    resolved_from_file.package_id =
-                        self.get_package_id(&resolved_from_file.path, &package_info);
+            // ts#64159: a name with a trailing separator is only a directory.
+            if !has_trailing_directory_separator(&candidate) {
+                let resolved_from_file =
+                    self.load_module_from_file(Extensions::DECLARATION, &candidate);
+                if let Some(mut resolved_from_file) = resolved_from_file {
+                    let package_directory =
+                        node_module_package_root_for_file(&resolved_from_file.path);
+                    if !package_directory.is_empty() {
+                        let package_info = self.get_package_json_info(&package_directory);
+                        resolved_from_file.package_id =
+                            self.get_package_id(&resolved_from_file.path, &package_info);
+                    }
+                    return Some(resolved_from_file);
                 }
-                return Some(resolved_from_file);
             }
             let resolved = self.load_node_module_from_directory(
                 Extensions::DECLARATION,
@@ -1781,6 +1793,10 @@ impl ResolutionState<'_> {
         package_path: &str,
         is_imports: bool,
     ) -> Option<Resolved> {
+        // ts#64159: a directory-only target is never a file.
+        if has_trailing_directory_separator(final_path) {
+            return continue_searching();
+        }
         let options = self.compiler_options.clone();
         let compare_paths_options = ComparePathsOptions {
             use_case_sensitive_file_names: self.resolver.host.fs().use_case_sensitive_file_names(),

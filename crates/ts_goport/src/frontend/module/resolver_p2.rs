@@ -731,6 +731,10 @@ impl ResolutionState<'_> {
 
     // Go: module/resolver.go:1587 tryFile
     pub fn try_file(&mut self, file_name: &str) -> (String, bool) {
+        // ts#64159: a directory-only candidate is never a file.
+        if has_trailing_directory_separator(file_name) {
+            return (String::new(), false);
+        }
         if self
             .compiler_options
             .module_suffixes
@@ -946,6 +950,10 @@ impl ResolutionState<'_> {
         candidate: &str,
         package_json_value: &str,
     ) -> Option<Resolved> {
+        // ts#64159: a directory-only candidate is never a file.
+        if has_trailing_directory_separator(candidate) {
+            return continue_searching();
+        }
         if extensions.intersects(Extensions::TYPE_SCRIPT)
             && has_implementation_ts_file_extension(candidate)
             || extensions.intersects(Extensions::DECLARATION) && is_declaration_file_name(candidate)
@@ -1527,12 +1535,14 @@ pub fn match_pattern_or_exact(patterns: &ParsedPatterns, candidate: &str) -> Pat
 // (https://nodejs.org/api/modules.html#all-together), but it seems that module paths ending
 // in `.` are actually normalized to `./` before proceeding with the resolution algorithm.
 pub fn normalize_path_for_cjs_resolution(containing_directory: &str, module_name: &str) -> String {
+    // ts#64159: a name with a trailing separator is encoded as a directory
+    // (Go resolutionCandidateFromDirectoryPath).
     let combined = combine_paths(
         containing_directory,
         &[&path_for_dynamic_resolution(
             containing_directory,
             module_name,
-            false,
+            has_trailing_directory_separator(module_name),
         )],
     );
     // PORT: Go builds `GetPathComponents(combined, "")` only to read its last

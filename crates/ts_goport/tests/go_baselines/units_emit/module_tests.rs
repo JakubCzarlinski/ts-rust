@@ -16,6 +16,7 @@ use ts_goport::frontend::module::{
     DefaultResolver, ResolutionHost, Resolver, ResolverOptions, StaticResolutionEntry,
     new_resolver, new_static_resolutions, new_static_resolver,
     node_module_package_root_for_directory, node_module_package_root_for_file,
+    normalize_path_for_cjs_resolution,
 };
 use ts_goport::frontend::tspath::{self, Path};
 use ts_goport::frontend::vfs::{Fs, Replacements, wrapvfs_wrap};
@@ -382,6 +383,70 @@ fn test_generated_dynamic_entrypoint_specifier_resolves_encoded_file() {
         ModuleKind::ES_NEXT,
     );
     assert_eq!(resolved.as_deref(), Some(PACKAGE_FILE));
+}
+
+// Go: module/resolver_internal_test.go:11 TestNormalizePathForCJSResolutionPreservesDirectoryIntent (ts#64159)
+// PORT: Go returns a resolution candidate; the Rust result is its text
+// (`AsString()`: a directory candidate ends with "/").
+#[test]
+fn test_normalize_path_for_cjs_resolution_preserves_directory_intent() {
+    let mut t = Subtests::new("TestNormalizePathForCJSResolutionPreservesDirectoryIntent");
+    #[rustfmt::skip]
+    let tests: &[(&str, &str, &str, &str)] = &[
+        ("file", "/project", "file", "/project/file"),
+        ("trailing separator", "/project", "directory/", "/project/directory/"),
+        ("current directory", "/project", ".", "/project/"),
+        ("current directory with backslash", "/project", ".\\", "/project/"),
+        ("nested parent directory", "/project/src", "../lib/", "/project/lib/"),
+        ("nested parent directory with backslashes", "/project/src", "..\\lib\\", "/project/lib/"),
+        ("posix root", "/project", "..", "/"),
+        ("drive root", "c:/project", "..", "c:/"),
+        ("drive root without separator", "/project", "c:", "c:/"),
+        ("UNC root without separator", "/project", "//server", "//server/"),
+        ("URL root", "file:///project", "..", "file:///"),
+        ("URL authority root without separator", "/project", "file://server", "file://server/"),
+        ("dynamic reserved prefix", "^/~ts-uri~/custom/ts-nul-authority/folder", "./~ts-uri-escape~file", "^/~ts-uri~/custom/ts-nul-authority/folder/~ts-uri-escape~7e74732d7572692d6573636170657e66696c65~"),
+        ("dynamic reserved prefix with extension", "^/~ts-uri~/custom/ts-nul-authority/folder", "./~ts-uri-escape~file.ts", "^/~ts-uri~/custom/ts-nul-authority/folder/~ts-uri-escape~7e74732d7572692d6573636170657e66696c65~.ts"),
+        ("dynamic reserved directory prefix", "^/~ts-uri~/custom/ts-nul-authority/folder", "./~ts-uri-escape~dir/file", "^/~ts-uri~/custom/ts-nul-authority/folder/~ts-uri-escape~7e74732d7572692d6573636170657e646972~/file"),
+        ("dynamic dotted directory intent", "^/~ts-uri~/custom/ts-nul-authority/folder", "./~ts-uri-escape~dir.js/", "^/~ts-uri~/custom/ts-nul-authority/folder/~ts-uri-escape~7e74732d7572692d6573636170657e6469722e6a73~/"),
+    ];
+    for &(name, containing_directory, module_name, text) in tests {
+        t.run(name, || {
+            let got = normalize_path_for_cjs_resolution(containing_directory, module_name);
+            if got != text {
+                return Err(format!("AsString() = {got:?}, expected {text:?}"));
+            }
+            Ok(())
+        });
+    }
+    t.finish();
+}
+
+// Go: module/resolver_test.go:1224 TestResolveModuleNameExportTargetWithTrailingSlashDoesNotResolveAsFile (ts#64159)
+#[test]
+fn test_resolve_module_name_export_target_with_trailing_slash_does_not_resolve_as_file() {
+    let fs = vfstest::from_map(
+        [
+            (
+                "/repo/node_modules/pkg/package.json",
+                r#"{"name":"pkg","exports":{".":"./index.d.ts/"}}"#,
+            ),
+            (
+                "/repo/node_modules/pkg/index.d.ts",
+                "export const x: number;",
+            ),
+            ("/repo/src/file.ts", ""),
+        ],
+        true,
+    );
+    let resolver = new_repo_resolver(fs);
+    let (resolved, _, _) =
+        resolver.resolve_module_name("pkg", "/repo/src/file.ts", ModuleKind::ES_NEXT, None);
+    assert!(
+        !resolved.is_resolved(),
+        "expected directory-only export target to remain unresolved, got {:?}",
+        resolved.resolved_file_name
+    );
 }
 
 /// A second resolution that a wrapped FS runs inside a `FileExists` call.
@@ -1100,9 +1165,10 @@ fn test_get_each_file_name_of_module_with_symlinks() {
     );
 }
 
-// Go: modulespecifiers/specifiers_test.go:190 TestContainsNodeModules
+// Go: modulespecifiers/specifiers_test.go:288 TestModuleSpecifierContainsNodeModules (ts#64159
+// renames TestContainsNodeModules; ContainsNodeModules is moduleSpecifierContainsNodeModules)
 #[test]
-fn test_contains_node_modules() {
+fn test_module_specifier_contains_node_modules() {
     #[rustfmt::skip]
     let tests: &[(&str, &str, bool)] = &[
         ("contains node_modules", "/project/node_modules/lodash/index.js", true),
@@ -1110,13 +1176,13 @@ fn test_contains_node_modules() {
         ("node_modules in middle", "/project/packages/node_modules/pkg/file.js", true),
         ("empty path", "", false),
     ];
-    let mut t = Subtests::new("TestContainsNodeModules");
+    let mut t = Subtests::new("TestModuleSpecifierContainsNodeModules");
     for &(name, path, expected) in tests {
         t.run(name, || {
             let result = contains_node_modules(path);
             if result != expected {
                 return Err(format!(
-                    "ContainsNodeModules({path:?}) = {result}, expected {expected}"
+                    "moduleSpecifierContainsNodeModules({path:?}) = {result}, expected {expected}"
                 ));
             }
             Ok(())

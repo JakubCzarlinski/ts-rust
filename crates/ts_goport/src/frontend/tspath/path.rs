@@ -340,7 +340,9 @@ pub fn get_encoded_root_length(path: &str) -> i32 {
                 if let Some(authority_end) = path[scheme_end + 1..].find('/') {
                     return (scheme_end + authority_end + 2) as i32;
                 }
-                return ln as i32;
+                // ts#64159: a root with no separator after the authority is
+                // URL-like (negative), so it is not a rooted disk path.
+                return !(ln as i32);
             }
         }
         return 2; // Untitled: "^/"
@@ -487,7 +489,7 @@ fn reduce_path_components(components: Vec<String>) -> Vec<String> {
     reduced
 }
 
-// Go: tspath/path.go:323 ResolvePath
+// Go: tspath/path.go:333 ResolvePath
 // Combines and resolves paths. If a path is absolute, it replaces any previous path. Any
 // `.` and `..` path components are resolved. Trailing directory separators are preserved.
 pub fn resolve_path(path: &str, paths: &[&str]) -> String {
@@ -499,7 +501,17 @@ pub fn resolve_path(path: &str, paths: &[&str]) -> String {
     normalize_path(&combined_path)
 }
 
-// Go: tspath/path.go:333 ResolveTripleslashReference
+// Go: tspath/path.go:343 ResolvePathWithoutTrailingDirectorySeparator (ts#64159)
+// `resolve_path` with no trailing separator, except on a root.
+pub fn resolve_path_without_trailing_directory_separator(path: &str, paths: &[&str]) -> String {
+    let resolved = resolve_path(path, paths);
+    if resolved.len() > get_root_length(&resolved) {
+        return remove_trailing_directory_separator(&resolved).to_string();
+    }
+    resolved
+}
+
+// Go: tspath/path.go:333 ResolveTripleslashReference (at 673a5f17d713; removed by ts#64159)
 pub fn resolve_tripleslash_reference(module_name: &str, containing_file: &str) -> String {
     let base_path = get_directory_path(containing_file);
     if is_rooted_disk_path(module_name) {
@@ -836,16 +848,21 @@ fn has_relative_path_segment_go(p: &str) -> bool {
     (seg_len == 1 && dot_count == 1) || (seg_len == 2 && dot_count == 2)
 }
 
-// Go: tspath/path.go:600 NormalizePath
+// Go: tspath/path.go:622 NormalizePath
 pub fn normalize_path(path: &str) -> String {
     let path = normalize_slashes(path);
-    // PORT: the common case of `simpleNormalizePath` with no copy.
+    // PORT: the common case of `simpleNormalizePath` with no copy. A path
+    // with no relative segment is normal, except a root with no trailing
+    // separator, which gets one (ts#64159: "c:" is "c:/").
     if !has_relative_path_segment(&path) {
-        return path;
+        let root_length = get_root_length(&path);
+        if root_length == 0 || path.len() > root_length {
+            return path;
+        }
+        return ensure_trailing_directory_separator(&path);
     }
-    if let Some(normalized) = simple_normalize_path(&path) {
-        return normalized;
-    }
+    // ts#64159: Go `getNormalizedAbsolutePathFromNormalizedSlashes`, which
+    // this is with no current directory.
     let mut normalized = get_normalized_absolute_path(&path, "");
     if !normalized.is_empty() && has_trailing_directory_separator(&path) {
         normalized = ensure_trailing_directory_separator(&normalized);
@@ -853,14 +870,21 @@ pub fn normalize_path(path: &str) -> String {
     normalized
 }
 
-/// True when `normalize_path(path)` is `path` itself: it has no backslash
-/// and no "." or ".." segment or empty segment. (False does not mean that
-/// normalizing changes it.)
+/// True when `normalize_path(path)` is `path` itself: it has no backslash,
+/// no "." or ".." segment or empty segment, and is not a root with no
+/// trailing separator. (False does not mean that normalizing changes it.)
 // PORT: not in Go (perf). The names that the resolver and the loader make
 // are normal already, and Go normalizes them again; with this test a
 // caller can keep the name and skip the copy.
 pub fn is_normalized_path(path: &str) -> bool {
-    !path.as_bytes().contains(&b'\\') && !has_relative_path_segment(path)
+    !path.as_bytes().contains(&b'\\') && !has_relative_path_segment(path) && !is_bare_root(path)
+}
+
+/// A root with no trailing separator ("c:", "//server"), which
+/// `normalize_path` gives a separator (ts#64159).
+fn is_bare_root(path: &str) -> bool {
+    let root_length = get_root_length(path);
+    root_length != 0 && root_length == path.len() && !has_trailing_directory_separator(path)
 }
 
 // Go: tspath/path.go:612 GetCanonicalFileName

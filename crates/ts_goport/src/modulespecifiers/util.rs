@@ -282,9 +282,11 @@ pub(crate) fn get_paths_relative_to_root_dirs(
     results
 }
 
-// Go: modulespecifiers/util.go:225 isPathRelativeToParent
+// Go: modulespecifiers/util.go:214 isPathRelativeToParent
+// ts#64159 (tspath/relative_path.go:44 RelativePath.IsParentRelative): ".." or
+// "../..." only, not a name that starts with ".." ("..foo.ts").
 pub(crate) fn is_path_relative_to_parent(path: &str) -> bool {
-    path.starts_with("..")
+    path == ".." || path.starts_with("../")
 }
 
 // Go: modulespecifiers/util.go:229 getRelativePathIfInSameVolume
@@ -496,3 +498,21 @@ pub fn get_package_name_from_directory(file_or_directory_path: &str) -> String {
 // Go: modulespecifiers/util.go:388 ProcessEntrypointEnding
 // PORT: not ported. It takes a `module.ResolvedEntrypoint`, which only the
 // language service auto-import code produces.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go: modulespecifiers/specifiers_test.go:432 TestIsPathRelativeToParent (ts#64159)
+    #[test]
+    fn is_path_relative_to_parent_needs_a_parent_segment() {
+        for (path, expected) in [
+            ("..", true),
+            ("../sibling.ts", true),
+            ("..foo.ts", false),
+            ("child/..foo.ts", false),
+        ] {
+            assert_eq!(is_path_relative_to_parent(path), expected, "{path}");
+        }
+    }
+}

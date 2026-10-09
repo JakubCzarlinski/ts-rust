@@ -1245,11 +1245,15 @@ fn try_directory_with_package_json(
             use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
             current_directory: host.get_current_directory(),
         };
-        if tspath::compare_paths(
-            tspath::remove_file_extension(&main_export_file),
-            tspath::remove_file_extension(&module_file_to_try),
-            &compare_opt,
-        ) == 0
+        // ts#64159 (specifiers.go isPackageMainFile): a main entry with
+        // directory intent ("./types/") does not name a sibling file.
+        let main_is_directory = tspath::has_trailing_directory_separator(&main_file_relative);
+        if !main_is_directory
+            && tspath::compare_paths(
+                tspath::remove_file_extension(&main_export_file),
+                tspath::remove_file_extension(&module_file_to_try),
+                &compare_opt,
+            ) == 0
         {
             // ^ An arbitrary removal of file extension for this comparison is almost certainly wrong
             return PkgJsonDirAttemptResult {
