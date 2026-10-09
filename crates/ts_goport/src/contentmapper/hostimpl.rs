@@ -1545,7 +1545,7 @@ pub fn new_host_with_options(
             // Go starts the read loop here (`go conn.Run(ctx)`); `MuxConn`
             // starts its reader thread.
             let conn: Rc<dyn ipc::Conn> = Rc::new(ProcessConn {
-                conn: MuxConn::start(new_protocol, Arc::new(RejectHandler)),
+                conn: MuxConn::start(Some(rwc.clone()), new_protocol, Arc::new(RejectHandler)),
                 rwc: rwc.clone(),
             });
             let (initialize_ctx, cancel) = context::with_timeout(ctx, INITIALIZE_TIMEOUT);

@@ -2197,7 +2197,7 @@ fn run_idle_work(
             Some(gostd::local::IdleStart::AtOnce) => Duration::ZERO,
             Some(gostd::local::IdleStart::AfterQuiet) => {
                 gostd::local::drop_garbage(&busy);
-                IDLE_QUIET_PERIOD
+                idle_quiet_period()
             }
             None => break,
         };
@@ -2218,6 +2218,30 @@ fn run_idle_work(
 /// message within about a millisecond of an answer (fast typing: didChange
 /// and a diagnostic pull), so the attempt starts only when they pause.
 pub const IDLE_QUIET_PERIOD: Duration = Duration::from_millis(50);
+
+/// The quiet period of a test process in microseconds
+/// (`set_idle_quiet_period`), 0 for `IDLE_QUIET_PERIOD`.
+static TEST_IDLE_QUIET_PERIOD_US: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Sets the quiet period that idle work waits for in this process, in
+/// place of `IDLE_QUIET_PERIOD`. Only tests call it: a longer period lets
+/// a test wait between its messages longer than `IDLE_QUIET_PERIOD`, so a
+/// loaded host can finish an idle job that starts at once before the next
+/// message, while one that waits for quiet still does not start.
+#[doc(hidden)]
+pub fn set_idle_quiet_period(period: Duration) {
+    let us = u64::try_from(period.as_micros()).unwrap_or(u64::MAX).max(1);
+    TEST_IDLE_QUIET_PERIOD_US.store(us, Ordering::Relaxed);
+}
+
+/// `IDLE_QUIET_PERIOD`, or the period of `set_idle_quiet_period`.
+fn idle_quiet_period() -> Duration {
+    match TEST_IDLE_QUIET_PERIOD_US.load(Ordering::Relaxed) {
+        0 => IDLE_QUIET_PERIOD,
+        us => Duration::from_micros(us),
+    }
+}
 
 impl ServerShared {
     // Go: server.go:1029 writeLoop
