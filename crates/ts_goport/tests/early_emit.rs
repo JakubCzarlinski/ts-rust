@@ -490,15 +490,26 @@ fn scratch_dir() -> PathBuf {
     // On Windows the real path is verbatim (`\\?\C:\...`), which the program
     // does not take as a cwd or in an argument.
     #[cfg(windows)]
-    let real = PathBuf::from(real.to_string_lossy().trim_start_matches("\\\\?\\"));
+    let real = PathBuf::from(unverbatim(&real.to_string_lossy()));
     real
+}
+
+/// `text` without the Windows verbatim prefix: `\\?\C:\x` is `C:\x`, and
+/// `\\?\UNC\server\share\x` is `\\server\share\x` (the root stays).
+#[cfg(windows)]
+fn unverbatim(text: &str) -> String {
+    if let Some(unc) = text.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{unc}")
+    } else {
+        text.strip_prefix("\\\\?\\").unwrap_or(text).to_owned()
+    }
 }
 
 /// `text` as the program names a path: with `/` separators and no verbatim
 /// prefix (`C:/Users/x/y` on Windows). The identity on Unix.
 fn norm_str(text: &str) -> String {
     #[cfg(windows)]
-    let text = text.trim_start_matches("\\\\?\\").replace('\\', "/");
+    let text = unverbatim(text).replace('\\', "/");
     #[cfg(not(windows))]
     let text = text.to_owned();
     text
