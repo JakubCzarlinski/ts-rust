@@ -71,12 +71,11 @@ impl Checker {
                 self.get_accessible_symbol_chain(symbol, enclosing_declaration, meaning, false);
             if !accessible_symbol_chain.is_empty() {
                 had_accessible_chain = symbol;
-                let has_accessible_declarations =
-                    self.get_emit_resolver().has_visible_declarations(
-                        self,
-                        accessible_symbol_chain[0],
-                        should_compute_aliases_to_make_visible,
-                    );
+                // ts#64649, Go N' symbolaccessibility.go:40: the checker method.
+                let has_accessible_declarations = self.has_visible_declarations(
+                    accessible_symbol_chain[0],
+                    should_compute_aliases_to_make_visible,
+                );
                 if has_accessible_declarations.is_some() {
                     return has_accessible_declarations;
                 }

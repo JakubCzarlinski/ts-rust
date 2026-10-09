@@ -191,21 +191,14 @@ impl Checker {
             }
         }
 
-        // !!! TODO: JSDoc, getEmitResolver call is unfortunate layering for the helper - hoist it into checker
-        // PORT: Go `requiresAddingImplicitUndefined` reads `r.checker`; here the checker is passed in.
+        // ts#64649, Go N' nodebuilderimpl.go:2287: the checker method, not the emit resolver.
         let requires_adding_undefined = declaration.is_some()
             && (is_parameter_declaration(declaration)
                 || is_property_signature_declaration(declaration)
                 || is_property_declaration(declaration))
             && {
-                let resolver = self.get_emit_resolver();
                 let enclosing_declaration = nb_ctx(b, |c| c.enclosing_declaration);
-                resolver.requires_adding_implicit_undefined(
-                    self,
-                    declaration,
-                    symbol,
-                    enclosing_declaration,
-                )
+                self.requires_adding_implicit_undefined(declaration, symbol, enclosing_declaration)
             };
         let add_undefined_for_parameter = requires_adding_undefined && is_parameter_declaration(declaration) /*|| ast.IsJSDocParameterTag(declaration)*/;
         if add_undefined_for_parameter {

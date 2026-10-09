@@ -787,8 +787,10 @@ impl FlatKey for TypeId {
 // - `regExpScanner` (Go scanner) and `mu` are out of scope (scanner object,
 //   concurrency) and are not fields. The nil-able Go `ctx` is
 //   `Option<Context>`. `tracer` is the last field (see `crate::tracing`).
-//   `emitResolver` plus `emitResolverOnce` is the `Option<Rc<EmitResolver>>`
-//   field `emit_resolver`.
+//   `emitResolverLinks` (ts#64649) is `emit_resolver_links`. The
+//   `emit_resolver` field is not in Go N' (ts#64649 removed `emitResolver`
+//   and `emitResolverOnce`): it keeps the resolver of `get_emit_resolver`
+//   until the program, emit and ls lanes port their ts#64649 parts.
 // - `sync.Once` fields become `bool` "done" flags.
 // - `*T` pools and shared structs (`*Relation`, `*Relater`, `*FlowState`,
 //   `*InferenceState`) are `Rc<RefCell<T>>`; nil-able ones are `Option`.
@@ -834,6 +836,8 @@ pub struct Checker {
     pub exact_optional_property_types: bool,
     pub can_collect_symbol_alias_accessibility_data: bool,
     pub emit_resolver: Option<Rc<crate::checker::emit_resolver_p1::EmitResolver>>,
+    // ts#64649, Go N' checker.go:893
+    pub emit_resolver_links: crate::checker::emit_resolver_p1::EmitResolverLinks,
     pub was_canceled: bool,
     pub array_variances: SharedList<VarianceFlags>,
     pub globals: SymbolTable,
@@ -1364,6 +1368,7 @@ impl Checker {
                 .verbatim_module_syntax
                 .is_false_or_unknown(),
             emit_resolver: None,
+            emit_resolver_links: Default::default(),
             was_canceled: false,
             array_variances: vec![VarianceFlags::COVARIANT].into(),
             globals: SymbolTable::NIL,
