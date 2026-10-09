@@ -38,6 +38,19 @@ fn test_scan_string_preserves_lone_surrogates() {
     assert_eq!(s.token_value(), expected);
 }
 
+// Go: scanner/scanner_test.go:95 TestScanSourceKeyword
+#[test]
+fn test_scan_source_keyword() {
+    let mut s = new_scanner();
+    s.set_text("source sourceValue");
+
+    assert_eq!(s.scan(), SyntaxKind::SourceKeyword);
+    assert_eq!(token_to_string(SyntaxKind::SourceKeyword), "source");
+    assert_eq!(string_to_token("source"), SyntaxKind::SourceKeyword);
+    assert_eq!(s.scan(), SyntaxKind::Identifier);
+    assert_eq!(s.token_value(), "sourceValue");
+}
+
 // Go: parser/parser_test.go:158 TestHeritageClauseElementKinds
 #[test]
 fn test_heritage_clause_element_kinds() {
