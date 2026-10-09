@@ -1981,11 +1981,13 @@ child_test! {
     // `WARM_AUTO_IMPORT_HOLD_CAP` clears the slow mark, so the next warm is
     // eager again. The check holds by order, not by timing: it reads the mark
     // only after an attempt that took less than the cap in all (a bound on
-    // its clone), and takes a new session until an attempt does.
+    // its clone), and takes a new session until an attempt does: at least
+    // 20, and more for up to 60 s, so a loaded host gets a short attempt.
     fn a_short_auto_import_warm_clone_clears_the_slow_mark() {
         use ts_goport::gostd::local;
         let mut attempts = Vec::new();
-        for _ in 0..20 {
+        let first = Instant::now();
+        while attempts.len() < 20 || first.elapsed() < Duration::from_secs(60) {
             let (session, _, reads) = session_with_pending_warm();
             session.warm_auto_import_slow.set(true);
             local::run_pending();
@@ -2003,7 +2005,12 @@ child_test! {
             }
             attempts.push(attempt);
         }
-        panic!("no attempt took less than the cap: {attempts:?}");
+        attempts.sort();
+        panic!(
+            "none of {} attempts took less than the cap; the shortest: {:?}",
+            attempts.len(),
+            &attempts[..5]
+        );
     }
 }
 

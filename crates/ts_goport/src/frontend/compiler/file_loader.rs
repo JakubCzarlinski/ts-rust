@@ -3706,10 +3706,7 @@ export const a: T | Dep | number = x + (h as never);
         exit_after: Option<usize>,
     ) -> (Vec<String>, Vec<String>, Vec<(String, bool)>, usize) {
         use crate::contentmapper::{self, HostOptions, ProjectSpec, SpawnerFunc};
-        let dir = std::env::temp_dir().join(format!(
-            "ts_goport_file_loader_{label}_{}",
-            std::process::id()
-        ));
+        let dir = std::path::PathBuf::from(mapped_dir(label));
         let _ = std::fs::remove_dir_all(&dir);
         let mapper_package = (
             "node_modules/fake-mapper/package.json".to_string(),
@@ -3833,6 +3830,18 @@ export const a: T | Dep | number = x + (h as never);
         (lines, transforms, taken, spawns.get())
     }
 
+    /// The temp dir of the `load_mapped` run `label`, as the loader names it.
+    #[cfg(unix)]
+    fn mapped_dir(label: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "ts_goport_file_loader_{label}_{}",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     #[cfg(unix)]
     const MAPPED_TSCONFIG: &str = r#"{ "compilerOptions": { "module": "preserve",
          "moduleResolution": "bundler", "types": [], "noEmit": true },
@@ -3871,15 +3880,19 @@ export const a: T | Dep | number = x + (h as never);
     // sends no second request for it) or a supplemental output, and
     // the program equals a load on one thread. The fake mapper answers the
     // newest request first, so answers come out of order when requests
-    // overlap. Which files the workers take varies, so the parallel load
-    // runs again, at most 10 times, until a worker sent the transform of
-    // the `@badmap` file. Go sends the transforms from its parse goroutines
-    // (fileloader.go:438 parseContentMappedFile), and parses only after the
-    // mapping check (transform.go:48-58 ParseResult).
+    // overlap. Which files the workers take varies, so the loader leaves
+    // the jobs of the `@badmap` file and of 3 plain files to the workers
+    // (`MAPPED_WAIT_FOR_WORKER`): a worker sends their transforms and parses
+    // the plain files, also on a loaded host where the loader would reach
+    // them first. The parallel load still runs again, at most 10 times,
+    // until a worker sent the transform of the `@badmap` file. Go sends the
+    // transforms from its parse goroutines (fileloader.go:438
+    // parseContentMappedFile), and parses only after the mapping check
+    // (transform.go:48-58 ParseResult).
     #[cfg(unix)]
     #[test]
     fn workers_send_the_content_mapper_transforms() {
-        use super::super::files_parser::parse_workers_enabled;
+        use super::super::files_parser::{MAPPED_WAIT_FOR_WORKER, parse_workers_enabled};
         let files = mapped_files(40, |i| match i {
             3 | 17 | 31 => "@diag",
             9 | 26 => "@fail",
@@ -3896,13 +3909,20 @@ export const a: T | Dep | number = x + (h as never);
         serial_transforms.sort();
         assert_eq!(serial_transforms, want);
         for attempt in 0..10 {
-            let (parallel, mut parallel_transforms, taken, _) = load_mapped(
-                &format!("mapped_parallel_{attempt}"),
-                MAPPED_TSCONFIG,
-                &files,
-                false,
-                None,
-            );
+            let label = format!("mapped_parallel_{attempt}");
+            let held: Vec<String> = [21, 5, 15, 30]
+                .iter()
+                .map(|i| format!("{}/src/C{i}.vue", mapped_dir(&label)))
+                .collect();
+            if parse_workers_enabled() {
+                MAPPED_WAIT_FOR_WORKER.lock().unwrap().extend(held.clone());
+            }
+            let (parallel, mut parallel_transforms, taken, _) =
+                load_mapped(&label, MAPPED_TSCONFIG, &files, false, None);
+            MAPPED_WAIT_FOR_WORKER
+                .lock()
+                .unwrap()
+                .retain(|name| !held.contains(name));
             parallel_transforms.sort();
             assert_eq!(parallel_transforms, want, "one transform per file");
             assert_eq!(parallel.join("\n"), serial.join("\n"));

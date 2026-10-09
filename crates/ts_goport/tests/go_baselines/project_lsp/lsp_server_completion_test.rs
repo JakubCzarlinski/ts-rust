@@ -432,14 +432,16 @@ child_test! {
     // snapshot change starts the auto-import warm (Go warmAutoImportCache,
     // session.go:2046), which indexes other.ts while the program has it. Go
     // starts the warm on a goroutine before the diagnostic's answer. The
-    // next change removes the import 40 ms after the answer; Go's
+    // next change removes the import 1 s after the answer; Go's
     // registry keeps the exports of a file that left the program
     // (registry.go:1033-1040, :1137), so the last completion offers
-    // `widget`. The port started the warm only after 50 ms with no message,
-    // so the change cancelled it and the completion did not offer `widget`.
-    // The gap stays under `IDLE_QUIET_PERIOD` (50 ms), so the old rule
-    // still fails, and gives the small clone room under load.
+    // `widget`. The port started the warm only after `IDLE_QUIET_PERIOD`
+    // with no message, so the change cancelled it and the completion did
+    // not offer `widget`. This process waits 10 s for quiet
+    // (`set_idle_quiet_period`), so the gap stays under the quiet period
+    // and the old rule still fails, and the clone has 1 s on a loaded host.
     fn auto_import_warm_runs_before_the_next_change() {
+        ts_goport::lsp::set_idle_quiet_period(std::time::Duration::from_secs(10));
         let client = init_completion_client(
             "/home/projects",
             &[
@@ -472,7 +474,7 @@ child_test! {
             },
         );
         assert!(msg.error.is_none(), "{:?}", msg.error);
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_secs(1));
         change(&client, &a_uri, 3, text);
 
         let (msg, resp) = client.send_request(
