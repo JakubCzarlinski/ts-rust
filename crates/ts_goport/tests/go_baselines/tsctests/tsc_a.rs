@@ -2787,6 +2787,63 @@ fn tsc_incremental_inputs() -> Vec<TscInput> {
             ..Default::default()
         },
         TscInput {
+            sub_scenario: "recursive tagged tuple after incremental edits".into(),
+            files: file_map! {
+                "/home/src/workspaces/project/tsconfig.json" => r#"{"compilerOptions": {"strict": true, "incremental": true, "noEmit": true, "module": "esnext", "moduleResolution": "bundler"}}"#,
+                format!("{TSC_LIB_PATH}/lib.es2026.full.d.ts") => lib_with_readonly_array.clone(),
+                "/home/src/workspaces/project/doc.ts" => dedent(r#"
+					type Doc =
+						| string
+						| { [k: string]: Doc }
+						| readonly ["array", Doc]
+						| readonly ["array", Doc, { length: number }]
+						| readonly ["array", Doc, { min?: number; max?: number }]
+						| readonly ["union", Doc, ...Doc[]];
+					export declare const doc: Doc;
+				"#),
+                "/home/src/workspaces/project/consumer.ts" => dedent(r#"
+					import { doc } from "./doc";
+					export const value = doc;
+				"#),
+            },
+            edits: vec![
+                no_change(),
+                TscEdit {
+                    caption: "add a comment to the recursive type".into(),
+                    edit: edit(|sys: &TestSys| {
+                        sys.append_file("/home/src/workspaces/project/doc.ts", "\n// comment-only edit\n");
+                    }),
+                    ..Default::default()
+                },
+                no_change(),
+                TscEdit {
+                    caption: "add a union constituent".into(),
+                    edit: edit(|sys: &TestSys| {
+                        sys.replace_file_text("/home/src/workspaces/project/doc.ts", "| string", "| number\n    | string");
+                    }),
+                    ..Default::default()
+                },
+                no_change(),
+                TscEdit {
+                    caption: "verify the consumer type was not weakened".into(),
+                    edit: edit(|sys: &TestSys| {
+                        sys.append_file("/home/src/workspaces/project/consumer.ts", "\nexport const invalid: number = value;\n");
+                    }),
+                    ..Default::default()
+                },
+                no_change(),
+                TscEdit {
+                    caption: "delete build info and check the edited source afresh".into(),
+                    edit: edit(|sys: &TestSys| {
+                        sys.remove_no_error("/home/src/workspaces/project/tsconfig.tsbuildinfo");
+                    }),
+                    ..Default::default()
+                },
+                no_change(),
+            ],
+            ..Default::default()
+        },
+        TscInput {
             sub_scenario: "json module diagnostics are cleared after fixing the json file".into(),
             files: file_map! {
                 "/home/src/workspaces/project/tsconfig.json" => dedent(r#"

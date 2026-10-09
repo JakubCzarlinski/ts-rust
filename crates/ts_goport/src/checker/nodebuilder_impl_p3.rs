@@ -1708,8 +1708,9 @@ impl Checker {
         self.get_symbol_of_node(host)
     }
 
-    // Go: checker/nodebuilderimpl.go:3070 typeReferenceToTypeNode
-    pub fn type_reference_to_type_node(
+    // Go: checker/nodebuilderimpl.go:3086 arrayOrTupleTypeToNode (Go N', ts#64556)
+    // The array and tuple part of Go N typeReferenceToTypeNode.
+    pub fn array_or_tuple_type_to_node(
         &mut self,
         b: &Rc<RefCell<NodeBuilderImpl>>,
         t: TypeId,
@@ -1741,7 +1742,8 @@ impl Checker {
             } else {
                 f.new_type_operator_node(SyntaxKind::ReadonlyKeyword, array_type)
             }
-        } else if self.ty(target).object_flags.intersects(ObjectFlags::TUPLE) {
+        } else {
+            debug_assert!(self.ty(target).object_flags.intersects(ObjectFlags::TUPLE));
             let element_infos: Vec<TupleElementInfo> =
                 self.ty(target).as_tuple_type().element_infos.clone();
             let readonly = self.ty(target).as_tuple_type().readonly;
@@ -1830,7 +1832,22 @@ impl Checker {
             nb_ctx_mut(b, |c| c.encountered_error = true);
             Node::NIL
             // TODO: GH#18217
-        } else if nb_ctx(b, |c| {
+        }
+    }
+
+    // Go: checker/nodebuilderimpl.go:3070 typeReferenceToTypeNode
+    // Go N' nodebuilderimpl.go:3160: since ts#64556 the array and tuple part
+    // is `array_or_tuple_type_to_node`.
+    pub fn type_reference_to_type_node(
+        &mut self,
+        b: &Rc<RefCell<NodeBuilderImpl>>,
+        t: TypeId,
+    ) -> Node {
+        let mut type_arguments: Vec<TypeId> = self.get_type_arguments(t).to_vec();
+        let target = self.ty(t).target();
+        let e = nb_e(b);
+        let f = e.factory();
+        if nb_ctx(b, |c| {
             c.flags
                 .intersects(NodeBuilderFlags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL)
         }) && {

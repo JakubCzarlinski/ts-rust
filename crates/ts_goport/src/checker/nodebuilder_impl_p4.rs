@@ -53,7 +53,19 @@ impl Checker {
         }
 
         let ctx = nb_ctx(b);
-        let type_id = t;
+        let mut type_id = t;
+        // ts#64556 (Go N' nodebuilderimpl.go:3240)
+        let is_array_or_tuple = self.is_array_or_tuple_type(t);
+        if is_array_or_tuple {
+            // Deferred and regular references share a cycle identity.
+            let target = self.ty(t).target();
+            let type_arguments = self.get_type_arguments(t).to_vec();
+            type_id = self.create_type_reference(target, &type_arguments);
+        }
+        if ctx.borrow().visited_types.contains(&type_id) {
+            return self.create_cyclic_structure_placeholder(b);
+        }
+
         let (t_flags, t_object_flags, t_symbol) = {
             let ty = self.ty(t);
             (ty.flags, ty.object_flags, ty.symbol)
@@ -61,8 +73,10 @@ impl Checker {
         let is_constructor_object = t_object_flags.intersects(ObjectFlags::ANONYMOUS)
             && t_symbol.is_some()
             && self.sym(t_symbol).flags.intersects(SymbolFlags::CLASS);
-        let id: Option<CompositeSymbolIdentity> = if t_object_flags
-            .intersects(ObjectFlags::REFERENCE)
+        let id: Option<CompositeSymbolIdentity> = if is_array_or_tuple {
+            // Do not bound finite container nesting by the shared Array symbol or tuple origin.
+            None
+        } else if t_object_flags.intersects(ObjectFlags::REFERENCE)
             && self.ty(t).as_type_reference().node.is_some()
         {
             Some(CompositeSymbolIdentity {
@@ -96,6 +110,12 @@ impl Checker {
                     type_id,
                     flags: c.flags,
                     internal_flags: c.internal_flags,
+                    // ts#64556 (Go N' nodebuilderimpl.go:3273)
+                    infer_type_parameters: if c.infer_type_parameters.is_empty() {
+                        CacheHashKey::default()
+                    } else {
+                        get_type_list_key(&c.infer_type_parameters)
+                    },
                 },
                 // Don't rely on type cache if we're expanding a type, because we need to compute `canIncreaseExpansionDepth`.
                 c.max_expansion_depth < 0,
@@ -566,7 +586,10 @@ impl Checker {
                 ctx.borrow_mut().depth -= 1;
                 return result;
             }
-            if self.ty(t).as_type_reference().node.is_some() {
+            // ts#64556 (Go N' nodebuilderimpl.go:3545)
+            if self.is_array_or_tuple_type(t) {
+                return self.visit_and_transform_type(b, t, Checker::array_or_tuple_type_to_node);
+            } else if self.ty(t).as_type_reference().node.is_some() {
                 return self.visit_and_transform_type(b, t, Checker::type_reference_to_type_node);
             } else {
                 return self.type_reference_to_type_node(b, t);
