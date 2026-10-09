@@ -929,6 +929,9 @@ pub struct Checker {
     pub reverse_mapped_symbol_links: LinkStore<SymbolId, ReverseMappedSymbolLinks>,
     pub marked_assignment_symbol_links: LinkStore<SymbolId, MarkedAssignmentSymbolLinks>,
     pub symbol_container_links: LinkStore<SymbolId, Box<ContainingSymbolLinks>>,
+    // ts#64469, Go N' checker.go:701. Go nil is `None`.
+    pub external_module_containers:
+        Option<Box<crate::checker::symbol_accessibility::ExternalModuleContainerIndex>>,
     pub source_file_links: LinkStore<Node, Box<SourceFileLinks>>,
     pub pattern_for_type: FxHashMap<TypeId, Node>,
     pub context_free_types: FxHashMap<Node, TypeId>,
@@ -1450,6 +1453,7 @@ impl Checker {
             reverse_mapped_symbol_links: LinkStore::default(),
             marked_assignment_symbol_links: LinkStore::default(),
             symbol_container_links: LinkStore::default(),
+            external_module_containers: None,
             source_file_links: LinkStore::default(),
             pattern_for_type: FxHashMap::default(),
             context_free_types: FxHashMap::default(),

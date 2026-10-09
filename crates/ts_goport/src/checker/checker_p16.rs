@@ -665,15 +665,17 @@ impl Checker {
         self.merged_symbols.insert(source, target);
     }
 
+    // Go: checker/checker.go:14641 getResolvedTarget (ts#64469)
+    pub fn get_resolved_target(&mut self, symbol: SymbolId) -> SymbolId {
+        let merged = self.get_merged_symbol(symbol);
+        let resolved = self.resolve_symbol(merged);
+        self.get_merged_symbol(resolved)
+    }
+
     // Go: checker/checker.go:14604 getSymbolIfSameReference
     pub fn get_symbol_if_same_reference(&mut self, s1: SymbolId, s2: SymbolId) -> SymbolId {
-        let m1 = self.get_merged_symbol(s1);
-        let r1 = self.resolve_symbol(m1);
-        let left = self.get_merged_symbol(r1);
-        let m2 = self.get_merged_symbol(s2);
-        let r2 = self.resolve_symbol(m2);
-        let right = self.get_merged_symbol(r2);
-        if left == right {
+        // ts#64469, Go N' checker.go:14646
+        if self.get_resolved_target(s1) == self.get_resolved_target(s2) {
             return s1;
         }
         SymbolId::NIL
