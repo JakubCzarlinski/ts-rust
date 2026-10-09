@@ -51,11 +51,6 @@ pub struct CommandLineParser {
 // Go: tsoptions/commandlineparser.go:43 ParseCommandLine
 // PORT: the plan names the entry point `parse_command_line(args, fs)`; Go
 // takes a `ParseConfigHost`, so this does too.
-// PORT: Go also converts the options with `watchOptionsParser` and stores the
-// result in `ParsedConfig.WatchOptions`. Watch mode is out of scope, the
-// crate has no `WatchOptions` type and U15 did not port `watchOptionsParser`,
-// so that step is left out. It does not change the compiler options, the
-// file names, the errors or the raw options.
 pub fn parse_command_line(
     command_line: &[String],
     host: &dyn ParseConfigHost,
@@ -147,27 +142,16 @@ impl CommandLineParser {
                             self.worker_diagnostics.option_type_mismatch_diagnostic,
                         );
                     } else {
-                        let watch_opt = WATCH_NAME_MAP.get_option_declaration_from_name(
+                        // ts#64457: the watch options are gone, so a name that
+                        // is not an option of this parser is unknown (TS5023,
+                        // or TS5072 for --build).
+                        let err = self.create_unknown_option_error(
                             input_option_name,
-                            true, /*allowShort*/
+                            s,
+                            Node::NIL,
+                            Node::NIL,
                         );
-                        if let Some(watch_opt) = watch_opt {
-                            i = self.parse_option_value(
-                                args,
-                                i,
-                                watch_opt,
-                                WATCH_OPTIONS_DID_YOU_MEAN_DIAGNOSTICS
-                                    .option_type_mismatch_diagnostic,
-                            );
-                        } else {
-                            let err = self.create_unknown_option_error(
-                                input_option_name,
-                                s,
-                                Node::NIL,
-                                Node::NIL,
-                            );
-                            self.errors.push(err);
-                        }
+                        self.errors.push(err);
                     }
                 }
                 _ => self.file_names.push(s.clone()),

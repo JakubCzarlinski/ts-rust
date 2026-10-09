@@ -276,11 +276,6 @@ impl OptionParser for CompilerOptionsParser<'_> {
     }
 }
 
-// Go: tsoptions/parsinghelpers.go:220 watchOptionsParser
-// PORT: not ported. Watch mode is out of scope for this port, and the crate
-// has no `core.WatchOptions` type. The Go parser has no caller in the
-// tsconfig path (`watchOptions` parsing is commented out in Go).
-
 // Go: tsoptions/parsinghelpers.go:236 typeAcquisitionParser
 // PORT: the embedded Go `*core.TypeAcquisition` is a mutable borrow.
 pub struct TypeAcquisitionParser<'a> {
@@ -636,10 +631,6 @@ fn float_or_int32_to_flag<T>(
         "interface conversion: interface {{}} is {go_type}, not float64"
     ))
 }
-
-// Go: tsoptions/parsinghelpers.go:577 ParseWatchOptions
-// PORT: not ported. Watch mode is out of scope, and the crate has no
-// `core.WatchOptions` type.
 
 // Go: tsoptions/parsinghelpers.go:606 ParseTypeAcquisition
 // PORT: Go `allOptions` can be nil; every Rust caller has one, so the nil

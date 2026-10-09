@@ -611,18 +611,6 @@ pub fn validate_json_option_value(
     let mut errors: Vec<Diagnostic> = Vec::new();
 
     match opt.extra_validation {
-        ExtraValidation::SPEC => {
-            if let Some(diag) = spec_to_diagnostic(as_string(&val), false) {
-                errors.push(
-                    create_diagnostic_for_node_in_source_file_or_compiler_diagnostic(
-                        source_file,
-                        value_expression,
-                        diag,
-                        args![],
-                    ),
-                );
-            }
-        }
         ExtraValidation::LOCALE => {
             let (_, ok) = crate::locale::parse(as_string(&val));
             if !ok {

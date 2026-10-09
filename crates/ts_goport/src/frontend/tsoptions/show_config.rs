@@ -225,23 +225,6 @@ pub fn convert_to_ts_config(
         &compare_paths_options,
     );
 
-    // Remove command-line-only options from the output
-    for name in [
-        "showConfig",
-        "configFile",
-        "configFilePath",
-        "help",
-        "init",
-        "listFilesOnly",
-        "listEmittedFiles",
-        "project",
-        "build",
-        "version",
-    ] {
-        // PORT: Go `OrderedMap.Delete` keeps the order of the other keys.
-        option_map.shift_remove(name);
-    }
-
     // Add implied compiler options (options that are derived from explicitly set options,
     // such as moduleResolution implied by module, or useDefineForClassFields implied by target).
     // This mirrors TypeScript's convertToTSConfig computedOptions logic.
@@ -354,10 +337,16 @@ fn is_zero_show_config_field(
     }
 }
 
-// Go: tsoptions/showconfig.go:165 serializeCompilerOptions
+// Go: tsoptions/options_generated.go:1362 serializeCompilerOptions
 // serializeCompilerOptions converts CompilerOptions to an ordered map with
 // string names as keys and serialized values (enums as strings, paths as
 // relative paths, etc.) matching the output of tsc --showConfig.
+// PORT: since ts#64457 Go generates this function. Its option set is the
+// options of tools/scripts/tsc/options.ts that are not `showConfig: false`
+// (listFiles, listEmittedFiles) and not in the Command_line_Options or
+// Output_Formatting category, in CompilerOptions field order. That is the
+// old Go set minus listFiles; the old Go delete list after serialization is
+// gone. The port keeps its field walk and skips those two options.
 fn serialize_compiler_options(
     options: &CompilerOptions,
     config_file_path: &str,
@@ -383,6 +372,11 @@ fn serialize_compiler_options(
             std::ptr::eq(category, diag::Command_line_Options)
                 || std::ptr::eq(category, diag::Output_Formatting)
         }) {
+            continue;
+        }
+
+        // ts#64457: `showConfig: false` in Go options.ts.
+        if matches!(option_decl.name, "listFiles" | "listEmittedFiles") {
             continue;
         }
 
@@ -513,9 +507,6 @@ fn show_config_value_as_int(value: &CompilerOptionsValue) -> Option<i64> {
         V::ModuleDetectionKind(k) => Some(i64::from(k.0)),
         V::JsxEmit(k) => Some(i64::from(k.0)),
         V::NewLineKind(k) => Some(i64::from(k.0)),
-        V::WatchFileKind(k) => Some(i64::from(k.0)),
-        V::WatchDirectoryKind(k) => Some(i64::from(k.0)),
-        V::PollingKind(k) => Some(i64::from(k.0)),
         _ => None,
     }
 }
