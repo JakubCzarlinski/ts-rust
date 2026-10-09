@@ -116,7 +116,8 @@ handles.
 Borrowing: arenas live in `Checker`. Copy what you need out of an arena entry
 before calling another `&mut self` method. Clone `Vec`s you iterate while
 calling `&mut self` methods. After a call, re-fetch links
-(`self.value_symbol_links.get(s)`) instead of holding a reference across it.
+(`self.value_symbol_links.get_by_id(&self.symbols, s)`) instead of holding a
+reference across it.
 
 ### Go `int` past the int32 range
 
@@ -175,10 +176,12 @@ Each arena has a dummy entry at index 0. New entries are pushed; ids are
 `TypeId(len as u32)` etc. Go `c.newType`, `c.newSignature`,
 `newIndexInfo`, `newTypePredicate`, mapper constructors push into these.
 Go `t.id` equals the arena index, so Go's per-checker `TypeId` counter order
-is kept. Link stores: `value_symbol_links: LinkStore<SymbolId, ValueSymbolLinks>`
-etc. with the Go field names. A store keeps its values in 64-key pages, so a
-value over 32 bytes (a compile-time check in `LinkStore`), or one that few
-keys have, goes in a `Box` (`type_node_links: LinkStore<Node, Box<TypeNodeLinks>>`).
+is kept. Link stores: `mapped_symbol_links: LinkStore<SymbolId, MappedSymbolLinks>`
+etc. with the Go field names (`value_symbol_links` is a
+`ValueSymbolLinkStore`, whose reads give symbol ids; see Threads). A store
+keeps its values in 64-key pages, so a value over 32 bytes (a compile-time
+check in `LinkStore`), or one that few keys have, goes in a `Box`
+(`type_node_links: LinkStore<Node, Box<TypeNodeLinks>>`).
 
 `checker/mapper.rs` defines `TypeMapper` (an enum over the Go mapper kinds)
 and its constructors. Go `m.Map(t)` -> `self.mapper_map(m, t)`,
@@ -887,14 +890,40 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   its own files, not on thread timing.
 - Symbol ids: the port gives a symbol its id where Go calls
   `ast.GetSymbolId` (every `valueSymbolLinks` read through
-  `SymbolArenaLinks`, and the node builder, symbol accessibility, enum
+  `ValueSymbolLinkStore`, and the node builder, symbol accessibility, enum
   relation and emit resolver maps), so one checker counts ids as Go does.
+  The store is a type of its own, so a read that gives no id does not
+  compile; the 2 reads of a pushed type resolution (`get_noted`) and the
+  parameter memo (`try_get_without_id`) are the named exceptions.
   Late-bound names hold ids (`__@k@<id>`), and the node builder counts their
   length toward truncation. Go's checkers share one counter: a worker skips
-  the ids of the other checkers' `NewChecker` (`program::new_pool_checker`),
-  but not the ids that other checkers give while they check, which race in
-  Go. Go also gives each class with private names an id at bind time; the
-  port does not (`get_symbol_name_for_private_identifier`).
+  the ids that the other checkers' `NewChecker` gave to their own symbols
+  (`program::new_pool_checker`). It does not skip the ids of binder
+  symbols that `NewChecker` gave (merge error texts): Go gives each of those
+  once in the pool. It also does not skip the ids that other checkers give
+  while they check, which race in Go. Go also gives each class with private
+  names an id at bind time; the port does not
+  (`get_symbol_name_for_private_identifier`), so such a class gets its id
+  later, at its first id site. The 4 check-time private name sites give the
+  class its id, as Go does (`Checker::private_identifier_symbol_name`).
+- Several programs in one process: Go's one counter runs on from one
+  program to the next, and a bound file keeps the ids of its symbols. With
+  `--singleThreaded` (one checker) the port hands the ids of a program's
+  checker to its loading thread, so the next program's checker starts from
+  them (`program::CheckerPool::carry_symbol_ids`): when the next pool is made
+  (watch makes the next program before it releases the last) or when the
+  program is released (`tsc -b`). So `tsc -b --singleThreaded` and the
+  watch cycles of `--singleThreaded` give Go's ids. Other cases do not
+  carry ids, and each program's checkers count from the loading thread's
+  ids: with more checkers (the default pool, `tsc -b` projects built at once)
+  Go's ids race, and per-thread counters cannot give Go's process count
+  without one shared counter. The language server's programs and its search
+  threads do not carry ids either. Go's ids are also fixed with
+  `--checkers 1` when the programs run one at a time (`tsc -b --builders 1
+  --checkers 1`, watch with `--checkers 1`), but the port does not carry
+  them there: `program.rs` cannot tell that the programs run one at a time,
+  and with more builders a carry would make one program wait for the
+  checker of another.
 - One thread can hold checkers of several programs (the language server's
   dispatch thread). Make a checker's program current while the checker runs
   (`core::enter_program`): the `program.rs` functions that checker code

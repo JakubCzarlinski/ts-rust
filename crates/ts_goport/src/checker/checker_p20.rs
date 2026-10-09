@@ -387,6 +387,8 @@ impl Checker {
                     SymbolFlags::NONE
                 };
             let symbol = self.new_symbol(flags, &text);
+            // Go reads the links (and gives the id) before the right side.
+            self.value_symbol_links.get_by_id(&self.symbols, symbol);
             let resolved_type =
                 self.get_type_from_binding_element(e, include_pattern_in_type, report_errors);
             self.value_symbol_links

@@ -167,7 +167,7 @@ impl Checker {
                 }
             } else {
                 // Go keys the map by `ast.GetSymbolId(symbol)`, which gives
-                // the symbol its id (`SymbolArenaLinks`).
+                // the symbol its id (`ValueSymbolLinkStore`).
                 get_symbol_id(&self.symbols, symbol);
                 t = nb_ctx(b, |c| c.enclosing_symbol_types.get(&symbol).copied())
                     .unwrap_or(TypeId::NIL);

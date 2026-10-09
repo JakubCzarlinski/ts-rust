@@ -1599,6 +1599,9 @@ impl Checker {
                 "args",
                 CheckFlags::REST_PARAMETER,
             );
+            // Go `links := c.valueSymbolLinks.Get(restParamSymbol)` gives the id here.
+            self.value_symbol_links
+                .get_by_id(&self.symbols, rest_param_symbol);
             let type_at_position = self.get_type_at_position(shorter, longest_count);
             let mut resolved_type = self.create_array_type(type_at_position);
             self.value_symbol_links
