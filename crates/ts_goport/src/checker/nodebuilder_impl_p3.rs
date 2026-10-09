@@ -1418,7 +1418,7 @@ impl Checker {
                     // in turn try to reuse the same node again. Mark the type as visited around the reuse
                     // attempt so the inner recursion bottoms out via the visitedTypes guard below.
                     if nb_ctx(b, |c| c.visited_types.contains(&type_id)) {
-                        return self.create_elided_information_placeholder(b);
+                        return self.create_cyclic_structure_placeholder(b);
                     }
                     nb_ctx_mut(b, |c| c.visited_types.insert(type_id));
                     let type_node = self.try_reuse_existing_non_parameter_type_node(
@@ -1434,7 +1434,7 @@ impl Checker {
                     }
                 }
                 if nb_ctx(b, |c| c.visited_types.contains(&type_id)) {
-                    return self.create_elided_information_placeholder(b);
+                    return self.create_cyclic_structure_placeholder(b);
                 }
                 return self.visit_and_transform_type(
                     b,
@@ -1480,7 +1480,7 @@ impl Checker {
                     // The specified symbol flags need to be reinterpreted as type flags
                     self.symbol_to_type_node(b, type_alias, SymbolFlags::TYPE, NodeList::NIL)
                 } else {
-                    self.create_elided_information_placeholder(b)
+                    self.create_cyclic_structure_placeholder(b)
                 }
             } else {
                 self.visit_and_transform_type(b, t, Checker::create_type_node_from_object_type)
@@ -1527,18 +1527,26 @@ impl Checker {
         if self.ty(t).flags.intersects(TypeFlags::UNION) {
             let id = self.ty(t).id;
             if nb_ctx(b, |c| c.visited_types.contains(&id)) {
-                if !nb_ctx(b, |c| {
-                    c.flags
-                        .intersects(NodeBuilderFlags::ALLOW_ANONYMOUS_IDENTIFIER)
-                }) {
-                    nb_ctx_mut(b, |c| c.encountered_error = true);
-                    tracker_report_cyclic_structure_error(self, b);
-                }
-                return self.create_elided_information_placeholder(b);
+                return self.create_cyclic_structure_placeholder(b);
             }
             return self.visit_and_transform_type(b, t, Checker::type_to_type_node);
         }
         self.type_to_type_node(b, t)
+    }
+
+    // Go: checker/nodebuilderimpl.go:3017 createCyclicStructurePlaceholder (Go N', ts#64461)
+    pub fn create_cyclic_structure_placeholder(
+        &mut self,
+        b: &Rc<RefCell<NodeBuilderImpl>>,
+    ) -> Node {
+        if !nb_ctx(b, |c| {
+            c.flags
+                .intersects(NodeBuilderFlags::ALLOW_ANONYMOUS_IDENTIFIER)
+        }) {
+            nb_ctx_mut(b, |c| c.encountered_error = true);
+            tracker_report_cyclic_structure_error(self, b);
+        }
+        self.create_elided_information_placeholder(b)
     }
 
     // Go: checker/nodebuilderimpl.go:3009 conditionalTypeToTypeNode

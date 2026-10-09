@@ -135,6 +135,8 @@ impl Checker {
         if let Some(id) = id {
             depth = ctx.borrow().symbol_depth.get(&id).copied().unwrap_or(0);
             if depth > 10 {
+                // ts#64461 (Go N' nodebuilderimpl.go:3310): the depth limit truncates.
+                ctx.borrow_mut().truncating = true;
                 return self.create_elided_information_placeholder(b);
             }
             ctx.borrow_mut().symbol_depth.insert(id, depth + 1);
