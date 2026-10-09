@@ -674,8 +674,10 @@ impl Checker {
 
     /// Builds the filter of `g` from its members table, in each slot of
     /// `g` (with `strictBindCallApply` off, the 3 function slots are all
-    /// Function), and the union when all 4 slots are built. `g` is
-    /// resolved, or not an object type: then it has no table (Go
+    /// Function), and the union when all 4 types are set and their slots
+    /// are built. While `initialize_checker` has not set a type, its slot
+    /// is nil, and a union then would miss its names when it is set. `g`
+    /// is resolved, or not an object type: then it has no table (Go
     /// `getPropertyOfObjectType` gives nil for it), and its filter is
     /// empty.
     #[cold]
@@ -699,7 +701,7 @@ impl Checker {
             }
         }
         filters.all = None;
-        if filters.of == globals {
+        if globals.iter().all(|global| global.is_some()) && filters.of == globals {
             let mut all = [0u64; 4];
             for slot_bits in &filters.bits {
                 for (word, slot_word) in all.iter_mut().zip(slot_bits) {
@@ -2442,6 +2444,50 @@ type T2 = new () => {};
                 );
             }
         });
+    }
+
+    /// The union waits for all 4 types (R183 reviewer item 2).
+    /// `initialize_checker` sets Object before Function, CallableFunction
+    /// and NewableFunction (Go checker.go:1361-1364). A filter of Object
+    /// built between them must not make a union of Object's names alone:
+    /// once Function is set, the lookups of its names would skip it.
+    #[test]
+    fn union_waits_for_all_4_types() {
+        let a = r#"export {};
+type T0 = { a: number };
+type T1 = () => void;
+type T2 = new () => {};
+"#;
+        let (early_union, skipped) =
+            with_checked_a(&[("a.ts", a.to_string())], STRICT, |c, _, types| {
+                build_filter(c, &types);
+                let globals = c.augment_globals();
+                c.global_function_type = TypeId::NIL;
+                c.global_callable_function_type = TypeId::NIL;
+                c.global_newable_function_type = TypeId::NIL;
+                c.augment_filters = AugmentFilters::default();
+                c.build_augment_filter(globals[AUGMENT_OBJECT]);
+                let early_union = c.augment_filters.all.is_some();
+                c.global_function_type = globals[AUGMENT_FUNCTION];
+                c.global_callable_function_type = globals[AUGMENT_CALLABLE];
+                c.global_newable_function_type = globals[AUGMENT_NEWABLE];
+                let function = c.ty(globals[AUGMENT_FUNCTION]).as_structured_type().members;
+                let names: Vec<Name> = c
+                    .symbols
+                    .iter_names(function)
+                    .map(|(name, _)| name)
+                    .collect();
+                let any_function = c.any_function_type;
+                let skipped: Vec<String> = names
+                    .iter()
+                    .filter(|name| c.augment_lookups_miss(any_function, name))
+                    .map(|name| name.as_str().to_string())
+                    .collect();
+                assert_lookups_match_go(c, &types, &[]);
+                (early_union, skipped)
+            });
+        assert!(!early_union, "a union of Object's names alone");
+        assert_eq!(skipped, Vec::<String>::new());
     }
 
     /// The source of 40 names `{prefix}0` to `{prefix}39` that a module
