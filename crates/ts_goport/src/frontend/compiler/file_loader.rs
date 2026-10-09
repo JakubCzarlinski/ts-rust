@@ -4346,4 +4346,48 @@ export const a: T | Dep | number = x + (h as never);
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
+
+    // ts#64159 (fileloader.go:747): "A file cannot have a reference to
+    // itself" is checked on the resolved file, so a reference without an
+    // extension that resolves to its own file is TS1006 too. A reference to
+    // another spelling that does not exist stays "not found".
+    #[test]
+    fn triple_slash_self_reference_is_checked_after_resolution() {
+        let (dir, _cwd, config) = ts64519_project(
+            "self_reference",
+            r#"{"compilerOptions":{"noLib":true},"files":["a.ts","b.ts","c.ts"]}"#,
+            &[
+                (
+                    "a.ts",
+                    "/// <reference path=\"a\" />\nexport const a = 1;\n",
+                ),
+                (
+                    "b.ts",
+                    "/// <reference path=\"./b.ts\" />\nexport const b = 1;\n",
+                ),
+                (
+                    "c.ts",
+                    "/// <reference path=\"./C.ts\" />\nexport const c = 1;\n",
+                ),
+            ],
+        );
+        let _scope = crate::core::enter_program(None);
+        let cwd = _cwd;
+        let program = new_program(ts64519_options(ts64519_host(&cwd), &config, None));
+        let codes = |name: &str| {
+            let file = program.get_source_file(&format!("{cwd}/{name}")).unwrap();
+            program
+                .include_processor
+                .get_diagnostics(&program)
+                .borrow_mut()
+                .get_diagnostics_for_file(file.root)
+                .iter()
+                .map(Diagnostic::code)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(codes("a.ts"), [1006]);
+        assert_eq!(codes("b.ts"), [1006]);
+        assert_eq!(codes("c.ts"), [6053]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
