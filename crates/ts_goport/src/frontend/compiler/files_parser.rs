@@ -1806,6 +1806,10 @@ struct PrefetchQueue {
     redirects: FxHashMap<String, (String, Path)>,
     next_job: usize,
     closed: bool,
+    /// True once the workers of `PrefetchPool::add_mapped_workers` start.
+    /// They wait on `ready` too (`PrefetchShared::wake`).
+    // PORT: not in Go (see `PrefetchJob::mapped`).
+    mapped_workers: bool,
 }
 
 impl PrefetchQueue {
@@ -2259,8 +2263,7 @@ impl PrefetchShared {
             return;
         }
         queue.rank = Some((jobs, count));
-        drop(queue);
-        self.ready.notify_all();
+        self.wake(&queue, 1);
     }
 
     /// Pushes the `count` largest of `jobs` that are still queued on top of
@@ -2298,8 +2301,7 @@ impl PrefetchShared {
         if !queue.is_first(&job) {
             queue.pending.push(job);
         }
-        drop(queue);
-        self.ready.notify_all();
+        self.wake(&queue, 1);
     }
 
     /// Queues the parses of one `FilesParser::start` batch: new jobs, and
@@ -2345,11 +2347,26 @@ impl PrefetchShared {
                 queue.push_pending(job);
             }
         }
-        drop(queue);
-        // The workers of content-mapped jobs wait on `ready` too, so a
-        // single wake could reach one that cannot take the job.
-        if woken > 0 {
-            self.ready.notify_all();
+        self.wake(&queue, woken);
+    }
+
+    /// Wakes the workers for `jobs` new jobs, with the queue lock held. Go
+    /// runs each queued task on a goroutine of its own
+    /// (core/workgroup.go:34 parallelWorkGroup.Queue), so a job wakes one
+    /// worker. Once the workers of content-mapped jobs started, they wait on
+    /// `ready` too, and one wake could reach a worker that cannot take the
+    /// job, so all wake. The lock keeps such a worker from starting to wait
+    /// between the check and the wake.
+    // PORT: not in Go (see `PrefetchJob::mapped`).
+    fn wake(&self, queue: &std::sync::MutexGuard<'_, PrefetchQueue>, jobs: usize) {
+        if queue.mapped_workers {
+            if jobs > 0 {
+                self.ready.notify_all();
+            }
+        } else {
+            for _ in 0..jobs {
+                self.ready.notify_one();
+            }
         }
     }
 
@@ -2496,6 +2513,7 @@ impl PrefetchPool {
     /// once as the parse goroutines of Go send.
     // PORT: not in Go (see `PrefetchJob::mapped`).
     fn add_mapped_workers(&mut self, workers: usize) {
+        lock(&self.shared.queue).mapped_workers = true;
         self.spawn_workers(workers, true);
     }
 
