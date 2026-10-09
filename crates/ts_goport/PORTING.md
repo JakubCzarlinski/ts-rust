@@ -862,7 +862,9 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   once in the pool. It also does not skip the ids that other checkers give
   while they check, which race in Go. Go also gives each class with private
   names an id at bind time; the port does not
-  (`get_symbol_name_for_private_identifier`).
+  (`get_symbol_name_for_private_identifier`), so such a class gets its id
+  later, at its first id site. The 4 check-time private name sites give the
+  class its id, as Go does (`Checker::private_identifier_symbol_name`).
 - One thread can hold checkers of several programs (the language server's
   dispatch thread). Make a checker's program current while the checker runs
   (`core::enter_program`): the `program.rs` functions that checker code
