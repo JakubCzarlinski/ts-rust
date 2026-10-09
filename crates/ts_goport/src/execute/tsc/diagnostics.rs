@@ -307,12 +307,13 @@ pub fn format_status_time(now: SystemTime) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Go time.Local (go1.27.1 time/zoneinfo_unix.go), for the status clock
+// Go time.Local (go1.27.1 time/zoneinfo_unix.go and zoneinfo_windows.go),
+// for the status clock
 // ---------------------------------------------------------------------------
-// PORT: Go `time.Location` is a `jiff::tz::TimeZone`. Go parses zone files
-// with `LoadLocationFromTZData`; jiff parses the same TZif data (the
-// transitions and the POSIX TZ footer) with `TimeZone::tzif`. This is the
-// Unix path (zoneinfo_unix.go); the port targets Linux.
+// PORT: Go `time.Location` is a `jiff::tz::TimeZone`. On Unix, Go parses
+// zone files with `LoadLocationFromTZData`; jiff parses the same TZif data
+// (the transitions and the POSIX TZ footer) with `TimeZone::tzif`. Windows
+// has its own `init_local` (below).
 
 // Go: time/zoneinfo.go:88 localLoc, :89 localOnce, :91 (*Location).get
 static LOCAL_LOC: OnceLock<jiff::tz::TimeZone> = OnceLock::new();
@@ -371,13 +372,18 @@ fn init_local() -> jiff::tz::TimeZone {
     jiff::tz::TimeZone::UTC
 }
 
-// Go: time/zoneinfo_windows.go:234 initLocal
-// PORT: Go calls `GetTimeZoneInformation` and builds the zone from the
-// standard and daylight rules of the current year. jiff asks Windows for
-// the zone name (`GetDynamicTimeZoneInformation`) and takes that zone from
-// its own data, which gives the same civil time for the current time. On
-// failure both fall back to UTC.
-// DIVERGES: jiff reads `TZ` first; Go on Windows does not read it.
+// Go: time/zoneinfo_windows.go:230 initLocal
+// PORT: Go calls `GetTimeZoneInformation` and makes the zone from the
+// Windows standard and daylight rules. jiff asks Windows for the zone key
+// name (`GetDynamicTimeZoneInformation`), maps it to an IANA name (CLDR
+// windowsZones) and takes that zone from the zone data in the binary. For a
+// mapped zone, both give the same civil time now. On failure both fall back
+// to UTC.
+// DIVERGES: jiff reads `TZ` first; Go on Windows does not read it. The
+// logger test `log_time_is_local_time` sets `TZ`, so on Windows it needs
+// this. A Windows zone with no IANA name in jiff's table gives UTC, and jiff
+// does not read the Windows setting that turns off daylight saving time.
+// Go's exact path needs `unsafe` FFI, which the workspace forbids.
 #[cfg(windows)]
 fn init_local() -> jiff::tz::TimeZone {
     jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC)
