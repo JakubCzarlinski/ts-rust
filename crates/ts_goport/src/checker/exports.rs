@@ -142,6 +142,21 @@ impl Checker {
         self.get_merged_symbol(symbol)
     }
 
+    // Go: checker/exports.go:107 GetSymbolOfNode (ts#64598)
+    pub fn get_symbol_of_node_exported(&mut self, node: Node) -> SymbolId {
+        self.get_symbol_of_node(node)
+    }
+
+    // Go: checker/exports.go:111 GetSymbolOfDeclaration (ts#64598)
+    pub fn get_symbol_of_declaration_exported(&mut self, node: Node) -> SymbolId {
+        self.get_symbol_of_declaration(node)
+    }
+
+    // Go: checker/exports.go:115 GetParentOfSymbol (ts#64598)
+    pub fn get_parent_of_symbol_exported(&mut self, symbol: SymbolId) -> SymbolId {
+        self.get_parent_of_symbol(symbol)
+    }
+
     // Go: checker/exports.go:107 TryFindAmbientModule
     pub fn try_find_ambient_module_exported(&mut self, module_name: &str) -> SymbolId {
         self.try_find_ambient_module(module_name, true /*withAugmentations*/)
