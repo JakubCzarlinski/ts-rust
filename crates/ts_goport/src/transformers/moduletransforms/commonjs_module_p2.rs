@@ -452,12 +452,12 @@ impl CommonJSModuleTransformer {
         self.visit_each_child_with(VisitorKind::TopLevelNested, node)
     }
 
-    // Go: transformers/moduletransforms/commonjsmodule.go:1330 CommonJSModuleTransformer.visitForStatement
+    // Go: transformers/moduletransforms/commonjsmodule.go:1334 CommonJSModuleTransformer.visitForStatement
     pub(super) fn visit_for_statement(&mut self, node: Node) -> Node {
         let initializer = self.visit_node_with(VisitorKind::DiscardedValue, node.initializer());
         let condition = self.visit_node_with(VisitorKind::Root, node.condition());
         let incrementor = self.visit_node_with(VisitorKind::DiscardedValue, node.incrementor());
-        let body = self.visit_iteration_body_with(VisitorKind::TopLevelNested, node.statement());
+        let body = self.visit_iteration_body_with(VisitorKind::Root, node.statement());
         self.emit_context.factory().update_for_statement(
             node,
             initializer,
@@ -467,11 +467,11 @@ impl CommonJSModuleTransformer {
         )
     }
 
-    // Go: transformers/moduletransforms/commonjsmodule.go:1340 CommonJSModuleTransformer.visitForInOrOfStatement
+    // Go: transformers/moduletransforms/commonjsmodule.go:1344 CommonJSModuleTransformer.visitForInOrOfStatement
     pub(super) fn visit_for_in_or_of_statement(&mut self, node: Node) -> Node {
         let initializer = self.visit_node_with(VisitorKind::DiscardedValue, node.initializer());
         let expression = self.visit_node_with(VisitorKind::Root, node.expression());
-        let body = self.visit_iteration_body_with(VisitorKind::TopLevelNested, node.statement());
+        let body = self.visit_iteration_body_with(VisitorKind::Root, node.statement());
         self.emit_context.factory().update_for_in_or_of_statement(
             node,
             node.await_modifier(),
