@@ -799,7 +799,9 @@ fn watch_build_frees_file_versions() {
 /// `tsgo-oracle-673a5f17d713 -w -p tsconfig.json --pretty` for the same
 /// edits. The outputs equal Go's (`expected-out`): the last edit emits
 /// each file again, with its comments and LF line ends, and the source
-/// maps of the crlf build stay.
+/// maps of the crlf build stay. The `expected-out` source maps are from
+/// `tsgo-oracle-fed0bf24149f` (pin N'), which omits an empty `sourceRoot`
+/// (ts#64544); its watch output and other outputs are the same as pin N's.
 // PORT: no Go counterpart; the output is Go's.
 #[test]
 fn watch_config_edits_of_emit_options_print_like_go() {
