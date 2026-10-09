@@ -883,7 +883,12 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   ids: with more checkers (the default pool, `tsc -b` projects built at once)
   Go's ids race, and per-thread counters cannot give Go's process count
   without one shared counter. The language server's programs and its search
-  threads do not carry ids either.
+  threads do not carry ids either. Go's ids are also fixed with
+  `--checkers 1` when the programs run one at a time (`tsc -b --builders 1
+  --checkers 1`, watch with `--checkers 1`), but the port does not carry
+  them there: `program.rs` cannot tell that the programs run one at a time,
+  and with more builders a carry would make one program wait for the
+  checker of another.
 - One thread can hold checkers of several programs (the language server's
   dispatch thread). Make a checker's program current while the checker runs
   (`core::enter_program`): the `program.rs` functions that checker code
