@@ -728,6 +728,11 @@ impl Checker {
                 args![],
             );
         }
+        // ts#64674, Go N' checker.go:5237: a computed name is checked even
+        // though it is a grammar error.
+        if is_computed_property_name(node.name()) {
+            self.check_expression(node.name().expression());
+        }
         if node.initializer().is_some() {
             self.check_expression(node.initializer());
         }

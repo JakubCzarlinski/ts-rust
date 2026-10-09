@@ -496,13 +496,8 @@ impl Checker {
                             return;
                         }
                     }
-                    // Computed property names on enum members are a grammar error and are never checked
-                    // (checkEnumMember only checks the member initializer, not the name), so resolving
-                    // identifiers in them here would report a spurious "Cannot find name" diagnostic.
+                    // ts#64674, Go N' checker.go:28798: enum member names are checked now (checkEnumMember).
                     if computed_name.is_some() {
-                        if is_enum_member(computed_name.parent()) {
-                            return;
-                        }
                         if is_invalid_computed_property_name(computed_name) {
                             return;
                         }
