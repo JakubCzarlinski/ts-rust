@@ -949,9 +949,8 @@ mod tests {
         std::fs::write(dir.join("a.ts"), "export {};").unwrap();
         std::fs::write(dir.join("tsconfig.json"), r#"{"files": ["a.ts"]}"#).unwrap();
         // The compiler takes normalized paths: a Windows temp dir has backslashes.
-        let normalized = |p: &std::path::Path| {
-            crate::frontend::tspath::normalize_slashes(p.to_str().unwrap())
-        };
+        let normalized =
+            |p: &std::path::Path| crate::frontend::tspath::normalize_slashes(p.to_str().unwrap());
         let config = normalized(&dir.join("tsconfig.json"));
         lock(&PANIC_AFTER_PARSE).push(config.clone());
         let compare_paths_options = ComparePathsOptions {

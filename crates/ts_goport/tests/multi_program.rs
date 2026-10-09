@@ -260,6 +260,8 @@ fn run_cycles(test: &str, count: usize, env: &[(&str, &str)]) -> (usize, usize) 
 /// The `emit` and `linked` lines are `import(...)` types, so the checkers
 /// on the shared thread make module specifiers. The `linked` one needs the
 /// symlink cache of its own program (see `link_shelf`).
+// Only the Unix-only test `three_live_projects_report_like_fresh_runs` uses this.
+#[cfg(unix)]
 const LIVE_PROJECTS: [(&str, &str, &str); 3] = [
     ("basic", "check", "side: \"left\" | \"right\""),
     ("emit", "emit", "b: import(\"./shapes\").Box"),
@@ -1154,6 +1156,8 @@ fn run_live_programs(cwd: &Path, args: &[&str]) {
 }
 
 /// Runs a fresh `goport_emit -p <config> --outDir <out_dir>` in `cwd`.
+// Only the Unix-only test `three_live_projects_report_like_fresh_runs` uses this.
+#[cfg(unix)]
 fn goport_emit(cwd: &Path, config: &str, out_dir: &str) -> Report {
     let run = Command::new(env!("CARGO_BIN_EXE_goport_emit"))
         .args(["-p", config, "--outDir", out_dir])

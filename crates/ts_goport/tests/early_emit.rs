@@ -221,9 +221,8 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
         fs::create_dir(root.join("src")).expect("create src");
         fs::write(root.join("src/a.ts"), "export function* g() { yield 1; }\n")
             .expect("write a.ts");
-        let expected = expected.map_or_else(String::new, |text| {
-            text.replace("{root}", &norm(&root))
-        });
+        let expected =
+            expected.map_or_else(String::new, |text| text.replace("{root}", &norm(&root)));
         let status = if expected.is_empty() { 0 } else { 2 };
         for args in [
             &["-p", "tsconfig.json"][..],

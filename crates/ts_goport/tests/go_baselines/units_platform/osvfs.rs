@@ -49,7 +49,9 @@ fn mklink(target: &Path, link: &Path) -> bool {
     match std::os::windows::fs::symlink_file(target, link) {
         Ok(()) => true,
         Err(err) if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
-            eprintln!("skip: file symlink support is not enabled without elevation or developer mode: {err}");
+            eprintln!(
+                "skip: file symlink support is not enabled without elevation or developer mode: {err}"
+            );
             false
         }
         Err(err) => panic!("symlink: {err}"),
@@ -95,7 +97,10 @@ fn setup_symlinks(tmp: &Path) -> (PathBuf, PathBuf) {
     let link_file = link.join("file");
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(&target_file, "hello").unwrap();
-    assert!(mklink(&target, &link), "a directory link needs no privilege");
+    assert!(
+        mklink(&target, &link),
+        "a directory link needs no privilege"
+    );
     (target_file, link_file)
 }
 
