@@ -40,7 +40,7 @@ fn entry_exists(info: &Option<Rc<InfoCacheEntry>>) -> bool {
     info.as_ref().is_some_and(|p| p.exists())
 }
 
-// Go: module/resolver.go:19 resolved
+// Go: module/resolver.go:20 resolved
 #[derive(Clone, Debug, Default)]
 pub struct Resolved {
     pub path: String,
@@ -52,19 +52,19 @@ pub struct Resolved {
     pub resolved_using_extra_extensions: bool,
 }
 
-// Go: module/resolver.go:28 resolved.shouldContinueSearching
+// Go: module/resolver.go:29 resolved.shouldContinueSearching
 // PORT: `Option::is_none` on `Option<Resolved>`.
 
-// Go: module/resolver.go:32 resolved.isResolved
+// Go: module/resolver.go:33 resolved.isResolved
 // PORT: the private `resolved_is_resolved` helper.
 
-// Go: module/resolver.go:36 continueSearching
+// Go: module/resolver.go:37 continueSearching
 #[must_use]
 pub fn continue_searching() -> Option<Resolved> {
     None
 }
 
-// Go: module/resolver.go:40 unresolved
+// Go: module/resolver.go:41 unresolved
 #[must_use]
 pub fn unresolved() -> Option<Resolved> {
     Some(Resolved::default())
@@ -147,19 +147,19 @@ pub(crate) fn dynamic_directory_candidate(candidate: &str) -> Cow<'_, str> {
     Cow::Owned(combine_paths(&directory, &[&encoded_base]))
 }
 
-// Go: module/resolver.go:44 resolutionKindSpecificLoader
+// Go: module/resolver.go:223 resolutionKindSpecificLoader
 // PORT: Go closures capture `r`. Here the loader gets the state as its first
 // argument, so the caller can keep `&mut self`.
 pub type ResolutionKindSpecificLoader<'s> =
     dyn FnMut(&mut ResolutionState<'s>, Extensions, &str) -> Option<Resolved>;
 
-// Go: module/resolver.go:46 tracer
+// Go: module/resolver.go:225 tracer
 #[derive(Clone, Debug, Default)]
 pub struct Tracer {
     pub traces: Vec<DiagAndArgs>,
 }
 
-// Go: module/resolver.go:50 DiagAndArgs
+// Go: module/resolver.go:229 DiagAndArgs
 // PORT: Go `Args []any` is `Vec<String>`. Values are formatted with
 // `ToString` when written (`args!`), like the Go `%v` formatting later.
 #[derive(Clone, Debug)]
@@ -169,7 +169,7 @@ pub struct DiagAndArgs {
 }
 
 impl Tracer {
-    // Go: module/resolver.go:55 tracer.write
+    // Go: module/resolver.go:234 tracer.write
     // PORT: the Go nil check is on the caller side (`trace_write!`).
     pub fn write(&mut self, diag: &'static crate::diagnostics::Message, args: Vec<String>) {
         self.traces.push(DiagAndArgs {
@@ -178,7 +178,7 @@ impl Tracer {
         });
     }
 
-    // Go: module/resolver.go:61 tracer.getTraces
+    // Go: module/resolver.go:240 tracer.getTraces
     // PORT: a nil tracer gives an empty `Vec` (see `traces_of`).
     #[must_use]
     pub fn get_traces(&self) -> Vec<DiagAndArgs> {
@@ -194,7 +194,7 @@ fn traces_of(tracer: &Option<Rc<RefCell<Tracer>>>) -> Vec<DiagAndArgs> {
     }
 }
 
-// Go: module/resolver.go:68 resolutionState
+// Go: module/resolver.go:247 resolutionState
 pub struct ResolutionState<'a> {
     pub resolver: &'a DefaultResolver,
     pub tracer: Option<Rc<RefCell<Tracer>>>,
@@ -246,7 +246,7 @@ impl<'a> ResolutionState<'a> {
     }
 }
 
-// Go: module/resolver.go:93 newResolutionState
+// Go: module/resolver.go:273 newResolutionState
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn new_resolution_state<'a>(
@@ -296,7 +296,7 @@ pub fn new_resolution_state<'a>(
     state
 }
 
-// Go: module/resolver.go:138 GetCompilerOptionsWithRedirect
+// Go: module/resolver.go:325 GetCompilerOptionsWithRedirect
 #[must_use]
 pub fn get_compiler_options_with_redirect(
     compiler_options: &Rc<CompilerOptions>,
@@ -311,7 +311,7 @@ pub fn get_compiler_options_with_redirect(
     compiler_options.clone()
 }
 
-// Go: module/resolver.go:148 DefaultResolver
+// Go: module/resolver.go:335 DefaultResolver
 // PORT: Go embeds `caches`; here it is the `caches` field.
 pub struct DefaultResolver {
     pub caches: Caches,
@@ -324,7 +324,7 @@ pub struct DefaultResolver {
     // reportDiagnostic: DiagnosticReporter
 }
 
-// Go: module/resolver.go:158 ResolverOptions
+// Go: module/resolver.go:350 ResolverOptions
 // PORT: the Go nil `Host` and `CompilerOptions` are `None`. Go copies the
 // struct by value; this is `Clone`.
 #[derive(Clone, Default)]
@@ -337,7 +337,7 @@ pub struct ResolverOptions {
     pub package_json_cache: Option<Rc<InfoCache>>,
 }
 
-// Go: module/resolver.go:167 NewResolver
+// Go: module/resolver.go:363 NewResolver
 // PORT: Go keeps a nil `Host` or `CompilerOptions` and panics at the first
 // use; `DefaultResolver` has no nil for them, so this panics now.
 #[must_use]
@@ -366,7 +366,7 @@ pub fn new_resolver(opts: ResolverOptions) -> DefaultResolver {
 }
 
 impl DefaultResolver {
-    // Go: module/resolver.go:183 newTraceBuilder
+    // Go: module/resolver.go:401 newTraceBuilder
     #[must_use]
     pub fn new_trace_builder(&self) -> Option<Rc<RefCell<Tracer>>> {
         if self.compiler_options.trace_resolution == Tristate::True {
@@ -375,7 +375,7 @@ impl DefaultResolver {
         None
     }
 
-    // Go: module/resolver.go:190 GetPackageScopeForPath
+    // Go: module/resolver.go:408 GetPackageScopeForPath
     pub fn get_package_scope_for_path(&self, directory: &str) -> Option<Rc<InfoCacheEntry>> {
         ResolutionState::zero(self, self.compiler_options.clone())
             .get_package_scope_for_path(directory)
@@ -409,7 +409,7 @@ impl DefaultResolver {
         }
     }
 
-    // Go: module/resolver.go:194 PackageJsonCacheEntries (tsgo#4301)
+    // Go: module/resolver.go:412 PackageJsonCacheEntries (tsgo#4301)
     // PORT: the entries include the package.json lookups of the parse
     // worker answers that this resolver took (`Caches::worker_package_jsons`),
     // so that they are what the one Go cache of all parse tasks holds: after
@@ -469,7 +469,7 @@ impl DefaultResolver {
 }
 
 impl Tracer {
-    // Go: module/resolver.go:198 tracer.traceResolutionUsingProjectReference
+    // Go: module/resolver.go:416 tracer.traceResolutionUsingProjectReference
     pub fn trace_resolution_using_project_reference(
         &mut self,
         redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
@@ -486,7 +486,7 @@ impl Tracer {
 }
 
 impl DefaultResolver {
-    // Go: module/resolver.go:204 ResolveTypeReferenceDirective
+    // Go: module/resolver.go:422 ResolveTypeReferenceDirective
     pub fn resolve_type_reference_directive(
         &self,
         type_reference_directive_name: &str,
@@ -592,7 +592,7 @@ impl DefaultResolver {
         (result, traces_of(&trace_builder))
     }
 
-    // Go: module/resolver.go:249 ResolveModuleName
+    // Go: module/resolver.go:467 ResolveModuleName
     // PORT: the `module.Resolver` form is `Resolver::resolve_module_name`,
     // whose result can be nil. This one is never nil and never fails (Go
     // returns a nil error).
@@ -613,7 +613,7 @@ impl DefaultResolver {
         (result, trace, None)
     }
 
-    // Go: module/resolver.go:254 ResolveModuleNameFromDirectory (ts#64299)
+    // Go: module/resolver.go:472 ResolveModuleNameFromDirectory (ts#64299)
     // PORT: see `resolve_module_name`.
     pub fn resolve_module_name_from_directory(
         &self,
@@ -631,7 +631,7 @@ impl DefaultResolver {
         (result, trace, None)
     }
 
-    // Go: module/resolver.go:259 resolveModuleName
+    // Go: module/resolver.go:477 resolveModuleName
     // PORT: named `resolve_module_name_worker`; the Go names
     // `ResolveModuleName` and `resolveModuleName` share a snake name.
     fn resolve_module_name_worker(
@@ -791,7 +791,7 @@ impl DefaultResolver {
         (final_result, traces_of(&trace_builder))
     }
 
-    // Go: module/resolver.go:319 ResolvePackageDirectory
+    // Go: module/resolver.go:537 ResolvePackageDirectory
     // PORT: a Go nil `*ResolvedModule` is `None`.
     pub fn resolve_package_directory(
         &self,
@@ -822,7 +822,7 @@ impl DefaultResolver {
         None
     }
 
-    // Go: module/resolver.go:330 tryResolveFromTypingsLocation
+    // Go: module/resolver.go:548 tryResolveFromTypingsLocation
     // PORT: takes the original result by value and returns it or a new one.
     pub fn try_resolve_from_typings_location(
         &self,
@@ -873,7 +873,7 @@ impl DefaultResolver {
         result
     }
 
-    // Go: module/resolver.go:359 resolveConfig
+    // Go: module/resolver.go:577 resolveConfig
     pub fn resolve_config(&self, module_name: &str, containing_file: &str) -> ResolvedModule {
         let containing_directory = get_directory_path(containing_file);
         let mut state = new_resolution_state(
@@ -893,7 +893,7 @@ impl DefaultResolver {
 }
 
 impl Tracer {
-    // Go: module/resolver.go:367 tracer.traceTypeReferenceDirectiveResult
+    // Go: module/resolver.go:585 tracer.traceTypeReferenceDirectiveResult
     pub fn trace_type_reference_directive_result(
         &mut self,
         type_reference_directive_name: &str,
@@ -1039,7 +1039,7 @@ impl ResolutionState<'_> {
         )
     }
 
-    // Go: module/resolver.go:447 resolutionState.mangleScopedPackageName
+    // Go: module/resolver.go:667 resolutionState.mangleScopedPackageName
     pub fn mangle_scoped_package_name(&mut self, name: &str) -> String {
         let mangled = mangle_scoped_package_name(name);
         if self.tracer.is_some() && mangled != name {
@@ -1094,7 +1094,7 @@ impl ResolutionState<'_> {
         None
     }
 
-    // Go: module/resolver.go:485 getPackageScopeForPath
+    // Go: module/resolver.go:707 getPackageScopeForPath
     pub fn get_package_scope_for_path(&mut self, directory: &str) -> Option<Rc<InfoCacheEntry>> {
         let resolver = self.resolver;
         for_each_ancestor_directory_stopping_at_global_cache(
@@ -1110,7 +1110,7 @@ impl ResolutionState<'_> {
         )
     }
 
-    // Go: module/resolver.go:499 resolveNodeLike
+    // Go: module/resolver.go:719 resolveNodeLike
     pub fn resolve_node_like(&mut self) -> ResolvedModule {
         if self.tracer.is_some() {
             let conditions = self
@@ -1167,7 +1167,7 @@ impl ResolutionState<'_> {
         result
     }
 
-    // Go: module/resolver.go:532 resolveNodeLikeWorker
+    // Go: module/resolver.go:752 resolveNodeLikeWorker
     pub fn resolve_node_like_worker(&mut self) -> ResolvedModule {
         let resolved = self.try_load_module_using_optional_resolution_settings();
         if resolved.is_some() {
@@ -1228,7 +1228,7 @@ impl ResolutionState<'_> {
         self.create_resolved_module(None, false)
     }
 
-    // Go: module/resolver.go:576 loadModuleFromSelfNameReference
+    // Go: module/resolver.go:796 loadModuleFromSelfNameReference
     pub fn load_module_from_self_name_reference(&mut self) -> Option<Resolved> {
         let directory_path = get_normalized_absolute_path(
             &self.containing_directory,
@@ -1301,7 +1301,7 @@ impl ResolutionState<'_> {
         self.load_module_from_exports(&scope, secondary_extensions, &subpath)
     }
 
-    // Go: module/resolver.go:623 loadModuleFromImports
+    // Go: module/resolver.go:842 loadModuleFromImports
     pub fn load_module_from_imports(&mut self) -> Option<Resolved> {
         if self.name == "#"
             || (self.name.starts_with("#/")
@@ -1365,7 +1365,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:657 loadModuleFromExports
+    // Go: module/resolver.go:876 loadModuleFromExports
     pub fn load_module_from_exports(
         &mut self,
         package_info: &Option<Rc<InfoCacheEntry>>,
@@ -1441,7 +1441,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:690 loadModuleFromExportsOrImports
+    // Go: module/resolver.go:909 loadModuleFromExportsOrImports
     pub fn load_module_from_exports_or_imports(
         &mut self,
         extensions: Extensions,
@@ -1535,7 +1535,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:731 loadModuleFromTargetExportOrImport
+    // Go: module/resolver.go:950 loadModuleFromTargetExportOrImport
     #[allow(clippy::too_many_arguments)]
     pub fn load_module_from_target_export_or_import(
         &mut self,
@@ -1785,7 +1785,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:879 tryLoadInputFileForPath
+    // Go: module/resolver.go:1094 tryLoadInputFileForPath
     pub fn try_load_input_file_for_path(
         &mut self,
         final_path: &str,
@@ -1893,7 +1893,8 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:955 getOutputDirectoriesForBaseDirectory
+    // Go: module/resolver.go:955 getOutputDirectoriesForBaseDirectory (at 673a5f17d713;
+    // ts#64159 makes it getOutputDirectories, module/resolver.go:1165)
     #[must_use]
     pub fn get_output_directories_for_base_directory(
         &self,
@@ -1925,7 +1926,7 @@ impl ResolutionState<'_> {
         candidate_directories
     }
 
-    // Go: module/resolver.go:969 loadModuleFromNearestNodeModulesDirectory
+    // Go: module/resolver.go:1176 loadModuleFromNearestNodeModulesDirectory
     pub fn load_module_from_nearest_node_modules_directory(
         &mut self,
         types_scope_only: bool,
@@ -1977,7 +1978,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1001 loadModuleFromNearestNodeModulesDirectoryWorker
+    // Go: module/resolver.go:1208 loadModuleFromNearestNodeModulesDirectoryWorker
     // PORT: Go does not read `mode`.
     pub fn load_module_from_nearest_node_modules_directory_worker(
         &mut self,
@@ -2005,7 +2006,7 @@ impl ResolutionState<'_> {
         result
     }
 
-    // Go: module/resolver.go:1016 loadModuleFromImmediateNodeModulesDirectory
+    // Go: module/resolver.go:1222 loadModuleFromImmediateNodeModulesDirectory
     pub fn load_module_from_immediate_node_modules_directory(
         &mut self,
         extensions: Extensions,
@@ -2066,7 +2067,7 @@ impl ResolutionState<'_> {
         continue_searching()
     }
 
-    // Go: module/resolver.go:1045 loadModuleFromSpecificNodeModulesDirectory
+    // Go: module/resolver.go:1251 loadModuleFromSpecificNodeModulesDirectory
     pub fn load_module_from_specific_node_modules_directory(
         &mut self,
         ext: Extensions,

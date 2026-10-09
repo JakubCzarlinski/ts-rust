@@ -4,7 +4,7 @@
 use crate::contentmapper::Mapper;
 use crate::frontend::prelude::*;
 
-// Go: tsoptions/parsedoptions.go:8 ParsedOptions
+// Go: tsoptions/parsedoptions.go:11 ParsedOptions
 // PORT: Go `*CompilerOptions` is `Rc<CompilerOptions>`, so copies of the
 // struct share it like Go pointers do. Go `*TypeAcquisition` is an
 // `Option`. Go `[]*ProjectReference` is `Option<Vec<ProjectReference>>`:

@@ -93,7 +93,7 @@ pub fn parse_command_line(
 // PORT: ported with the other build mode types in
 // `execute/build/command_line.rs` (`parse_build_command_line`).
 
-// Go: tsoptions/commandlineparser.go:115 parseCommandLineWorker
+// Go: tsoptions/commandlineparser.go:112 parseCommandLineWorker
 // PORT: `fs` is passed down instead of stored (see `CommandLineParser`).
 // Go nil `vfs.FS` is `None`.
 pub fn parse_command_line_worker(
@@ -117,7 +117,7 @@ pub fn parse_command_line_worker(
 }
 
 impl CommandLineParser {
-    // Go: tsoptions/commandlineparser.go:133 (*commandLineParser).parseStrings
+    // Go: tsoptions/commandlineparser.go:131 (*commandLineParser).parseStrings
     pub fn parse_strings(&mut self, args: &[String], fs: Option<&dyn Fs>) {
         let mut i = 0usize;
         while i < args.len() {
@@ -160,7 +160,7 @@ impl CommandLineParser {
     }
 }
 
-// Go: tsoptions/commandlineparser.go:164 getInputOptionName
+// Go: tsoptions/commandlineparser.go:156 getInputOptionName
 pub fn get_input_option_name(input: &str) -> &str {
     // removes at most two leading '-' from the input string
     let input = input.strip_prefix('-').unwrap_or(input);
@@ -168,7 +168,7 @@ pub fn get_input_option_name(input: &str) -> &str {
 }
 
 impl CommandLineParser {
-    // Go: tsoptions/commandlineparser.go:169 (*commandLineParser).parseResponseFile
+    // Go: tsoptions/commandlineparser.go:161 (*commandLineParser).parseResponseFile
     // PORT: Go `defer p.responseFileStack.Delete(path)` is a `remove` before
     // each return. Go calls `p.fs.UseCaseSensitiveFileNames()` on a nil `fs`
     // and panics; so does this.
@@ -240,7 +240,7 @@ impl CommandLineParser {
     }
 }
 
-// Go: tsoptions/commandlineparser.go:224 tryReadFile
+// Go: tsoptions/commandlineparser.go:219 tryReadFile
 pub fn try_read_file(
     file_name: &str,
     read_file: &mut dyn FnMut(&str) -> (String, bool),
@@ -262,7 +262,7 @@ pub fn try_read_file(
 }
 
 impl CommandLineParser {
-    // Go: tsoptions/commandlineparser.go:229 (*commandLineParser).parseOptionValue
+    // Go: tsoptions/commandlineparser.go:232 (*commandLineParser).parseOptionValue
     // PORT: the Go parameter `diag` is `diag_message`, because `diag` is the
     // diagnostics module in Rust.
     pub fn parse_option_value(
@@ -428,7 +428,7 @@ impl CommandLineParser {
         i
     }
 
-    // Go: tsoptions/commandlineparser.go:335 (*commandLineParser).parseListTypeOption
+    // Go: tsoptions/commandlineparser.go:338 (*commandLineParser).parseListTypeOption
     pub fn parse_list_type_option(
         &self,
         opt: &'static CommandLineOption,
@@ -438,7 +438,7 @@ impl CommandLineParser {
     }
 }
 
-// Go: tsoptions/commandlineparser.go:347 ParseListTypeOption
+// Go: tsoptions/commandlineparser.go:342 ParseListTypeOption
 // PORT: Go returns `[]any`: a `List`, or a `NilList` when `core.MapFiltered`
 // keeps no element (for example `--types ,`), so the option stays unset.
 pub fn parse_list_type_option(
@@ -536,7 +536,7 @@ fn map_filtered_list(values: Vec<CompilerOptionsValue>) -> CompilerOptionsValue 
     }
 }
 
-// Go: tsoptions/commandlineparser.go:392 convertJsonOptionOfEnumType
+// Go: tsoptions/commandlineparser.go:387 convertJsonOptionOfEnumType
 pub fn convert_json_option_of_enum_type(
     opt: &CommandLineOption,
     value: &str,

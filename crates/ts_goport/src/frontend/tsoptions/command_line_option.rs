@@ -2,7 +2,7 @@ use crate::diagnostics::Message;
 use crate::frontend::prelude::*;
 use std::sync::LazyLock;
 
-// Go: tsoptions/commandlineoption.go:9 CommandLineOptionKind
+// Go: tsoptions/commandlineoption.go:10 CommandLineOptionKind
 // PORT: Go `CommandLineOptionKind` is a string type. It stays a string
 // newtype. Go `CommandLineOptionTypeX` constants are the associated
 // constants `CommandLineOptionKind::X`.
@@ -10,25 +10,25 @@ use std::sync::LazyLock;
 pub struct CommandLineOptionKind(pub &'static str);
 
 impl CommandLineOptionKind {
-    // Go: tsoptions/commandlineoption.go:12 CommandLineOptionTypeString
+    // Go: tsoptions/commandlineoption.go:13 CommandLineOptionTypeString
     pub const STRING: Self = Self("string");
-    // Go: tsoptions/commandlineoption.go:13 CommandLineOptionTypeNumber
+    // Go: tsoptions/commandlineoption.go:14 CommandLineOptionTypeNumber
     pub const NUMBER: Self = Self("number");
-    // Go: tsoptions/commandlineoption.go:14 CommandLineOptionTypeBoolean
+    // Go: tsoptions/commandlineoption.go:15 CommandLineOptionTypeBoolean
     pub const BOOLEAN: Self = Self("boolean");
-    // Go: tsoptions/commandlineoption.go:15 CommandLineOptionTypeObject
+    // Go: tsoptions/commandlineoption.go:16 CommandLineOptionTypeObject
     pub const OBJECT: Self = Self("object");
-    // Go: tsoptions/commandlineoption.go:16 CommandLineOptionTypeList
+    // Go: tsoptions/commandlineoption.go:17 CommandLineOptionTypeList
     pub const LIST: Self = Self("list");
-    // Go: tsoptions/commandlineoption.go:17 CommandLineOptionTypeListOrElement
+    // Go: tsoptions/commandlineoption.go:18 CommandLineOptionTypeListOrElement
     pub const LIST_OR_ELEMENT: Self = Self("listOrElement");
-    // Go: tsoptions/commandlineoption.go:18 CommandLineOptionTypeEnum
+    // Go: tsoptions/commandlineoption.go:19 CommandLineOptionTypeEnum
     pub const ENUM: Self = Self("enum"); // map
 }
 
 /// Go `any` in option code (`CompilerOptionsValue`, enum map values,
 /// `DefaultValueDescription`, and values read from tsconfig JSON).
-// Go: tsoptions/commandlineoption.go:204 CompilerOptionsValue
+// Go: tsoptions/commandlineoption.go:145 CompilerOptionsValue
 // PORT: Go `any` becomes a closed enum with one variant per dynamic type
 // that tsoptions stores in an `any`. `Nil` is Go untyped nil. `Int` is a Go
 // `int`, `Number` a JSON `float64`. `List` is a non-nil `[]any`, `NilList`
@@ -88,7 +88,7 @@ impl CompilerOptionsValue {
     }
 }
 
-// Go: tsoptions/commandlineoption.go:21 CommandLineOption
+// Go: tsoptions/commandlineoption.go:85 CommandLineOption
 // PORT: Go `string` fields of the static declarations are `&'static str`.
 // Go `*diagnostics.Message` fields are `Option<&'static Message>`. Go
 // unexported fields are plain `pub` fields. Declarations are leaked
@@ -160,7 +160,7 @@ impl ExtraValidation {
 }
 
 impl CommandLineOption {
-    // Go: tsoptions/commandlineoption.go:79 DeprecatedKeys
+    // Go: tsoptions/commandlineoption.go:119 DeprecatedKeys
     #[must_use]
     pub fn deprecated_keys(&self) -> Option<&'static FxHashSet<String>> {
         if self.kind != CommandLineOptionKind::ENUM {
@@ -169,7 +169,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_DEPRECATED.get(self.name)
     }
 
-    // Go: tsoptions/commandlineoption.go:86 EnumMap
+    // Go: tsoptions/commandlineoption.go:126 EnumMap
     #[must_use]
     pub fn enum_map(&self) -> Option<&'static CommandLineOptionEnumMap> {
         if self.kind != CommandLineOptionKind::ENUM {
@@ -178,7 +178,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_ENUM_MAP.get(self.name).copied()
     }
 
-    // Go: tsoptions/commandlineoption.go:93 Elements
+    // Go: tsoptions/commandlineoption.go:133 Elements
     #[must_use]
     pub fn elements(&self) -> Option<&'static CommandLineOption> {
         if self.kind != CommandLineOptionKind::LIST
@@ -189,7 +189,7 @@ impl CommandLineOption {
         COMMAND_LINE_OPTION_ELEMENTS.get(self.name).copied()
     }
 
-    // Go: tsoptions/commandlineoption.go:100 DisallowNullOrUndefined
+    // Go: tsoptions/commandlineoption.go:140 DisallowNullOrUndefined
     #[must_use]
     pub fn disallow_null_or_undefined(&self) -> bool {
         self.name == "extends"

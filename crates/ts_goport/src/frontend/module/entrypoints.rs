@@ -32,7 +32,7 @@ go_enum!(Ending, i32 {
     CHANGEABLE = 2; // EndingChangeable
 });
 
-// Go: module/resolver.go:2141 ResolvedEntrypoint
+// Go: module/resolver.go:2389 ResolvedEntrypoint
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedEntrypoint {
     // OriginalFileName is the symlink path if the entrypoint was discovered at a symlink. Empty otherwise.
@@ -49,7 +49,7 @@ pub struct ResolvedEntrypoint {
 }
 
 impl ResolvedEntrypoint {
-    // Go: module/resolver.go:2155 SymlinkOrRealpath
+    // Go: module/resolver.go:2404 SymlinkOrRealpath
     #[must_use]
     pub fn symlink_or_realpath(&self) -> String {
         if !self.original_file_name.is_empty() {
@@ -60,7 +60,7 @@ impl ResolvedEntrypoint {
 }
 
 impl DefaultResolver {
-    // Go: module/resolver.go:2162 GetEntrypointsFromPackageJsonInfo
+    // Go: module/resolver.go:2411 GetEntrypointsFromPackageJsonInfo
     // PORT: Go returns a nil slice for no entrypoints; that is an empty `Vec`.
     // Go `&resolutionState{resolver: r, extensions: ..., features: ...,
     // compilerOptions: r.compilerOptions}` spells out the zero fields here
@@ -184,7 +184,7 @@ impl DefaultResolver {
         Vec::new()
     }
 
-    // Go: module/resolver.go:2221 createResolvedEntrypointHandlingSymlink
+    // Go: module/resolver.go:2479 createResolvedEntrypointHandlingSymlink
     pub fn create_resolved_entrypoint_handling_symlink(
         &self,
         file_name: &str,
@@ -212,7 +212,7 @@ impl DefaultResolver {
 }
 
 impl ResolutionState<'_> {
-    // Go: module/resolver.go:2238 loadEntrypointsFromExportMap
+    // Go: module/resolver.go:2497 loadEntrypointsFromExportMap
     pub fn load_entrypoints_from_export_map(
         &mut self,
         package_json: &Option<Rc<InfoCacheEntry>>,
@@ -469,7 +469,7 @@ impl ResolutionState<'_> {
         }
     }
 
-    // Go: module/resolver.go:2353 getMatchedStarForPatternEntrypoint
+    // Go: module/resolver.go:2632 getMatchedStarForPatternEntrypoint
     // PORT: Go slices bytes; a case-insensitive match can end inside a
     // character, so the bytes are copied (`from_utf8_lossy`) instead of
     // slicing the `&str`.

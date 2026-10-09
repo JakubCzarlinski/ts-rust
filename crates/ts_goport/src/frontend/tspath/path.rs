@@ -8,7 +8,7 @@ use super::dynamic::{
 use crate::gostd::unicode;
 use std::borrow::Cow;
 
-// Go: tspath/path.go:14 Path
+// Go: tspath/path.go:14 Path (at 673a5f17d713; ts#64159 renames it PathKey, tspath/pathkey.go:15)
 // PORT: Go `type Path string`. A newtype keeps the Go method set
 // (`GetDirectoryPath`, `ContainsPath`, ...). `Deref<Target = str>` and
 // `Borrow<str>` stand in for Go `string(p)`.
@@ -180,51 +180,51 @@ fn last_index_byte(s: &str, c: u8) -> isize {
 
 //// Path Tests
 
-// Go: tspath/path.go:27 isAnyDirectorySeparator
+// Go: tspath/path.go:25 isAnyDirectorySeparator
 // Determines whether a byte corresponds to `/` or `\`.
 fn is_any_directory_separator(char: u8) -> bool {
     char == b'/' || char == b'\\'
 }
 
-// Go: tspath/path.go:32 IsUrl
+// Go: tspath/path.go:30 IsUrl
 // Determines whether a path starts with a URL scheme (e.g. starts with `http://`, `ftp://`, `file://`, etc.).
 pub fn is_url(path: &str) -> bool {
     get_encoded_root_length(path) < 0
 }
 
-// Go: tspath/path.go:38 IsRootedDiskPath
+// Go: tspath/path.go:36 IsRootedDiskPath
 // Determines whether a path is an absolute disk path (e.g. starts with `/`, or a dos path
 // like `c:`, `c:\` or `c:/`).
 pub fn is_rooted_disk_path(path: &str) -> bool {
     get_encoded_root_length(path) > 0
 }
 
-// Go: tspath/path.go:43 IsDiskPathRoot
+// Go: tspath/path.go:43 IsDiskPathRoot (at 673a5f17d713; removed by ts#64159)
 // Determines whether a path consists only of a path root.
 pub fn is_disk_path_root(path: &str) -> bool {
     let root_length = get_encoded_root_length(path);
     root_length > 0 && root_length as usize == path.len()
 }
 
-// Go: tspath/path.go:50 IsDynamicFileName
+// Go: tspath/path.go:42 IsDynamicFileName
 // IsDynamicFileName returns true if the file name represents a dynamic/virtual file
 // that doesn't exist on disk (e.g., untitled files with paths like "^/untitled/...").
 pub fn is_dynamic_file_name(file_name: &str) -> bool {
     file_name.starts_with("^/")
 }
 
-// Go: tspath/path.go:67 PathIsAbsolute
+// Go: tspath/path.go:59 PathIsAbsolute
 // Determines whether a path starts with an absolute path component (i.e. `/`, `c:/`, `file://`, etc.).
 pub fn path_is_absolute(path: &str) -> bool {
     get_encoded_root_length(path) != 0
 }
 
-// Go: tspath/path.go:71 HasTrailingDirectorySeparator
+// Go: tspath/path.go:63 HasTrailingDirectorySeparator
 pub fn has_trailing_directory_separator(path: &str) -> bool {
     !path.is_empty() && is_any_directory_separator(path.as_bytes()[path.len() - 1])
 }
 
-// Go: tspath/path.go:91 CombinePaths
+// Go: tspath/path.go:83 CombinePaths
 // Combines paths. If a path is absolute, it replaces any previous path. Relative paths are not simplified.
 // PORT: Go writes into one `strings.Builder` and "sets" the result by moving
 // `start`. Building the current result directly gives the same string.
@@ -250,14 +250,14 @@ pub fn combine_paths(first_path: &str, paths: &[&str]) -> String {
     result
 }
 
-// Go: tspath/path.go:134 GetPathComponents
+// Go: tspath/path.go:128 GetPathComponents
 pub fn get_path_components(path: &str, current_directory: &str) -> Vec<String> {
     let path = combine_paths(current_directory, &[path]);
     let root_length = get_root_length(&path);
     path_components(&path, root_length)
 }
 
-// Go: tspath/path.go:139 pathComponents
+// Go: tspath/path.go:138 pathComponents
 fn path_components(path: &str, root_length: usize) -> Vec<String> {
     let root = &path[..root_length];
     let mut rest: Vec<String> = path[root_length..].split('/').map(str::to_string).collect();
@@ -270,12 +270,12 @@ fn path_components(path: &str, root_length: usize) -> Vec<String> {
     result
 }
 
-// Go: tspath/path.go:148 IsVolumeCharacter
+// Go: tspath/path.go:147 IsVolumeCharacter
 pub fn is_volume_character(char: u8) -> bool {
     char.is_ascii_lowercase() || char.is_ascii_uppercase()
 }
 
-// Go: tspath/path.go:152 getFileUrlVolumeSeparatorEnd
+// Go: tspath/path.go:151 getFileUrlVolumeSeparatorEnd
 fn get_file_url_volume_separator_end(url: &str, start: usize) -> i32 {
     let url = url.as_bytes();
     if url.len() <= start {
@@ -294,7 +294,7 @@ fn get_file_url_volume_separator_end(url: &str, start: usize) -> i32 {
     -1
 }
 
-// Go: tspath/path.go:169 GetEncodedRootLength (ts#64544: dynamic file names,
+// Go: tspath/path.go:168 GetEncodedRootLength (ts#64544: dynamic file names,
 // case-insensitive file URLs)
 pub fn get_encoded_root_length(path: &str) -> i32 {
     let bytes = path.as_bytes();
@@ -389,7 +389,7 @@ pub fn get_encoded_root_length(path: &str) -> i32 {
     0
 }
 
-// Go: tspath/path.go:243 GetRootLength
+// Go: tspath/path.go:255 GetRootLength
 // PORT: returns `usize` because the result is never negative and is used to slice.
 pub fn get_root_length(path: &str) -> usize {
     let root_length = get_encoded_root_length(path);
@@ -399,7 +399,7 @@ pub fn get_root_length(path: &str) -> usize {
     root_length as usize
 }
 
-// Go: tspath/path.go:251 GetDirectoryPath
+// Go: tspath/path.go:263 GetDirectoryPath
 // PERF (pgoedit1): one string, not two. `normalize_slashes_cow` borrows a
 // path that has no backslash, as Go's `NormalizeSlashes` returns its input.
 // memchr and memrchr pick their SIMD code at run time. The byte loops they
@@ -424,13 +424,13 @@ pub fn get_directory_path(path: &str) -> String {
 }
 
 impl Path {
-    // Go: tspath/path.go:266 Path.GetDirectoryPath
+    // Go: tspath/path.go:263 Path.GetDirectoryPath
     pub fn get_directory_path(&self) -> Path {
         Path(get_directory_path(&self.0))
     }
 }
 
-// Go: tspath/path.go:270 GetPathFromPathComponents
+// Go: tspath/path.go:280 GetPathFromPathComponents
 pub fn get_path_from_path_components(path_components: &[String]) -> String {
     if path_components.is_empty() {
         return String::new();
@@ -444,7 +444,7 @@ pub fn get_path_from_path_components(path_components: &[String]) -> String {
     root + &path_components[1..].join("/")
 }
 
-// Go: tspath/path.go:283 NormalizeSlashes
+// Go: tspath/path.go:293 NormalizeSlashes
 pub fn normalize_slashes(path: &str) -> String {
     normalize_slashes_cow(path).into_owned()
 }
@@ -460,7 +460,7 @@ pub fn normalize_slashes_cow(path: &str) -> Cow<'_, str> {
     }
 }
 
-// Go: tspath/path.go:287 reducePathComponents
+// Go: tspath/path.go:297 reducePathComponents
 fn reduce_path_components(components: Vec<String>) -> Vec<String> {
     if components.is_empty() {
         return Vec::new();
@@ -520,13 +520,13 @@ pub fn resolve_tripleslash_reference(module_name: &str, containing_file: &str) -
     normalize_path(&combine_paths(&base_path, &[module_name]))
 }
 
-// Go: tspath/path.go:341 GetNormalizedPathComponents
+// Go: tspath/path.go:351 GetNormalizedPathComponents
 pub fn get_normalized_path_components(path: &str, current_directory: &str) -> Vec<String> {
     let combined = combine_paths(current_directory, &[path]);
     get_normalized_path_components_from_combined(&combined)
 }
 
-// Go: tspath/path.go:346 getNormalizedPathComponentsFromCombined
+// Go: tspath/path.go:356 getNormalizedPathComponentsFromCombined
 fn get_normalized_path_components_from_combined(path: &str) -> Vec<String> {
     let bytes = path.as_bytes();
     let root_length = get_root_length(path);
@@ -571,7 +571,8 @@ fn get_normalized_path_components_from_combined(path: &str) -> Vec<String> {
     components
 }
 
-// Go: tspath/path.go:388 GetNormalizedAbsolutePathWithoutRoot
+// Go: tspath/path.go:388 GetNormalizedAbsolutePathWithoutRoot (at 673a5f17d713;
+// removed by ts#64159)
 pub fn get_normalized_absolute_path_without_root(
     file_name: &str,
     current_directory: &str,
@@ -581,7 +582,7 @@ pub fn get_normalized_absolute_path_without_root(
     absolute_path[root_length..].to_string()
 }
 
-// Go: tspath/path.go:394 GetNormalizedAbsolutePath
+// Go: tspath/path.go:398 GetNormalizedAbsolutePath
 pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) -> String {
     let root_length = get_root_length(file_name);
     let file_name = if root_length == 0 && !current_directory.is_empty() {
@@ -724,7 +725,7 @@ pub fn get_normalized_absolute_path(file_name: &str, current_directory: &str) ->
     file_name
 }
 
-// Go: tspath/path.go:515 simpleNormalizePath
+// Go: tspath/path.go:537 simpleNormalizePath
 // PORT: Go `(string, bool)` becomes `Option<String>`.
 fn simple_normalize_path(path: &str) -> Option<String> {
     // Most paths don't require normalization
@@ -744,7 +745,7 @@ fn simple_normalize_path(path: &str) -> Option<String> {
     None
 }
 
-// Go: tspath/path.go:532 hasRelativePathSegment
+// Go: tspath/path.go:554 hasRelativePathSegment
 // hasRelativePathSegment reports whether p contains ".", "..", "./", "../", "/.", "/..", "//", "/./", or "/../".
 fn has_relative_path_segment(p: &str) -> bool {
     // PORT: the answer is true exactly when a segment is "." or ".." or
@@ -778,7 +779,7 @@ fn has_dot_or_empty_segment(b: &[u8]) -> bool {
         || SLASH_DOT.find_iter(b).any(|i| dot_segment(i + 1))
 }
 
-// Go: tspath/path.go:532 hasRelativePathSegment (the debug check of
+// Go: tspath/path.go:554 hasRelativePathSegment (the debug check of
 // `has_relative_path_segment`).
 fn has_relative_path_segment_go(p: &str) -> bool {
     let b = p.as_bytes();
@@ -887,7 +888,8 @@ fn is_bare_root(path: &str) -> bool {
     root_length != 0 && root_length == path.len() && !has_trailing_directory_separator(path)
 }
 
-// Go: tspath/path.go:612 GetCanonicalFileName
+// Go: tspath/path.go:612 GetCanonicalFileName (at 673a5f17d713;
+// ts#64159 makes it CaseSensitivity.PathKey, tspath/pathkey.go:43)
 pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: bool) -> String {
     if use_case_sensitive_file_names {
         return file_name.to_string();
@@ -895,7 +897,8 @@ pub fn get_canonical_file_name(file_name: &str, use_case_sensitive_file_names: b
     to_file_name_lower_case(file_name)
 }
 
-// Go: tspath/path.go:629 TrimFilePathPrefix (tsgo#4900)
+// Go: tspath/path.go:629 TrimFilePathPrefix (at 673a5f17d713, tsgo#4900; ts#64159
+// makes it CaseSensitivity.TrimPrefix, tspath/path.go:1031)
 // TrimFilePathPrefix removes prefix from the start of path, honoring
 // useCaseSensitiveFileNames the same way GetCanonicalFileName does. It returns
 // the remainder of path if path starts with prefix.
@@ -934,7 +937,7 @@ pub fn trim_file_path_prefix<'a>(
     ))
 }
 
-// Go: tspath/path.go:642 trimRuneCount (tsgo#4900)
+// Go: tspath/path.go:633 trimRuneCount (tsgo#4900)
 // trimRuneCount returns the suffix of s after skipping up to runeCount runes,
 // clamping to the end of s if it has fewer runes than runeCount.
 // PORT: Go decodes the bytes of `s`, so a byte that is not valid UTF-8 is one
@@ -964,7 +967,7 @@ fn go_rune_count_in_string(s: &str) -> usize {
     count
 }
 
-// Go: tspath/path.go:674 ToFileNameLowerCase
+// Go: tspath/path.go:665 ToFileNameLowerCase
 // We convert the file names to lower case as key for file name on case insensitive file system
 // While doing so we need to handle special characters (eg \u0130) to ensure that we dont convert
 // it to lower case, fileName with its lowercase form can exist along side it.
@@ -1008,7 +1011,8 @@ pub fn to_file_name_lower_case(file_name: &str) -> String {
     })
 }
 
-// Go: tspath/path.go:723 ToPath
+// Go: tspath/path.go:723 ToPath (at 673a5f17d713;
+// ts#64159 makes it CaseSensitivity.PathKey, tspath/pathkey.go:43)
 // ts#64544: an encoded dynamic file name keeps its case (see
 // `canonical_dynamic_uri_path`).
 pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: bool) -> Path {
@@ -1037,7 +1041,7 @@ pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: 
     ))
 }
 
-// Go: tspath/path.go:733 RemoveTrailingDirectorySeparator
+// Go: tspath/path.go:714 RemoveTrailingDirectorySeparator
 pub fn remove_trailing_directory_separator(path: &str) -> &str {
     if has_trailing_directory_separator(path) {
         return &path[..path.len() - 1];
@@ -1046,13 +1050,13 @@ pub fn remove_trailing_directory_separator(path: &str) -> &str {
 }
 
 impl Path {
-    // Go: tspath/path.go:740 Path.RemoveTrailingDirectorySeparator
+    // Go: tspath/path.go:714 Path.RemoveTrailingDirectorySeparator
     pub fn remove_trailing_directory_separator(&self) -> Path {
         Path(remove_trailing_directory_separator(&self.0).to_string())
     }
 }
 
-// Go: tspath/path.go:744 RemoveTrailingDirectorySeparators
+// Go: tspath/path.go:744 RemoveTrailingDirectorySeparators (at 673a5f17d713; removed by ts#64159)
 pub fn remove_trailing_directory_separators(path: &str) -> &str {
     let mut path = path;
     while has_trailing_directory_separator(path) {
@@ -1061,7 +1065,7 @@ pub fn remove_trailing_directory_separators(path: &str) -> &str {
     path
 }
 
-// Go: tspath/path.go:751 EnsureTrailingDirectorySeparator
+// Go: tspath/path.go:728 EnsureTrailingDirectorySeparator
 pub fn ensure_trailing_directory_separator(path: &str) -> String {
     if !has_trailing_directory_separator(path) {
         return format!("{path}/");
@@ -1071,7 +1075,7 @@ pub fn ensure_trailing_directory_separator(path: &str) -> String {
 }
 
 impl Path {
-    // Go: tspath/path.go:759 Path.EnsureTrailingDirectorySeparator
+    // Go: tspath/path.go:728 Path.EnsureTrailingDirectorySeparator
     pub fn ensure_trailing_directory_separator(&self) -> Path {
         Path(ensure_trailing_directory_separator(&self.0))
     }
@@ -1079,7 +1083,7 @@ impl Path {
 
 //// Relative Paths
 
-// Go: tspath/path.go:765 GetPathComponentsRelativeTo
+// Go: tspath/path.go:738 GetPathComponentsRelativeTo
 pub fn get_path_components_relative_to(
     from: &str,
     to: &str,
@@ -1123,7 +1127,7 @@ pub fn get_path_components_relative_to(
     result
 }
 
-// Go: tspath/path.go:809 GetRelativePathFromDirectory
+// Go: tspath/path.go:795 GetRelativePathFromDirectory
 pub fn get_relative_path_from_directory(
     from_directory: &str,
     to: &str,
@@ -1136,7 +1140,7 @@ pub fn get_relative_path_from_directory(
     get_path_from_path_components(&path_components)
 }
 
-// Go: tspath/path.go:817 GetRelativePathFromFile
+// Go: tspath/path.go:811 GetRelativePathFromFile
 pub fn get_relative_path_from_file(from: &str, to: &str, options: &ComparePathsOptions) -> String {
     ensure_path_is_non_module_name(&get_relative_path_from_directory(
         &get_directory_path(from),
@@ -1145,7 +1149,7 @@ pub fn get_relative_path_from_file(from: &str, to: &str, options: &ComparePathsO
     ))
 }
 
-// Go: tspath/path.go:821 ConvertToRelativePath
+// Go: tspath/path.go:815 ConvertToRelativePath
 pub fn convert_to_relative_path(
     absolute_or_relative_path: &str,
     options: &ComparePathsOptions,
@@ -1162,7 +1166,7 @@ pub fn convert_to_relative_path(
     )
 }
 
-// Go: tspath/path.go:829 GetRelativePathToDirectoryOrUrl
+// Go: tspath/path.go:823 GetRelativePathToDirectoryOrUrl
 pub fn get_relative_path_to_directory_or_url(
     directory_path_or_url: &str,
     relative_or_absolute_path: &str,
@@ -1185,7 +1189,7 @@ pub fn get_relative_path_to_directory_or_url(
     get_path_from_path_components(&path_components)
 }
 
-// Go: tspath/path.go:876 GetBaseFileName
+// Go: tspath/path.go:883 GetBaseFileName
 // Gets the portion of a path following the last (non-terminal) separator (`/`).
 // Semantics align with NodeJS's `path.basename` except that we support URL's as well.
 // If the base name has any one of the provided extensions, it is removed.
@@ -1206,7 +1210,7 @@ pub fn get_base_file_name(path: &str) -> String {
     path[start..].to_string()
 }
 
-// Go: tspath/path.go:902 GetAnyExtensionFromPath
+// Go: tspath/path.go:911 GetAnyExtensionFromPath
 // Gets the file extension for a path.
 // If extensions are provided, gets the file extension for a path, provided it is one of the provided extensions.
 pub fn get_any_extension_from_path(path: &str, extensions: &[&str], ignore_case: bool) -> String {
@@ -1227,7 +1231,7 @@ pub fn get_any_extension_from_path(path: &str, extensions: &[&str], ignore_case:
     String::new()
 }
 
-// Go: tspath/path.go:917 GetLongestExtensionFromPath (tsgo#4712)
+// Go: tspath/path.go:930 GetLongestExtensionFromPath (tsgo#4712)
 /// The longest of `extensions` that ends `path`, as it is written in
 /// `path`, or "" when none does.
 pub fn get_longest_extension_from_path<S: AsRef<str>>(
@@ -1250,7 +1254,7 @@ pub fn get_longest_extension_from_path<S: AsRef<str>>(
     longest
 }
 
-// Go: tspath/path.go:931 getAnyExtensionFromPathWorker
+// Go: tspath/path.go:944 getAnyExtensionFromPathWorker
 fn get_any_extension_from_path_worker(
     path: &str,
     extensions: &[&str],
@@ -1265,7 +1269,7 @@ fn get_any_extension_from_path_worker(
     String::new()
 }
 
-// Go: tspath/path.go:941 tryGetExtensionFromPath
+// Go: tspath/path.go:954 tryGetExtensionFromPath
 // PORT: renamed to `try_get_extension_from_path_worker`. The exported Go
 // `TryGetExtensionFromPath` (extension.go) has the same snake name.
 fn try_get_extension_from_path_worker(
@@ -1288,7 +1292,7 @@ fn try_get_extension_from_path_worker(
     String::new()
 }
 
-// Go: tspath/path.go:954 PathIsRelative
+// Go: tspath/path.go:967 PathIsRelative
 pub fn path_is_relative(path: &str) -> bool {
     // True if path is ".", "..", or starts with "./", "../", ".\\", or "..\\".
 
@@ -1308,7 +1312,7 @@ pub fn path_is_relative(path: &str) -> bool {
     false
 }
 
-// Go: tspath/path.go:974 EnsurePathIsNonModuleName
+// Go: tspath/path.go:987 EnsurePathIsNonModuleName
 // EnsurePathIsNonModuleName ensures a path is either absolute (prefixed with `/` or `c:`) or dot-relative (prefixed
 // with `./` or `../`) so as not to be confused with an unprefixed module name.
 pub fn ensure_path_is_non_module_name(path: &str) -> String {
@@ -1318,7 +1322,7 @@ pub fn ensure_path_is_non_module_name(path: &str) -> String {
     path.to_string()
 }
 
-// Go: tspath/path.go:981 IsExternalModuleNameRelative
+// Go: tspath/path.go:994 IsExternalModuleNameRelative
 pub fn is_external_module_name_relative(module_name: &str) -> bool {
     // TypeScript 1.0 spec (April 2014): 11.2.1
     // An external module name is "relative" if the first term is "." or "..".
@@ -1326,7 +1330,8 @@ pub fn is_external_module_name_relative(module_name: &str) -> bool {
     path_is_relative(module_name) || is_rooted_disk_path(module_name)
 }
 
-// Go: tspath/path.go:988 ComparePathsOptions
+// Go: tspath/path.go:988 ComparePathsOptions (at 673a5f17d713;
+// ts#64159 makes it CaseSensitivity, tspath/path.go:1003)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ComparePathsOptions {
     pub use_case_sensitive_file_names: bool,
@@ -1334,18 +1339,20 @@ pub struct ComparePathsOptions {
 }
 
 impl ComparePathsOptions {
-    // Go: tspath/path.go:993 ComparePathsOptions.GetComparer
+    // Go: tspath/path.go:993 ComparePathsOptions.GetComparer (at 673a5f17d713;
+    // ts#64159 makes it CaseSensitivity.GetComparer, tspath/path.go:1053)
     pub fn get_comparer(&self) -> fn(&str, &str) -> i32 {
         get_string_comparer(!self.use_case_sensitive_file_names)
     }
 
-    // Go: tspath/path.go:997 ComparePathsOptions.getEqualityComparer
+    // Go: tspath/path.go:997 ComparePathsOptions.getEqualityComparer (at 673a5f17d713;
+    // ts#64159 makes it CaseSensitivity.getEqualityComparer, tspath/path.go:1057)
     fn get_equality_comparer(&self) -> fn(&str, &str) -> bool {
         get_string_equality_comparer(!self.use_case_sensitive_file_names)
     }
 }
 
-// Go: tspath/path.go:1001 ComparePaths
+// Go: tspath/path.go:1067 ComparePaths
 pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
     let a = combine_paths(&options.current_directory, &[a]);
     let b = combine_paths(&options.current_directory, &[b]);
@@ -1391,7 +1398,7 @@ pub fn compare_paths(a: &str, b: &str, options: &ComparePathsOptions) -> i32 {
     a_components.len().cmp(&b_components.len()) as i32
 }
 
-// Go: tspath/path.go:1046 ComparePathsCaseSensitive
+// Go: tspath/path.go:1046 ComparePathsCaseSensitive (at 673a5f17d713; removed by ts#64159)
 pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -> i32 {
     compare_paths(
         a,
@@ -1403,7 +1410,7 @@ pub fn compare_paths_case_sensitive(a: &str, b: &str, current_directory: &str) -
     )
 }
 
-// Go: tspath/path.go:1050 ComparePathsCaseInsensitive
+// Go: tspath/path.go:1050 ComparePathsCaseInsensitive (at 673a5f17d713; removed by ts#64159)
 pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str) -> i32 {
     compare_paths(
         a,
@@ -1415,7 +1422,7 @@ pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str)
     )
 }
 
-// Go: tspath/path.go:1054 ContainsPath
+// Go: tspath/path.go:1111 ContainsPath
 pub fn contains_path(parent: &str, child: &str, options: &ComparePathsOptions) -> bool {
     let parent = combine_paths(&options.current_directory, &[parent]);
     let child = combine_paths(&options.current_directory, &[child]);
@@ -1447,7 +1454,7 @@ pub fn contains_path(parent: &str, child: &str, options: &ComparePathsOptions) -
 }
 
 impl Path {
-    // Go: tspath/path.go:1088 Path.ContainsPath
+    // Go: tspath/path.go:1111 Path.ContainsPath
     // ContainsPath checks whether child is contained within or equal to p.
     // Since Path values are already rooted, reduced, and case-canonicalized,
     // this is a simple string prefix check.
@@ -1464,12 +1471,12 @@ impl Path {
     }
 }
 
-// Go: tspath/path.go:1095 FileExtensionIs
+// Go: tspath/path.go:1142 FileExtensionIs
 pub fn file_extension_is(path: &str, extension: &str) -> bool {
     path.len() > extension.len() && path.ends_with(extension)
 }
 
-// Go: tspath/path.go:1101 ForEachAncestorDirectoryStoppingAtGlobalCache
+// Go: tspath/path.go:1148 ForEachAncestorDirectoryStoppingAtGlobalCache
 // Calls `callback` on `directory` and every ancestor directory it has, returning the first defined result.
 // Stops at global cache location
 pub fn for_each_ancestor_directory_stopping_at_global_cache<T: Default>(
@@ -1487,7 +1494,7 @@ pub fn for_each_ancestor_directory_stopping_at_global_cache<T: Default>(
     result
 }
 
-// Go: tspath/path.go:1116 ForEachAncestorDirectory
+// Go: tspath/path.go:1163 ForEachAncestorDirectory
 // PORT: the Go zero value of T is `T::default()`.
 pub fn for_each_ancestor_directory<T: Default>(
     directory: &str,
@@ -1510,7 +1517,7 @@ pub fn for_each_ancestor_directory<T: Default>(
 }
 
 impl Path {
-    // Go: tspath/path.go:1133 (Path).ForEachAncestorDirectory (ts#63902)
+    // Go: tspath/path.go:1163 (Path).ForEachAncestorDirectory (ts#63902)
     pub fn for_each_ancestor_directory<T: Default>(
         &self,
         mut callback: impl FnMut(Path) -> (T, bool),
@@ -1519,12 +1526,12 @@ impl Path {
     }
 }
 
-// Go: tspath/path.go:1139 HasExtension
+// Go: tspath/path.go:1180 HasExtension
 pub fn has_extension(file_name: &str) -> bool {
     get_base_file_name(file_name).contains('.')
 }
 
-// Go: tspath/path.go:1143 SplitVolumePath
+// Go: tspath/path.go:1184 SplitVolumePath
 // PORT: Go `(volume, rest, ok)`. The volume is two ASCII bytes, so
 // `strings.ToLower` is an ASCII lowercase.
 pub fn split_volume_path(path: &str) -> (String, &str, bool) {
@@ -1535,7 +1542,8 @@ pub fn split_volume_path(path: &str) -> (String, &str, bool) {
     (String::new(), path, false)
 }
 
-// Go: tspath/path.go:1158 GetCommonParents
+// Go: tspath/path.go:1158 GetCommonParents (at 673a5f17d713;
+// ts#64159 makes it getCommonParents, tspath/path.go:1199)
 // GetCommonParents returns the smallest set of directories that are parents of all paths with
 // at least `minComponents` directory components. Any path that has fewer than `minComponents` directory components
 // will be returned in the second return value.
@@ -1586,7 +1594,7 @@ pub fn get_common_parents(
     (result_paths, ignored)
 }
 
-// Go: tspath/path.go:1197 getCommonParentsWorker
+// Go: tspath/path.go:1238 getCommonParentsWorker
 // ts#64493: each result gets its own copy of the group head (Go no longer
 // appends into the head's backing array). The function is used only by
 // project watching, which is out of scope for the frontend.
@@ -1659,7 +1667,7 @@ fn get_common_parents_worker(
     vec![component_groups[0][..max_depth].to_vec()]
 }
 
-// Go: tspath/path.go:1257 StartsWithDirectory
+// Go: tspath/path.go:1298 StartsWithDirectory
 pub fn starts_with_directory(
     file_name: &str,
     directory_name: &str,
@@ -1683,7 +1691,7 @@ pub fn starts_with_directory(
         || canonical_file_name.starts_with(&format!("{canonical_directory_name}\\"))
 }
 
-// Go: tspath/path.go:1271 CompareNumberOfDirectorySeparators
+// Go: tspath/path.go:1312 CompareNumberOfDirectorySeparators
 pub fn compare_number_of_directory_separators(path1: &str, path2: &str) -> i32 {
     path1.matches('/').count().cmp(&path2.matches('/').count()) as i32
 }
@@ -1691,7 +1699,7 @@ pub fn compare_number_of_directory_separators(path1: &str, path2: &str) -> i32 {
 // Go: tspath/ignoredpaths.go:5 ignoredPaths
 const IGNORED_PATHS: [&str; 3] = ["/node_modules/.", "/.git", ".#"];
 
-// Go: tspath/ignoredpaths.go:11 ContainsIgnoredPath
+// Go: tspath/ignoredpaths.go:20 ContainsIgnoredPath
 pub fn contains_ignored_path(path: &str) -> bool {
     for pattern in IGNORED_PATHS {
         if path.contains(pattern) {

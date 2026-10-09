@@ -231,7 +231,7 @@ pub(crate) fn get_info(
     }
 }
 
-// Go: modulespecifiers/specifiers.go:180 getAllModulePaths
+// Go: modulespecifiers/specifiers.go:179 getAllModulePaths
 pub(crate) fn get_all_module_paths(
     info: &Info,
     imported_file_name: &str,
@@ -245,7 +245,7 @@ pub(crate) fn get_all_module_paths(
     get_all_module_paths_worker(info, imported_file_name, host, compiler_options, options)
 }
 
-// Go: modulespecifiers/specifiers.go:203 getAllModulePathsWorker
+// Go: modulespecifiers/specifiers.go:202 getAllModulePathsWorker
 // PORT: Go collects paths in a map with random iteration order and sorts
 // each group. The IndexMap keeps insertion order; the sort result is the
 // same because `compare_paths_by_redirect` ends with a path comparison.
@@ -306,20 +306,21 @@ fn get_all_module_paths_worker(
     sorted_paths
 }
 
-// Go: modulespecifiers/specifiers.go:252 containsIgnoredPath
+// Go: modulespecifiers/specifiers.go:250 containsIgnoredPath
 // containsIgnoredPath checks if a path contains patterns that should be ignored.
 // This is a local helper that duplicates tspath.ContainsIgnoredPath for performance.
 fn contains_ignored_path(s: &str) -> bool {
     s.contains("/node_modules/.") || s.contains("/.git") || s.contains(".#")
 }
 
-// Go: modulespecifiers/specifiers.go:259 ContainsNodeModules
+// Go: modulespecifiers/specifiers.go:259 ContainsNodeModules (at 673a5f17d713;
+// ts#64159 renames it moduleSpecifierContainsNodeModules, modulespecifiers/specifiers.go:256)
 /// Checks if a path contains the node_modules directory.
 pub fn contains_node_modules(s: &str) -> bool {
     s.contains("/node_modules/")
 }
 
-// Go: modulespecifiers/specifiers.go:265 GetEachFileNameOfModule
+// Go: modulespecifiers/specifiers.go:262 GetEachFileNameOfModule
 /// Returns all possible file paths for a module, including symlink alternatives.
 pub fn get_each_file_name_of_module(
     importing_file_name: &str,
@@ -441,7 +442,7 @@ pub fn get_each_file_name_of_module(
     results
 }
 
-// Go: modulespecifiers/specifiers.go:364 computeModuleSpecifiers
+// Go: modulespecifiers/specifiers.go:352 computeModuleSpecifiers
 fn compute_module_specifiers(
     module_paths: &[ModulePath],
     compiler_options: &CompilerOptions,
@@ -612,7 +613,7 @@ fn compute_module_specifiers(
     (relative_specifiers, ResultKind::Relative)
 }
 
-// Go: modulespecifiers/specifiers.go:490 getLocalModuleSpecifier
+// Go: modulespecifiers/specifiers.go:479 getLocalModuleSpecifier
 fn get_local_module_specifier(
     module_file_name: &str,
     info: &Info,
@@ -806,7 +807,7 @@ fn get_local_module_specifier(
     maybe_non_relative
 }
 
-// Go: modulespecifiers/specifiers.go:641 processEnding
+// Go: modulespecifiers/specifiers.go:639 processEnding
 // PORT: Go checks `host != nil` before probing the file system. Every Go
 // caller passes a host, so `host` is not optional here.
 fn process_ending(
@@ -959,7 +960,7 @@ fn try_get_module_name_from_root_dirs(
     process_ending(&shortest, allowed_endings, compiler_options, host)
 }
 
-// Go: modulespecifiers/specifiers.go:748 tryGetModuleNameAsNodeModule
+// Go: modulespecifiers/specifiers.go:745 tryGetModuleNameAsNodeModule
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn try_get_module_name_as_node_module(
     path_obj: &ModulePath,
@@ -1067,7 +1068,7 @@ pub(crate) fn try_get_module_name_as_node_module(
     deps::get_package_name_from_types_package_name(node_modules_directory_name)
 }
 
-// Go: modulespecifiers/specifiers.go:830 pkgJsonDirAttemptResult
+// Go: modulespecifiers/specifiers.go:839 pkgJsonDirAttemptResult
 #[derive(Clone, Debug, Default)]
 struct PkgJsonDirAttemptResult {
     module_file_to_try: String,
@@ -1298,7 +1299,7 @@ fn try_directory_with_package_json(
     }
 }
 
-// Go: modulespecifiers/specifiers.go:981 tryGetModuleNameFromExports
+// Go: modulespecifiers/specifiers.go:1003 tryGetModuleNameFromExports
 fn try_get_module_name_from_exports(
     options: &CompilerOptions,
     host: &dyn ModuleSpecifierGenerationHost,
@@ -1356,7 +1357,7 @@ fn try_get_module_name_from_exports(
     )
 }
 
-// Go: modulespecifiers/specifiers.go:1024 tryGetModuleNameFromPackageJsonImports
+// Go: modulespecifiers/specifiers.go:1046 tryGetModuleNameFromPackageJsonImports
 fn try_get_module_name_from_package_json_imports(
     module_file_name: &str,
     source_directory: &str,
@@ -1433,14 +1434,14 @@ fn try_get_module_name_from_package_json_imports(
     String::new()
 }
 
-// Go: modulespecifiers/specifiers.go:1089 specPair
+// Go: modulespecifiers/specifiers.go:1111 specPair
 #[derive(Clone, Debug)]
 struct SpecPair {
     ending: ModuleSpecifierEnding,
     value: String,
 }
 
-// Go: modulespecifiers/specifiers.go:1094 tryGetModuleNameFromPaths
+// Go: modulespecifiers/specifiers.go:1116 tryGetModuleNameFromPaths
 fn try_get_module_name_from_paths(
     relative_to_base_url: &str,
     paths: &IndexMap<String, Option<Vec<String>>>,
@@ -1515,7 +1516,7 @@ fn try_get_module_name_from_paths(
     String::new()
 }
 
-// Go: modulespecifiers/specifiers.go:1193 validateEnding
+// Go: modulespecifiers/specifiers.go:1219 validateEnding
 fn validate_ending(
     c: &SpecPair,
     relative_to_base_url: &str,
@@ -1533,7 +1534,7 @@ fn validate_ending(
         || c.value == process_ending(relative_to_base_url, &[c.ending], compiler_options, host)
 }
 
-// Go: modulespecifiers/specifiers.go:1204 tryGetModuleNameFromExportsOrImports
+// Go: modulespecifiers/specifiers.go:1230 tryGetModuleNameFromExportsOrImports
 #[allow(clippy::too_many_arguments)]
 fn try_get_module_name_from_exports_or_imports(
     options: &CompilerOptions,
@@ -1822,7 +1823,7 @@ fn try_get_module_name_from_exports_or_imports(
     }
 }
 
-// Go: modulespecifiers/specifiers.go:1333 GetModuleSpecifier
+// Go: modulespecifiers/specifiers.go:1367 GetModuleSpecifier
 // `importingSourceFile` and `importingSourceFileName`? Why not just use `importingSourceFile.path`?
 // Because when this is called by the declaration emitter, `importingSourceFile` is the implementation
 // file, but `importingSourceFileName` and `toFileName` refer to declaration files (the former to the
@@ -1850,7 +1851,7 @@ pub fn get_module_specifier(
     )
 }
 
-// Go: modulespecifiers/specifiers.go:1354 UpdateModuleSpecifier
+// Go: modulespecifiers/specifiers.go:1388 UpdateModuleSpecifier
 #[allow(clippy::too_many_arguments)]
 pub fn update_module_specifier(
     compiler_options: &CompilerOptions,
@@ -1874,7 +1875,7 @@ pub fn update_module_specifier(
     )
 }
 
-// Go: modulespecifiers/specifiers.go:1376 getModuleSpecifierWithPreferences
+// Go: modulespecifiers/specifiers.go:1410 getModuleSpecifierWithPreferences
 #[allow(clippy::too_many_arguments)]
 fn get_module_specifier_with_preferences(
     compiler_options: &CompilerOptions,
