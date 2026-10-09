@@ -237,7 +237,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         max_node_module_js_depth =
             i32::try_from(p).unwrap_or(if p < 0 { i32::MIN } else { i32::MAX });
     }
-    let current_directory = opts.host.get_current_directory().to_string();
+    let current_directory = opts.host.get_current_directory();
     let mut loader = FileLoader {
         default_library_path: get_normalized_absolute_path(
             &opts.host.default_library_path(),
@@ -853,7 +853,7 @@ impl FileLoader {
         lib_file: Option<Rc<LibFile>>,
         include_reason: Rc<FileIncludeReason>,
     ) {
-        let curr_dir = self.opts.host.get_current_directory().to_string();
+        let curr_dir = self.opts.host.get_current_directory();
         let abs_path = get_normalized_absolute_path(file_name, &curr_dir);
         let mut containing_file = curr_dir.clone();
         if let Some(config_file) = &self.opts.config.config_file {
@@ -890,7 +890,7 @@ impl FileLoader {
         if !compiler_options.config_file_path.is_empty() {
             containing_directory = get_directory_path(&compiler_options.config_file_path);
         } else {
-            containing_directory = self.opts.host.get_current_directory().to_string();
+            containing_directory = self.opts.host.get_current_directory();
         }
         let containing_file_name =
             combine_paths(&containing_directory, &[INFERRED_TYPES_CONTAINING_FILE]);
@@ -3587,7 +3587,7 @@ export const a: T | Dep | number = x + (h as never);
                 }
             };
             {
-                let (server, write, queue) = (server.clone(), write.clone(), queue.clone());
+                let (server, write, queue) = (server.clone(), write, queue.clone());
                 std::thread::spawn(move || {
                     loop {
                         let msg = {
