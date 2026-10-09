@@ -1476,8 +1476,9 @@ impl Checker {
                     original_symbol,
                     anonymous_symbol,
                 );
-                self.value_symbol_links.get(anonymous_symbol).resolved_type =
-                    default_containing_object;
+                self.value_symbol_links
+                    .get_by_id(&self.symbols, anonymous_symbol)
+                    .resolved_type = default_containing_object;
                 if self.is_valid_spread_type(t) {
                     synthetic_type = self.get_spread_type(
                         t,
@@ -1556,7 +1557,9 @@ impl Checker {
         let new_symbol = self.new_symbol(SymbolFlags::ALIAS, INTERNAL_SYMBOL_NAME_DEFAULT);
         self.sym_mut(new_symbol).parent = original_symbol;
         let name_type = self.get_string_literal_type("default");
-        self.value_symbol_links.get(new_symbol).name_type = name_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, new_symbol)
+            .name_type = name_type;
         let alias_target = self.resolve_symbol(symbol);
         self.alias_symbol_links.get(new_symbol).alias_target = alias_target;
         self.symbols
@@ -1607,7 +1610,9 @@ impl Checker {
         };
         let resolved_type =
             self.new_anonymous_type(result, resolved_members, &[], &[], &resolved_index_infos);
-        self.value_symbol_links.get(result).resolved_type = resolved_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, result)
+            .resolved_type = resolved_type;
         result
     }
 
