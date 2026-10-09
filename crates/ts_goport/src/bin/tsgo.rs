@@ -108,6 +108,9 @@ fn main() {
     let budget = ThreadBudget::one_program(1);
     set_malloc_tunables(&budget);
     budget.install();
+    // After the exec in `set_malloc_tunables` and before the work thread.
+    #[cfg(all(feature = "jemalloc", target_os = "linux"))]
+    ts_goport::jemalloc_layout::jemalloc_layout();
     // After the exec in `set_malloc_tunables`: an exec resets the handlers,
     // and a raised limit would read as the original one there.
     let signals = go_runtime_start();
