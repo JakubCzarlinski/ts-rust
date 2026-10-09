@@ -26,15 +26,17 @@
 //! finishes when its own emit ends, as a Go builder does. The global
 //! diagnostics test makes its own project there too. So do the k2gaps1
 //! tests: `tsc -p --listFilesOnly` emits nothing, and `tsc -b` of two small
-//! projects runs without a panic (also in the dev profile). The barrier
-//! test loads the fixture and checks that `send_checker_barrier` waits for
-//! the emit pool and the d.ts twins.
+//! projects runs without a panic (also in the dev profile). An edit after a
+//! build first waits until a new file gets a later mtime than every file of
+//! the build (`Solution::wait_for_a_later_mtime`), so `tsc -b` sees it. The
+//! barrier test loads the fixture and checks that `send_checker_barrier`
+//! waits for the emit pool and the d.ts twins.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ts_goport::core::enter_program;
 use ts_goport::emitter::program_emit::emit_can_start_with_check;
@@ -327,7 +329,6 @@ fn tsc_p_list_files_only_writes_no_output() {
 fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
     use std::sync::mpsc::{Sender, channel};
     use std::sync::{Arc, Condvar, Mutex};
-    use std::time::Duration;
     use ts_goport::program::{
         run_on_checker_threads_for_files, send_checker_barrier, send_dts_twin_job,
         send_emit_pool_jobs, source_files,
@@ -356,11 +357,6 @@ fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
             let _ = self.0.send(());
         }
     }
-    /// The values that drop within `wait`.
-    fn dropped(receiver: &std::sync::mpsc::Receiver<()>, wait: Duration) -> usize {
-        std::iter::from_fn(|| receiver.recv_timeout(wait).ok()).count()
-    }
-
     let _in_process = IN_PROCESS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -383,20 +379,26 @@ fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
         drop(sender);
         assert!(values >= 2, "one value per checker and one for the pool");
 
+        // The values of the other checkers drop. The two values that wait
+        // cannot drop before their gates open, so a short wait only times a
+        // value that must not come, and a slow thread cannot fail the test.
+        let long = Duration::from_secs(30);
+        for _ in 2..values {
+            receiver
+                .recv_timeout(long)
+                .expect("the value of a checker with no waiting job drops");
+        }
         let short = Duration::from_millis(300);
-        assert_eq!(
-            dropped(&receiver, short),
-            values - 2,
+        assert!(
+            receiver.recv_timeout(short).is_err(),
             "the values of the waiting twin and the waiting pool job stay"
         );
         twin_gate.open();
-        let long = Duration::from_secs(30);
         receiver
             .recv_timeout(long)
             .expect("the twin's value drops when its job ends");
-        assert_eq!(
-            dropped(&receiver, short),
-            0,
+        assert!(
+            receiver.recv_timeout(short).is_err(),
             "the pool's value stays while its job waits"
         );
         pool_gate.open();
@@ -438,11 +440,17 @@ fn build_two_composite_projects_without_a_panic() {
         (Some(0), String::new()),
         "the cold build"
     );
+    solution.wait_for_a_later_mtime();
     solution.write("p1/src/index.ts", "export const v1 = 2;\n");
     assert_eq!(
         solution.build(&["tsconfig.json"]),
         (Some(0), String::new()),
         "the build after an edit"
+    );
+    assert_eq!(
+        solution.read("p1/dist/index.js"),
+        "export const v1 = 2;\n",
+        "the build after an edit emits p1 again"
     );
     solution.remove();
 }
@@ -488,11 +496,65 @@ impl Solution {
         )
     }
 
+    /// The text of `path` under the root.
+    fn read(&self, path: &str) -> String {
+        let path = self.root.join(path);
+        fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    /// Waits until a file written now gets a later mtime than every file
+    /// under the root, so `tsc -b` sees the next edit as newer than the
+    /// outputs of the last build. A file system clock can move in steps:
+    /// Linux stamps files with its tick clock (4 ms at 250 Hz) unless the
+    /// file system has fine-grained timestamps (Linux 6.13). An edit right
+    /// after a build can then get the mtime of the project's build info,
+    /// and `tsc -b` sees the project as up to date (Go `getUpToDateStatus`
+    /// rebuilds only for an input newer than the build info). On main CI
+    /// (the Ubuntu 24.04 runner) that once made p1 of
+    /// `build_emit_only_solution` up to date: it finished first, and p3 read
+    /// p2's old output (TS2305).
+    fn wait_for_a_later_mtime(&self) {
+        let newest = newest_mtime(&self.root);
+        let probe = self.root.join("mtime-probe");
+        loop {
+            fs::write(&probe, "")
+                .unwrap_or_else(|error| panic!("write {}: {error}", probe.display()));
+            let probed = fs::metadata(&probe)
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or_else(|error| panic!("mtime of {}: {error}", probe.display()));
+            if probed > newest {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        fs::remove_file(&probe)
+            .unwrap_or_else(|error| panic!("remove {}: {error}", probe.display()));
+    }
+
     /// Removes the scratch dir. A failed test keeps it.
     fn remove(self) {
         fs::remove_dir_all(&self.root)
             .unwrap_or_else(|error| panic!("remove {}: {error}", self.root.display()));
     }
+}
+
+/// The latest mtime of a file under `dir`.
+fn newest_mtime(dir: &Path) -> SystemTime {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
+    entries
+        .map(|entry| {
+            let path = entry.expect("a dir entry").path();
+            if path.is_dir() {
+                newest_mtime(&path)
+            } else {
+                fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or_else(|error| panic!("mtime of {}: {error}", path.display()))
+            }
+        })
+        .max()
+        .unwrap_or(UNIX_EPOCH)
 }
 
 /// The config of a solution project, with `extra` added to its compiler
@@ -553,16 +615,22 @@ fn build_emit_only_solution(
     );
     // The cold build: p3 cannot see `v2` yet.
     solution.build(&["tsconfig.json"]);
+    solution.wait_for_a_later_mtime();
     solution.write("p1/src/index.ts", &big_module("v2"));
     solution.write(
         "p2/src/index.ts",
         "export const v1 = 1;\nexport const v2 = 2;\n",
     );
-    // p1's errors are part of the case; p2 must check clean.
-    let (status, stdout) = solution.build(&["p1", "--noEmit"]);
-    assert_eq!(status, Some(p1_no_emit), "tsc -b p1 --noEmit: {stdout}");
-    let (status, stdout) = solution.build(&["p2", "--noEmit"]);
-    assert_eq!(status, Some(0), "tsc -b p2 --noEmit: {stdout}");
+    // p1's errors are part of the case; p2 must check clean. `--verbose`
+    // shows that each build sees the edit, so only its emit is pending.
+    for (project, no_emit) in [("p1", p1_no_emit), ("p2", 0)] {
+        let (status, stdout) = solution.build(&[project, "--noEmit", "--verbose"]);
+        assert!(
+            status == Some(no_emit)
+                && stdout.contains(&format!("Building project '{project}/tsconfig.json'")),
+            "tsc -b {project} --noEmit checks the edit (exit {status:?}): {stdout}"
+        );
+    }
     let result = solution.build(&["tsconfig.json", "--builders", "2"]);
     solution.remove();
     result
