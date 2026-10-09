@@ -681,9 +681,17 @@ thread_local! {
 /// (`BuildTask::compile_and_emit_start`; `build_all_tasks` gives the
 /// order).
 pub(crate) fn buffer_early_emit_writes(start: impl FnOnce()) {
+    /// Ends the buffering also when `start` panics (`tsc -b` keeps a task's
+    /// panic and goes on).
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BUFFER_EARLY_EMIT_WRITES.set(false);
+        }
+    }
     BUFFER_EARLY_EMIT_WRITES.set(true);
+    let _reset = Reset;
     start();
-    BUFFER_EARLY_EMIT_WRITES.set(false);
 }
 
 /// The most threads that `flush_writes` writes on.
@@ -873,9 +881,11 @@ pub(crate) struct StartedEmit {
 /// Pass 1 reads the pending emit set, the file infos, the emit signatures
 /// and the options, and `get_emit_options` copies them into the write
 /// callbacks. The check commit (`Program::commit_semantic_diagnostics`)
-/// changes none of them, and the affected-file walk has already run in
-/// `start_check` (its second run here is a no-op), so the jobs are the
-/// jobs that `emit_files` would send after the check.
+/// changes none of them, so the jobs are the jobs that `emit_files` would
+/// send after the check. When `start_check` sent a check, the
+/// affected-file walk (`collect_all_affected_files`) ran there, and its run
+/// here is a no-op. When it did not (`noCheck`, or syntactic, program or
+/// global diagnostics), the walk runs here first, as Go's runs in `Emit`.
 pub(crate) fn start_emit_files(program: &Program, options: EmitOptions) -> StartedEmit {
     debug_assert!(
         program.snapshot.borrow().can_use_incremental_state()
@@ -957,4 +967,27 @@ pub(crate) fn finish_emit_files(
     }
     let results = handler.finish_emit_files_incremental(started.queued, results);
     handler.combine_results_and_emit_build_info(results, options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BUFFER_EARLY_EMIT_WRITES, buffer_early_emit_writes};
+
+    /// k2gaps1: a panic inside the buffered start ends the buffering. `tsc -b`
+    /// keeps a task's panic and goes on, so a flag left on would make every
+    /// later emit on this thread keep its writes in a buffer.
+    #[test]
+    fn buffer_early_emit_writes_ends_on_a_panic() {
+        let result = std::panic::catch_unwind(|| {
+            buffer_early_emit_writes(|| {
+                assert!(BUFFER_EARLY_EMIT_WRITES.get(), "the start buffers");
+                panic!("the start panics");
+            });
+        });
+        assert!(result.is_err(), "the panic reaches the caller");
+        assert!(
+            !BUFFER_EARLY_EMIT_WRITES.get(),
+            "the buffering ended with the panic"
+        );
+    }
 }
