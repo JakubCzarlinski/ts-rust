@@ -95,9 +95,14 @@ fn hover(client: &LspClient) {
     assert!(hover.is_some_and(|hover| hover.hover.is_some()), "no hover");
 }
 
-/// Sends `custom/initializeAPISession` with a pipe in the temp dir.
+/// Sends `custom/initializeAPISession` with a pipe in the temp dir (a socket
+/// file on Unix, a name under `\\.\pipe\` on Windows, which has no files
+/// for pipes).
 fn init_api_session(client: &LspClient) -> PathBuf {
+    #[cfg(unix)]
     let pipe = std::env::temp_dir().join(format!("goport-apisess-{}.sock", std::process::id()));
+    #[cfg(windows)]
+    let pipe = PathBuf::from(format!(r"\\.\pipe\goport-apisess-{}", std::process::id()));
     let _ = std::fs::remove_file(&pipe);
     let (session_msg, session) = client.send_request(
         &lsproto::CUSTOM_INITIALIZE_API_SESSION_INFO,
