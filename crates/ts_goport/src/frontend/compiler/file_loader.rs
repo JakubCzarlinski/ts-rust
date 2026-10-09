@@ -3523,10 +3523,29 @@ export const a: T | Dep | number = x + (h as never);
         use crate::gostd::GoError;
         use crate::ipc::{self, Message, Protocol as _, ReadWriteCloser};
         use std::io::{Read, Write};
-        use std::os::unix::net::UnixStream;
         use std::sync::{Arc, Condvar, Mutex};
 
-        struct End(UnixStream);
+        #[cfg(unix)]
+        type Stream = std::os::unix::net::UnixStream;
+        // Windows has no socket pair in std: a connected loopback TCP pair
+        // gives the same two-ended byte stream.
+        #[cfg(windows)]
+        type Stream = std::net::TcpStream;
+
+        #[cfg(unix)]
+        fn stream_pair() -> std::io::Result<(Stream, Stream)> {
+            Stream::pair()
+        }
+
+        #[cfg(windows)]
+        fn stream_pair() -> std::io::Result<(Stream, Stream)> {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            let client = Stream::connect(listener.local_addr()?)?;
+            let (server, _) = listener.accept()?;
+            Ok((client, server))
+        }
+
+        struct End(Stream);
 
         impl ReadWriteCloser for End {
             fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -3555,7 +3574,7 @@ export const a: T | Dep | number = x + (h as never);
             transforms: Arc<Mutex<Vec<String>>>,
             exit_after: Option<usize>,
         ) -> Arc<dyn ProcessExitState> {
-            let (client, server) = UnixStream::pair().expect("socket pair");
+            let (client, server) = stream_pair().expect("socket pair");
             let server: Arc<dyn ReadWriteCloser> = Arc::new(End(server));
             let write = Arc::new(Mutex::new(()));
             let queue: Queue = Arc::default();
