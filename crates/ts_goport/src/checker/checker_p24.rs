@@ -2548,4 +2548,45 @@ type I = A & M;
             assert_eq!(got.as_slice(), want.as_slice(), "len_hint {len_hint}");
         }
     }
+
+    /// `Node::NIL` added while the list is scanned, before the table takes
+    /// over (R183 reviewer item 7): the fill puts each other listed node in
+    /// the table, NIL stays listed once, and the later adds of NIL and of
+    /// listed nodes (the first 20 again) push nothing. NIL as the add that fills the table
+    /// (the 16th node) too. Go `core.AppendIfUnique` (core.go:380) lists a
+    /// nil element like any other.
+    #[test]
+    fn declaration_set_lists_nil_added_before_the_table() {
+        let node = |k: u64| Node(((k % 3 + 1) << 32) | k);
+        for nil_at in [0, 3, DeclarationSet::SCAN - 1] {
+            let mut nodes: Vec<Node> = (1..=100).map(node).collect();
+            nodes.insert(nil_at, Node::NIL);
+            nodes.extend([Node::NIL, node(50), Node::NIL, node(100)]);
+            nodes.extend((1..=20).map(node));
+            let mut want: Vec<Node> = Vec::new();
+            for &node in &nodes {
+                if !want.contains(&node) {
+                    want.push(node);
+                }
+            }
+            for len_hint in [0, 16, 200] {
+                let mut set = DeclarationSet::default();
+                let mut got: SmallVec<[Node; 4]> = SmallVec::new();
+                for (i, &node) in nodes.iter().enumerate() {
+                    set.add(&mut got, node, len_hint);
+                    if i == DeclarationSet::SCAN {
+                        assert!(!set.slots.is_empty(), "nil at {nil_at}: no table");
+                    }
+                }
+                assert_eq!(
+                    got.as_slice(),
+                    want.as_slice(),
+                    "nil at {nil_at}, len_hint {len_hint}"
+                );
+                let listed = got.iter().filter(|node| node.is_some()).count();
+                let used = set.slots.iter().filter(|slot| slot.is_some()).count();
+                assert_eq!(used, listed, "nil at {nil_at}, len_hint {len_hint}");
+            }
+        }
+    }
 }
