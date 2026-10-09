@@ -301,7 +301,7 @@ fn tsc_p_list_files_only_writes_no_output() {
             format!(
                 "bundled:///libs/lib.es5.d.ts\nbundled:///libs/lib.decorators.d.ts\n\
                  bundled:///libs/lib.decorators.legacy.d.ts\n{}/src/a.ts\n",
-                root.display()
+                norm(&root)
             )
         ),
         "tsc -p --listFilesOnly lists the files"
@@ -361,8 +361,9 @@ fn checker_barrier_waits_for_the_emit_pool_and_the_twins() {
     let _in_process = IN_PROCESS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let program = try_load_version(CONFIG, |_| {})
-        .unwrap_or_else(|error| panic!("cannot load {CONFIG}: {error}"));
+    let config = norm_str(CONFIG);
+    let program = try_load_version(&config, |_| {})
+        .unwrap_or_else(|error| panic!("cannot load {config}: {error}"));
     {
         let _scope = enter_program(Some(program));
         let twin_gate = Gate::default();
