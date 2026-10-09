@@ -5332,14 +5332,14 @@ fn subtree_facts_of_data(n: Node, d: &NodeData) -> SubtreeFacts {
                     SubtreeFacts::SUBTREE_CONTAINS_PRIVATE_IDENTIFIER_IN_EXPRESSION,
                 )
         }
-        // Go: ast.go:2132 (*CallExpression).computeSubtreeFacts
+        // Go: ast.go:2131 (*CallExpression).computeSubtreeFacts
         NodeData::CallExpression(d) => {
             p!(d.expression)
                 | po!(d.question_dot_token)
                 | el!(d.type_arguments)
                 | pl!(d.arguments)
                 | facts_if(
-                    req(f, d.expression).kind() == SyntaxKind::ImportKeyword,
+                    is_import_call(n),
                     SubtreeFacts::SUBTREE_CONTAINS_DYNAMIC_IMPORT,
                 )
         }
