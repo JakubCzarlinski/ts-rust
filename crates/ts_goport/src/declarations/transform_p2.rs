@@ -677,7 +677,7 @@ impl DeclarationTransformer {
         name_node
     }
 
-    // Go: transformers/declarations/transform.go:1227 DeclarationTransformer.transformExportAssignment
+    // Go: transformers/declarations/transform.go:1221 DeclarationTransformer.transformExportAssignment
     pub(super) fn transform_export_assignment(
         &mut self,
         input: Node,
@@ -700,6 +700,10 @@ impl DeclarationTransformer {
             return export_assignment;
         }
 
+        self.state.borrow_mut().get_symbol_accessibility_diagnostic =
+            Some(default_export_diagnostic(input));
+        self.tracker.push_error_fallback_node(assignment);
+
         // Check if the expression is a class expression - emit as a class declaration + export assignment
         let unwrapped = skip_outer_expressions(
             expression,
@@ -716,6 +720,7 @@ impl DeclarationTransformer {
                 new_id,
                 f.new_modifier_list(&mods),
             );
+            self.tracker.pop_error_fallback_node();
             self.preserve_js_doc(class_decl, input);
             // Reuse the same name node for the export so unique names resolve consistently
             let export_assignment =
@@ -735,6 +740,7 @@ impl DeclarationTransformer {
                 f.new_modifier_list(&mods),
                 full_signature_type,
             );
+            self.tracker.pop_error_fallback_node();
             self.preserve_js_doc(func_decl, input);
             // Reuse the same name node for the export so unique names resolve consistently
             let export_assignment =
@@ -744,10 +750,7 @@ impl DeclarationTransformer {
         }
 
         // expression is non-identifier, create _default typed variable to reference
-        self.state.borrow_mut().get_symbol_accessibility_diagnostic =
-            Some(default_export_diagnostic(input));
         self.cjs_export_assignment_name = new_id;
-        self.tracker.push_error_fallback_node(assignment);
         let mut type_ = Node::NIL;
         let mut initializer = Node::NIL;
         if is_primitive_literal_value(unwrap_parenthesized_expression(expression), true) {
