@@ -266,10 +266,10 @@ impl Checker {
                     let name = self.sym(member).name.clone();
                     self.new_symbol_ex(SymbolFlags::PROPERTY | member_flags, &name, check_flags)
                 };
+                // Go `links := c.valueSymbolLinks.Get(prop)` gives the id here.
+                let links = self.value_symbol_links.get_by_id(&self.symbols, prop);
                 if name_type.is_some() {
-                    self.value_symbol_links
-                        .get_by_id(&self.symbols, prop)
-                        .name_type = name_type;
+                    links.name_type = name_type;
                 }
                 if in_destructuring_pattern && self.has_default_value(member_decl) {
                     // If object literal is an assignment pattern and if the assignment pattern specifies a default value
@@ -699,6 +699,8 @@ impl Checker {
                     let flags =
                         SymbolFlags::PROPERTY | (self.sym(left_prop).flags & SymbolFlags::OPTIONAL);
                     let result = self.new_symbol(flags, &left_name);
+                    // Go `links := c.valueSymbolLinks.Get(result)` gives the id here.
+                    self.value_symbol_links.get_by_id(&self.symbols, result);
                     // Optimization: avoid calculating the union type if spreading into the exact same type.
                     // This is common, e.g. spreading one options bag into another where the bags have the
                     // same type, or have properties which overlap. If the unions are large, it may turn out
@@ -915,6 +917,8 @@ impl Checker {
                         CheckFlags::NONE
                     };
                 let result = self.new_symbol_ex(flags, &prop_name, check_flags);
+                // Go `links := c.valueSymbolLinks.Get(result)` gives the id here.
+                self.value_symbol_links.get_by_id(&self.symbols, result);
                 if is_setonly_accessor {
                     let undefined_type = self.undefined_type;
                     self.value_symbol_links
@@ -986,6 +990,8 @@ impl Checker {
                 CheckFlags::NONE
             };
         let result = self.new_symbol_ex(flags, &prop_name, check_flags);
+        // Go `links := c.valueSymbolLinks.Get(result)` gives the id here.
+        self.value_symbol_links.get_by_id(&self.symbols, result);
         if is_setonly_accessor {
             let undefined_type = self.undefined_type;
             self.value_symbol_links

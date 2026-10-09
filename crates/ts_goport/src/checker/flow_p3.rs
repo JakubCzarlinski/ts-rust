@@ -411,11 +411,8 @@ impl Checker {
                         if is_private_identifier(name) {
                             let t_symbol = self.ty(t).symbol;
                             if t_symbol.is_some() {
-                                let prop_name = get_symbol_name_for_private_identifier(
-                                    &self.symbols,
-                                    t_symbol,
-                                    name.text(),
-                                );
+                                let prop_name =
+                                    self.private_identifier_symbol_name(t_symbol, name.text());
                                 prop = self.get_property_of_type(t, &prop_name);
                             }
                         } else {

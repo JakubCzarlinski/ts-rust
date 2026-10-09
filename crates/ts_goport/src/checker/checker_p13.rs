@@ -589,6 +589,22 @@ impl Checker {
         is_call_or_new_expression(node.parent()) && node.parent().expression() == node
     }
 
+    /// Go `binder.GetSymbolNameForPrivateIdentifier` in the checker: the
+    /// symbol table key of private name `description` in class
+    /// `containing_class_symbol`. Go puts the id of the class in the key
+    /// (`ast.GetSymbolId`), so it gives the class its id here.
+    // PORT: the key holds the arena index of the class
+    // (`get_symbol_name_for_private_identifier`); the id is only given, as
+    // Go gives it. The binder gives no id (PORTING.md, Threads).
+    pub fn private_identifier_symbol_name(
+        &self,
+        containing_class_symbol: SymbolId,
+        description: &str,
+    ) -> String {
+        get_symbol_id(&self.symbols, containing_class_symbol);
+        get_symbol_name_for_private_identifier(&self.symbols, containing_class_symbol, description)
+    }
+
     // Go: checker/checker.go:11674 lookupSymbolForPrivateIdentifierDeclaration
     // Lookup the private identifier lexically.
     pub fn lookup_symbol_for_private_identifier_declaration(
@@ -599,7 +615,7 @@ impl Checker {
         let mut containing_class = get_containing_class_excluding_class_decorators(location);
         while containing_class.is_some() {
             let symbol = containing_class.symbol();
-            let name = get_symbol_name_for_private_identifier(&self.symbols, symbol, prop_name);
+            let name = self.private_identifier_symbol_name(symbol, prop_name);
             let members = self.sym(symbol).members;
             let prop = self.symbols.get(members, &name);
             if prop.is_some() {
