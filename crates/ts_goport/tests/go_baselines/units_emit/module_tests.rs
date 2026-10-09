@@ -984,6 +984,10 @@ struct MockModuleSpecifierGenerationHost {
     content_mapper_extensions: Vec<String>,
     use_case_sensitive_file_names: bool,
     symlink_cache: Option<Rc<KnownSymlinks>>,
+    // ts#64159 (specifiers_test.go:16): `existing_files` None means every
+    // file exists.
+    existing_files: Option<Vec<String>>,
+    file_exists_calls: RefCell<Vec<String>>,
 }
 
 impl OutputPathsHost for MockModuleSpecifierGenerationHost {
@@ -1034,7 +1038,12 @@ impl ModuleSpecifierGenerationHost for MockModuleSpecifierGenerationHost {
     fn get_source_of_project_reference_if_output_included(&self, file: Node) -> String {
         ts_goport::ast::source_file_file_name(file).to_string()
     }
-    fn file_exists(&self, _path: &str) -> bool {
+    // Go: modulespecifiers/specifiers_test.go:147 FileExists
+    fn file_exists(&self, path: &str) -> bool {
+        self.file_exists_calls.borrow_mut().push(path.to_string());
+        if let Some(existing_files) = &self.existing_files {
+            return existing_files.iter().any(|f| f == path);
+        }
         true // Mock implementation
     }
     fn get_nearest_ancestor_directory_with_package_json(&self, _dirname: &str) -> String {
@@ -1067,6 +1076,8 @@ fn mock_host(symlink_cache: KnownSymlinks) -> MockModuleSpecifierGenerationHost 
         content_mapper_extensions: Vec::new(),
         use_case_sensitive_file_names: true,
         symlink_cache: Some(Rc::new(symlink_cache)),
+        existing_files: None,
+        file_exists_calls: RefCell::new(Vec::new()),
     }
 }
 
@@ -1235,6 +1246,91 @@ fn get_module_specifier_prefers_relative_over_dot_dot_paths_result() {
                 "/project/src/a/b/index.ts",
                 "",
                 "/project/src/lib/thing.ts",
+                ModuleSpecifierOptions::default(),
+            );
+            if got != expected {
+                return Err(format!("got {got:?}, expected {expected:?}"));
+            }
+            Ok(())
+        });
+    }
+    t.finish();
+}
+
+// Go: modulespecifiers/specifiers_test.go:407 TestProcessEndingChecksRootedFilePath (ts#64159)
+// PORT: `processEnding` is private, so the test asks `get_module_specifier`
+// for the same specifier ("./lib/index.ts" from /project/src, minimal
+// ending). It runs in a child process, because the importing file must be
+// published (see `parse_type_script_published`).
+#[test]
+fn test_process_ending_checks_rooted_file_path() {
+    super::childprog::in_child(
+        module_path!(),
+        "test_process_ending_checks_rooted_file_path",
+        process_ending_checks_rooted_file_path,
+    );
+}
+
+fn process_ending_checks_rooted_file_path() {
+    use ts_goport::modulespecifiers::{ModuleSpecifierOptions, get_module_specifier};
+
+    let mut host = mock_host(KnownSymlinks::new("/wrong", true));
+    host.current_dir = "/wrong".to_string();
+    host.existing_files = Some(vec!["/project/src/lib.ts".to_string()]);
+    let file = super::parsetestutil::parse_type_script_published("", false /*jsx*/);
+    let result = get_module_specifier(
+        &CompilerOptions::default(),
+        &host,
+        file,
+        "/project/src/main.ts",
+        "",
+        "/project/src/lib/index.ts",
+        ModuleSpecifierOptions::default(),
+    );
+    assert_eq!(result, "./lib/index", "processEnding()");
+    let calls = host.file_exists_calls.borrow();
+    assert!(
+        calls.iter().any(|c| c == "/project/src/lib.ts"),
+        "FileExists calls = {calls:?}, expected a lookup for /project/src/lib.ts"
+    );
+}
+
+// Not a Go test: a guard for tryGetModuleNameAsNodeModule at specifiers.go:825.
+// ts#64159 asks whether the directory of the top-level node_modules contains
+// the importing directory; N tested a string prefix, so /ab/src could import
+// /a/node_modules/pkg by its package name. It runs in a child process, because
+// the importing file must be published.
+#[test]
+fn test_node_modules_search_root_contains_the_importing_directory() {
+    super::childprog::in_child(
+        module_path!(),
+        "test_node_modules_search_root_contains_the_importing_directory",
+        node_modules_search_root_contains_the_importing_directory,
+    );
+}
+
+fn node_modules_search_root_contains_the_importing_directory() {
+    use ts_goport::modulespecifiers::{ModuleSpecifierOptions, get_module_specifier};
+
+    let file = super::parsetestutil::parse_type_script_published("", false /*jsx*/);
+    // (importing file, expected specifier)
+    let tests: &[(&str, &str)] = &[
+        ("/a/src/main.ts", "pkg"),
+        ("/ab/src/main.ts", "../../a/node_modules/pkg"),
+    ];
+    let mut t = Subtests::new("NodeModulesSearchRoot");
+    for &(importing, expected) in tests {
+        t.run(importing, || {
+            let mut host = mock_host(KnownSymlinks::new("/", true));
+            host.current_dir = "/".to_string();
+            host.existing_files = Some(Vec::new());
+            let got = get_module_specifier(
+                &CompilerOptions::default(),
+                &host,
+                file,
+                importing,
+                "",
+                "/a/node_modules/pkg/index.d.ts",
                 ModuleSpecifierOptions::default(),
             );
             if got != expected {
