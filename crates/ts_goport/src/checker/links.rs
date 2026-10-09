@@ -51,6 +51,10 @@ pub trait SymbolArenaLinks {
     fn try_get_by_id(&self, symbols: &SymbolArena, symbol: SymbolId) -> Option<&ValueSymbolLinks>;
     /// Go `symbolArenaLinkStore.Has`.
     fn has_by_id(&self, symbols: &SymbolArena, symbol: SymbolId) -> bool;
+    /// The record of `symbol`, if any, with no id: a read of a port memo
+    /// where Go reads no links. A record exists only for a symbol that has
+    /// its id: each read that adds one gives it.
+    fn try_get_without_id(&self, symbol: SymbolId) -> Option<&ValueSymbolLinks>;
 }
 
 impl SymbolArenaLinks for SymbolArenaLinkStore<ValueSymbolLinks> {
@@ -88,6 +92,11 @@ impl SymbolArenaLinks for SymbolArenaLinkStore<ValueSymbolLinks> {
     #[inline]
     fn has_by_id(&self, symbols: &SymbolArena, symbol: SymbolId) -> bool {
         self.try_get_by_id(symbols, symbol).is_some()
+    }
+
+    #[inline]
+    fn try_get_without_id(&self, symbol: SymbolId) -> Option<&ValueSymbolLinks> {
+        self.try_get(symbol)
     }
 }
 
