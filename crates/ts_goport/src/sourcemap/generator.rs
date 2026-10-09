@@ -50,9 +50,10 @@ pub struct Generator {
     has_pending_name: bool,
 }
 
-// Go: sourcemap/generator.go:55 RawSourceMap
+// Go: sourcemap/generator.go:56 RawSourceMap
 // PORT: Go `SourcesContent []*string` with `omitzero` is `None` when Go has a
-// nil slice.
+// nil slice. ts#64544: `SourceRoot` is `omitzero`, so an empty source root
+// writes no `sourceRoot` key.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RawSourceMap {
     pub version: i32,
@@ -113,8 +114,11 @@ impl RawSourceMapJson<'_> {
         out.push_str(&self.version.to_string());
         out.push_str(",\"file\":");
         append_json_quote(&mut out, self.file);
-        out.push_str(",\"sourceRoot\":");
-        append_json_quote(&mut out, self.source_root);
+        // ts#64544: Go `json:"sourceRoot,omitzero"`.
+        if !self.source_root.is_empty() {
+            out.push_str(",\"sourceRoot\":");
+            append_json_quote(&mut out, self.source_root);
+        }
         out.push_str(",\"sources\":");
         append_json_string_array(&mut out, self.sources);
         out.push_str(",\"names\":");
@@ -652,7 +656,7 @@ mod tests {
         generator.add_source_mapping(1, 0, source, 1, 0).unwrap();
         assert_eq!(
             generator.string(),
-            r#"{"version":3,"file":"a.js","sourceRoot":"","sources":["a.ts"],"names":[],"mappings":"AAAA,IAAM;AACN"}"#
+            r#"{"version":3,"file":"a.js","sources":["a.ts"],"names":[],"mappings":"AAAA,IAAM;AACN"}"#
         );
     }
 
@@ -683,7 +687,7 @@ mod tests {
         };
         assert_eq!(
             decoded.to_json(),
-            r#"{"version":3,"file":"","sourceRoot":"","sources":[],"names":[],"mappings":"A\""}"#
+            r#"{"version":3,"file":"","sources":[],"names":[],"mappings":"A\""}"#
         );
     }
 

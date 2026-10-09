@@ -57,6 +57,9 @@ fn test_get_root_length() {
     assert_eq!(tspath::get_root_length("file://localhost/c%3A"), 21);
     assert_eq!(tspath::get_root_length("file://localhost/c%3Ad"), 17);
     assert_eq!(tspath::get_root_length("file://localhost/c%3A/path"), 22);
+    // ts#64544: the file scheme and localhost compare without case.
+    assert_eq!(tspath::get_root_length("FILE:///C:/path"), 11);
+    assert_eq!(tspath::get_root_length("file://LOCALHOST/C%3A/path"), 22);
     assert_eq!(tspath::get_root_length("file://server"), 13);
     assert_eq!(tspath::get_root_length("file://server/"), 14);
     assert_eq!(tspath::get_root_length("file://server/path"), 14);
@@ -896,6 +899,16 @@ fn test_to_path() {
     assert_eq!(
         tspath::to_path("/path/to/../file.ext", "path/to", true).0,
         "/path/file.ext"
+    );
+    // ts#64544: a dynamic file name keeps its case.
+    assert_eq!(
+        tspath::to_path(
+            "^/~ts-uri~/custom/ts-nul-authority/CaseSensitive.ts",
+            "/",
+            false
+        )
+        .0,
+        "^/~ts-uri~/custom/ts-nul-authority/CaseSensitive.ts"
     );
 }
 

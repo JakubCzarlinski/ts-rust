@@ -2,6 +2,9 @@
 
 use crate::frontend::prelude::*;
 
+use super::dynamic::{
+    DYNAMIC_URI_FILE_NAME_PREFIX, canonical_dynamic_uri_path, is_encoded_dynamic_file_name,
+};
 use crate::gostd::unicode;
 use std::borrow::Cow;
 
@@ -291,7 +294,8 @@ fn get_file_url_volume_separator_end(url: &str, start: usize) -> i32 {
     -1
 }
 
-// Go: tspath/path.go:169 GetEncodedRootLength
+// Go: tspath/path.go:169 GetEncodedRootLength (ts#64544: dynamic file names,
+// case-insensitive file URLs)
 pub fn get_encoded_root_length(path: &str) -> i32 {
     let bytes = path.as_bytes();
     let ln = bytes.len();
@@ -327,6 +331,18 @@ pub fn get_encoded_root_length(path: &str) -> i32 {
 
     // Untitled paths (e.g., "^/untitled/ts-nul-authority/Untitled-1")
     if ch0 == b'^' && ln > 1 && bytes[1] == b'/' {
+        // ts#64544: an encoded dynamic file name is rooted at its authority:
+        // "^/~ts-uri~/<scheme>/<authority>/".
+        if path.starts_with(DYNAMIC_URI_FILE_NAME_PREFIX) {
+            let prefix_len = DYNAMIC_URI_FILE_NAME_PREFIX.len();
+            if let Some(scheme_end) = path[prefix_len..].find('/') {
+                let scheme_end = scheme_end + prefix_len;
+                if let Some(authority_end) = path[scheme_end + 1..].find('/') {
+                    return (scheme_end + authority_end + 2) as i32;
+                }
+                return ln as i32;
+            }
+        }
         return 2; // Untitled: "^/"
     }
 
@@ -342,8 +358,9 @@ pub fn get_encoded_root_length(path: &str) -> i32 {
             // special case interpreted as "the machine from which the URL is being interpreted".
             let scheme = &path[..scheme_end];
             let authority = &path[authority_start..authority_end];
-            if scheme == "file"
-                && (authority.is_empty() || authority == "localhost")
+            // ts#64544: the scheme and the authority compare without case.
+            if equate_string_case_insensitive(scheme, "file")
+                && (authority.is_empty() || equate_string_case_insensitive(authority, "localhost"))
                 && (ln > authority_end + 2)
                 && is_volume_character(bytes[authority_end + 1])
             {
@@ -968,10 +985,15 @@ pub fn to_file_name_lower_case(file_name: &str) -> String {
 }
 
 // Go: tspath/path.go:723 ToPath
+// ts#64544: an encoded dynamic file name keeps its case (see
+// `canonical_dynamic_uri_path`).
 pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: bool) -> Path {
     // PERF: a rooted name that is normal already is its own normal path
     // (`normalize_path`), so only the canonical copy is made.
     if is_rooted_disk_path(file_name) && is_normalized_path(file_name) {
+        if is_encoded_dynamic_file_name(file_name) {
+            return Path(canonical_dynamic_uri_path(file_name).into_owned());
+        }
         return Path(get_canonical_file_name(
             file_name,
             use_case_sensitive_file_names,
@@ -982,6 +1004,9 @@ pub fn to_path(file_name: &str, base_path: &str, use_case_sensitive_file_names: 
     } else {
         get_normalized_absolute_path(file_name, base_path)
     };
+    if is_encoded_dynamic_file_name(&non_canonicalized_path) {
+        return Path(canonical_dynamic_uri_path(&non_canonicalized_path).into_owned());
+    }
     Path(get_canonical_file_name(
         &non_canonicalized_path,
         use_case_sensitive_file_names,

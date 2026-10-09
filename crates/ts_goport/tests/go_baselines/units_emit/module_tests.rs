@@ -14,7 +14,8 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use ts_goport::frontend::module::{
     DefaultResolver, ResolutionHost, Resolver, ResolverOptions, StaticResolutionEntry,
-    new_resolver, new_static_resolutions, new_static_resolver, parse_node_module_from_path,
+    new_resolver, new_static_resolutions, new_static_resolver,
+    node_module_package_root_for_directory, node_module_package_root_for_file,
 };
 use ts_goport::frontend::tspath::{self, Path};
 use ts_goport::frontend::vfs::{Fs, Replacements, wrapvfs_wrap};
@@ -109,6 +110,278 @@ fn test_resolve_module_name_trailing_slash() {
         }
     }
     assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+/// The cwd of the dynamic resolver tests (ts#64544).
+const DYNAMIC_ROOT: &str = "^/~ts-uri~/custom/ts-nul-authority/";
+
+/// Go `NewResolver(ResolverOptions{Host: &resolutionHostStub{fs: fs, cwd:
+/// "^/~ts-uri~/custom/ts-nul-authority/"}, CompilerOptions: opts})`.
+fn new_dynamic_resolver(files: &[(&str, &str)], options: CompilerOptions) -> DefaultResolver {
+    let fs = vfstest::from_map(files.iter().copied(), true);
+    let host: Rc<dyn ResolutionHost> = Rc::new(ResolutionHostStub {
+        fs,
+        cwd: DYNAMIC_ROOT.to_string(),
+    });
+    new_resolver(ResolverOptions {
+        host: Some(host),
+        compiler_options: Some(Rc::new(options)),
+        ..Default::default()
+    })
+}
+
+/// `bundler_options` with `rootDirs`.
+fn bundler_options_with_root_dirs(root_dirs: &[&str]) -> CompilerOptions {
+    CompilerOptions {
+        root_dirs: Some(root_dirs.iter().map(|d| d.to_string()).collect()),
+        ..(*bundler_options()).clone()
+    }
+}
+
+/// Go `resolved, _, _ := resolver.ResolveModuleName(name, sourceFile, mode,
+/// nil)`; the resolved file name, or `None` when it is not resolved.
+fn resolved_file(
+    resolver: &DefaultResolver,
+    name: &str,
+    source_file: &str,
+    mode: ModuleKind,
+) -> Option<String> {
+    let (resolved, _, _) = resolver.resolve_module_name(name, source_file, mode, None);
+    resolved
+        .is_resolved()
+        .then(|| resolved.resolved_file_name.clone())
+}
+
+// Go: module/resolver_test.go:128 TestResolveDynamicModuleNameUsingRootDirs (ts#64544)
+#[test]
+fn test_resolve_dynamic_module_name_using_root_dirs() {
+    let mut t = Subtests::new("TestResolveDynamicModuleNameUsingRootDirs");
+    for (name, target_root, target_file) in [
+        (
+            "dynamic roots",
+            "^/~ts-uri~/custom/ts-nul-authority/generated",
+            "^/~ts-uri~/custom/ts-nul-authority/generated/~ts-uri-escape~7e74732d7572692d6573636170657e66696c65~.ts",
+        ),
+        (
+            "dynamic to disk",
+            "c:/generated",
+            "c:/generated/~ts-uri-escape~file.ts",
+        ),
+    ] {
+        t.run(name, || {
+            const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+            let resolver = new_dynamic_resolver(
+                &[(SOURCE_FILE, ""), (target_file, "export const value = 1;")],
+                bundler_options_with_root_dirs(&[
+                    "^/~ts-uri~/custom/ts-nul-authority/src",
+                    target_root,
+                ]),
+            );
+            let resolved = resolved_file(
+                &resolver,
+                "./~ts-uri-escape~file",
+                SOURCE_FILE,
+                ModuleKind::ES_NEXT,
+            );
+            if resolved.as_deref() != Some(target_file) {
+                return Err(format!(
+                    "resolved file = {resolved:?}, expected {target_file:?}"
+                ));
+            }
+            Ok(())
+        });
+    }
+    t.finish();
+}
+
+// Go: module/resolver_test.go:183 TestRootDirsPreservesExceptionalDynamicSegments (ts#64544)
+#[test]
+fn test_root_dirs_preserves_exceptional_dynamic_segments() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/~ts-uri-escape~2e2e~/main.ts";
+    const TARGET_FILE: &str =
+        "^/~ts-uri~/custom/ts-nul-authority/generated/~ts-uri-escape~2e2e~/dep.ts";
+    let resolver = new_dynamic_resolver(
+        &[
+            (SOURCE_FILE, ""),
+            (TARGET_FILE, "export const value = 1;"),
+            (
+                "^/~ts-uri~/custom/ts-nul-authority/dep.ts",
+                "export const wrong = 1;",
+            ),
+        ],
+        bundler_options_with_root_dirs(&[
+            "^/~ts-uri~/custom/ts-nul-authority/src",
+            "^/~ts-uri~/custom/ts-nul-authority/generated",
+        ]),
+    );
+    let resolved = resolved_file(&resolver, "./dep", SOURCE_FILE, ModuleKind::ES_NEXT);
+    assert_eq!(resolved.as_deref(), Some(TARGET_FILE));
+}
+
+// Go: module/resolver_test.go:218 TestRootDirsRejectsUnrepresentableDiskSegments (ts#64544)
+#[test]
+fn test_root_dirs_rejects_unrepresentable_disk_segments() {
+    let mut t = Subtests::new("TestRootDirsRejectsUnrepresentableDiskSegments");
+    for source_file in [
+        "^/~ts-uri~/custom/ts-nul-authority/src/~ts-uri-escape~2e2e~/main.ts",
+        "^/~ts-uri~/custom/ts-nul-authority/src/c:/main.ts",
+        "^/~ts-uri~/custom/ts-nul-authority/src/^/main.ts",
+    ] {
+        t.run(source_file, || {
+            let resolver = new_dynamic_resolver(
+                &[(source_file, ""), ("c:/dep.ts", "export const wrong = 1;")],
+                bundler_options_with_root_dirs(&[
+                    "^/~ts-uri~/custom/ts-nul-authority/src",
+                    "c:/generated",
+                ]),
+            );
+            if let Some(resolved) =
+                resolved_file(&resolver, "./dep", source_file, ModuleKind::ES_NEXT)
+            {
+                return Err(format!(
+                    "unexpectedly resolved unrepresentable disk path to {resolved:?}"
+                ));
+            }
+            Ok(())
+        });
+    }
+    t.finish();
+}
+
+// Go: module/resolver_test.go:465 TestResolveDynamicPackageSubpathFile (ts#64544)
+#[test]
+fn test_resolve_dynamic_package_subpath_file() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+    const TARGET_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/node_modules/pkg/~ts-uri-escape~7e74732d7572692d6573636170657e3636366636667e~.ts";
+    let resolver = new_dynamic_resolver(
+        &[
+            (SOURCE_FILE, ""),
+            (
+                "^/~ts-uri~/custom/ts-nul-authority/node_modules/pkg/package.json",
+                r#"{"name":"pkg"}"#,
+            ),
+            (TARGET_FILE, "export const value = 1;"),
+        ],
+        (*bundler_options()).clone(),
+    );
+    let resolved = resolved_file(
+        &resolver,
+        "pkg/~ts-uri-escape~666f6f~.ts",
+        SOURCE_FILE,
+        ModuleKind::ES_NEXT,
+    );
+    assert_eq!(resolved.as_deref(), Some(TARGET_FILE));
+}
+
+// Go: module/resolver_test.go:529 TestResolveDynamicDottedDirectory (ts#64544)
+#[test]
+fn test_resolve_dynamic_dotted_directory() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+    const TARGET_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/~ts-uri-escape~7e74732d7572692d6573636170657e6469722e6a73~/index.ts";
+    let resolver = new_dynamic_resolver(
+        &[(SOURCE_FILE, ""), (TARGET_FILE, "export const value = 1;")],
+        CompilerOptions {
+            module: ModuleKind::COMMON_JS,
+            ..(*bundler_options()).clone()
+        },
+    );
+    let resolved = resolved_file(
+        &resolver,
+        "./~ts-uri-escape~dir.js",
+        SOURCE_FILE,
+        ModuleKind::COMMON_JS,
+    );
+    assert_eq!(resolved.as_deref(), Some(TARGET_FILE));
+}
+
+// Go: module/resolver_test.go:427 TestResolveDynamicPackageJSONPath (ts#64544)
+#[test]
+fn test_resolve_dynamic_package_json_path() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+    const FALLBACK_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/node_modules/pkg/~ts-uri-escape~7e74732d7572692d6573636170657e7479706573~.d.ts";
+    const TARGET_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/node_modules/pkg/ts3.1/~ts-uri-escape~7e74732d7572692d6573636170657e7479706573~.d.ts";
+    let resolver = new_dynamic_resolver(
+        &[
+            (SOURCE_FILE, ""),
+            (
+                "^/~ts-uri~/custom/ts-nul-authority/node_modules/pkg/package.json",
+                r#"{"name":"pkg","types":"~ts-uri-escape~types.d.ts","typesVersions":{"*":{"*":["ts3.1/*"]}}}"#,
+            ),
+            (FALLBACK_FILE, "export const fallback: number;"),
+            (TARGET_FILE, "export const value: number;"),
+        ],
+        (*bundler_options()).clone(),
+    );
+    let resolved = resolved_file(&resolver, "pkg", SOURCE_FILE, ModuleKind::ES_NEXT);
+    assert_eq!(resolved.as_deref(), Some(TARGET_FILE));
+}
+
+// Go: module/resolver_test.go:496 TestResolveDynamicESMPackageIndexFromReservedDirectory (ts#64544)
+#[test]
+fn test_resolve_dynamic_esm_package_index_from_reserved_directory() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+    const PACKAGE_NAME: &str = "~ts-uri-escape~pkg.js";
+    const PACKAGE_DIRECTORY: &str = "^/~ts-uri~/custom/ts-nul-authority/node_modules/~ts-uri-escape~7e74732d7572692d6573636170657e706b672e6a73~";
+    let package_json_file = format!("{PACKAGE_DIRECTORY}/package.json");
+    let package_json = format!(r#"{{"name":"{PACKAGE_NAME}"}}"#);
+    let target_file = format!("{PACKAGE_DIRECTORY}/index.js");
+    let resolver = new_dynamic_resolver(
+        &[
+            (SOURCE_FILE, ""),
+            (&package_json_file, &package_json),
+            (&target_file, "exports.value = 1;"),
+        ],
+        (*bundler_options()).clone(),
+    );
+    let resolved = resolved_file(&resolver, PACKAGE_NAME, SOURCE_FILE, ModuleKind::ES_NEXT);
+    assert_eq!(resolved.as_deref(), Some(target_file.as_str()));
+}
+
+// Go: module/resolver_test.go:742 TestGeneratedDynamicEntrypointSpecifierResolvesEncodedFile (ts#64544)
+#[test]
+fn test_generated_dynamic_entrypoint_specifier_resolves_encoded_file() {
+    const SOURCE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/src/main.ts";
+    const PACKAGE_FILE: &str = "^/~ts-uri~/custom/ts-nul-authority/node_modules/Pkg/~ts-uri-escape~7e74732d7572692d6573636170657e76616c7565~.d.ts";
+    const MODULE_SPECIFIER: &str =
+        "Pkg/~ts-uri-spec~7e74732d7572692d6573636170657e76616c7565~.d.ts";
+    let resolver = new_dynamic_resolver(
+        &[
+            (SOURCE_FILE, ""),
+            (
+                "^/~ts-uri~/custom/ts-nul-authority/node_modules/Pkg/package.json",
+                r#"{"name":"Pkg"}"#,
+            ),
+            (PACKAGE_FILE, "export const value: number;"),
+        ],
+        (*bundler_options()).clone(),
+    );
+
+    let _ = resolver.resolve_module_name("Pkg", SOURCE_FILE, ModuleKind::ES_NEXT, None);
+    // PORT: Go takes the one package.json entry that exists from
+    // `PackageJsonCacheEntries`. The Rust cache range gives no
+    // `InfoCacheEntry`; the package scope of the package directory is that
+    // entry.
+    let package_json = resolver
+        .get_package_scope_for_path("^/~ts-uri~/custom/ts-nul-authority/node_modules/Pkg/")
+        .filter(|entry| entry.exists());
+    assert!(package_json.is_some(), "expected package JSON cache entry");
+    let entrypoints = resolver.get_entrypoints_from_package_json_info(&package_json, "Pkg", true);
+    assert!(
+        entrypoints.len() == 1 && entrypoints[0].module_specifier == MODULE_SPECIFIER,
+        "entrypoints = {:?}, expected {MODULE_SPECIFIER:?}",
+        entrypoints
+            .iter()
+            .map(|e| e.module_specifier.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let resolved = resolved_file(
+        &resolver,
+        MODULE_SPECIFIER,
+        SOURCE_FILE,
+        ModuleKind::ES_NEXT,
+    );
+    assert_eq!(resolved.as_deref(), Some(PACKAGE_FILE));
 }
 
 /// A second resolution that a wrapped FS runs inside a `FileExists` call.
@@ -303,9 +576,10 @@ fn test_resolve_subpath_nil_contents_race() {
     assert!(second, "\"/repo/src/b/file.ts\" failed to resolve pkg/sub");
 }
 
-// Go: module/resolver_test.go:301 TestParseNodeModuleFromPath
+// Go: module/resolver_test.go:1495 TestNodeModulePackageRoot (ts#64544 renames
+// TestParseNodeModuleFromPath)
 #[test]
-fn test_parse_node_module_from_path() {
+fn test_node_module_package_root() {
     let tests: &[(&str, &str, bool, &str)] = &[
         (
             "file in package",
@@ -343,6 +617,18 @@ fn test_parse_node_module_from_path() {
             true,
             "/a/node_modules/@scope/b",
         ),
+        (
+            "package root interpreted as file",
+            "/a/node_modules/b",
+            false,
+            "/a/node_modules/",
+        ),
+        (
+            "scoped package root interpreted as file",
+            "/a/node_modules/@scope/b",
+            false,
+            "/a/node_modules/@scope",
+        ),
         // A bare scope directory has no package name; must not panic (https://github.com/microsoft/typescript-go/issues/4373).
         (
             "scope-only folder",
@@ -359,13 +645,17 @@ fn test_parse_node_module_from_path() {
         ("not in node_modules", "/a/src/index.ts", false, ""),
     ];
 
-    let mut t = Subtests::new("TestParseNodeModuleFromPath");
+    let mut t = Subtests::new("TestNodeModulePackageRoot");
     for &(name, path, is_folder, want) in tests {
         t.run(name, || {
-            let got = parse_node_module_from_path(path, is_folder);
+            let got = if is_folder {
+                node_module_package_root_for_directory(path)
+            } else {
+                node_module_package_root_for_file(path)
+            };
             if got != want {
                 return Err(format!(
-                    "ParseNodeModuleFromPath({path:?}, {is_folder}) = {got:?}, want {want:?}"
+                    "nodeModulesPackageRoot({path:?}, {is_folder}) = {got:?}, want {want:?}"
                 ));
             }
             Ok(())
@@ -789,6 +1079,7 @@ fn test_get_each_file_name_of_module_with_symlinks() {
         real: "/real/path/".to_string(),
         real_path: tspath::to_path("/real/path", "/project", true)
             .ensure_trailing_directory_separator(),
+        ..Default::default()
     };
     symlink_cache.set_directory("/project/symlink", symlink_path, Some(real_directory));
     // PORT: Go sets the directory on the host's cache after making the

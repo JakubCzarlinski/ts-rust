@@ -18,6 +18,7 @@
 
 use crate::frontend::prelude::*;
 use crate::gostd::GoError;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Go `if r.tracer != nil { r.tracer.write(diag, args...) }`.
@@ -67,6 +68,83 @@ pub fn continue_searching() -> Option<Resolved> {
 #[must_use]
 pub fn unresolved() -> Option<Resolved> {
     Some(Resolved::default())
+}
+
+// Go: module/resolver.go:130 pathForDynamicResolution (ts#64544)
+// A relative module name under an encoded dynamic directory, with its
+// segments encoded as the dynamic file names are.
+pub(crate) fn path_for_dynamic_resolution<'a>(
+    directory: &str,
+    path: &'a str,
+    directory_only: bool,
+) -> Cow<'a, str> {
+    if is_encoded_dynamic_file_name(directory) && !path_is_absolute(path) {
+        if directory_only {
+            return Cow::Owned(encode_dynamic_directory_specifier(path));
+        }
+        return Cow::Owned(encode_dynamic_module_specifier(path));
+    }
+    Cow::Borrowed(path)
+}
+
+// Go: module/resolver.go:54 resolvePathForModule (ts#64544 at 59f5b0233; ts#64159
+// replaces it with resolutionCandidate)
+// `path` resolved against `directory`; a directory path ends with "/".
+pub(crate) fn resolve_path_for_module(directory: &str, path: &str, directory_only: bool) -> String {
+    let resolved = normalize_path(&combine_paths(
+        directory,
+        &[&path_for_dynamic_resolution(
+            directory,
+            path,
+            directory_only,
+        )],
+    ));
+    if directory_only {
+        return ensure_trailing_directory_separator(&resolved);
+    }
+    resolved
+}
+
+// Go: module/resolver.go:62 resolveDynamicLogicalPath (ts#64544 at 59f5b0233; removed by
+// ts#64159)
+pub(crate) fn resolve_dynamic_logical_path(
+    directory: &str,
+    path: &str,
+    directory_only: bool,
+) -> String {
+    let path = if !path.is_empty() && directory_only {
+        remove_trailing_directory_separator(path)
+    } else {
+        path
+    };
+    let encoded = if directory_only {
+        encode_dynamic_relative_uri_directory_path(path)
+    } else {
+        encode_dynamic_relative_uri_path(path)
+    };
+    let resolved = normalize_path(&combine_paths(directory, &[&encoded]));
+    if directory_only {
+        return ensure_trailing_directory_separator(&resolved);
+    }
+    resolved
+}
+
+// Go: module/resolver.go:77 dynamicDirectoryCandidate (ts#64544 at 59f5b0233; ts#64159
+// replaces it with resolutionCandidate.directoryPath)
+// A dynamic candidate whose last segment is encoded as a directory segment
+// (a file segment keeps its extension outside the escape).
+pub(crate) fn dynamic_directory_candidate(candidate: &str) -> Cow<'_, str> {
+    if !is_encoded_dynamic_file_name(candidate) {
+        return Cow::Borrowed(candidate);
+    }
+    let directory = get_directory_path(candidate);
+    let base = get_base_file_name(candidate);
+    let logical_base = decode_dynamic_uri_path_segment(&base);
+    let encoded_base = encode_dynamic_uri_directory_path(&logical_base);
+    if encoded_base == base {
+        return Cow::Borrowed(candidate);
+    }
+    Cow::Owned(combine_paths(&directory, &[&encoded_base]))
 }
 
 // Go: module/resolver.go:44 resolutionKindSpecificLoader
@@ -881,7 +959,7 @@ impl ResolutionState<'_> {
                         self.load_module_from_file(Extensions::DECLARATION, &candidate);
                     if let Some(mut resolved_from_file) = resolved_from_file {
                         let package_directory =
-                            parse_node_module_from_path(&resolved_from_file.path, false);
+                            node_module_package_root_for_file(&resolved_from_file.path);
                         if !package_directory.is_empty() {
                             let package_info = self.get_package_json_info(&package_directory);
                             resolved_from_file.package_id =
@@ -984,8 +1062,7 @@ impl ResolutionState<'_> {
             let resolved_from_file =
                 self.load_module_from_file(Extensions::DECLARATION, &candidate);
             if let Some(mut resolved_from_file) = resolved_from_file {
-                let package_directory =
-                    parse_node_module_from_path(&resolved_from_file.path, false);
+                let package_directory = node_module_package_root_for_file(&resolved_from_file.path);
                 if !package_directory.is_empty() {
                     let package_info = self.get_package_json_info(&package_directory);
                     resolved_from_file.package_id =
@@ -1544,7 +1621,6 @@ impl ResolutionState<'_> {
                     );
                     return continue_searching();
                 }
-                let resolved_target = combine_paths(&scope.package_directory, &[&target_string]);
                 // TODO: Assert that `resolvedTarget` is actually within the package directory? That's what the spec says.... but I'm not sure we need
                 // to be in the business of validating everyone's import and export map correctness.
                 let subpath_parts = get_path_components(subpath, "");
@@ -1575,17 +1651,19 @@ impl ResolutionState<'_> {
                         message_target
                     );
                 }
-                let final_path = if is_pattern {
-                    get_normalized_absolute_path(
-                        &resolved_target.replace('*', subpath),
-                        self.resolver.host.get_current_directory(),
-                    )
+                // ts#64544: the target is resolved against the package
+                // directory, and a target that ends with "/" stays a
+                // directory path.
+                let target_path = if is_pattern {
+                    target_string.replace('*', subpath)
                 } else {
-                    get_normalized_absolute_path(
-                        &format!("{resolved_target}{subpath}"),
-                        self.resolver.host.get_current_directory(),
-                    )
+                    format!("{target_string}{subpath}")
                 };
+                let final_path = resolve_path_for_module(
+                    &scope.package_directory,
+                    &target_path,
+                    has_trailing_directory_separator(&target_path),
+                );
                 let scope_info = Some(scope.clone());
                 let input_link = self.try_load_input_file_for_path(
                     &final_path,
@@ -1987,15 +2065,23 @@ impl ResolutionState<'_> {
         // causing `loadNodeModuleFromDirectoryWorker`'s `ComparePaths(candidate, ...)`
         // check to fail and skip loading the package's `main`/`types` entry.
         // https://github.com/microsoft/typescript-go/issues/3526
-        let candidate = remove_trailing_directory_separator(&normalize_path(&combine_paths(
+        // ts#64544: the candidate and the package directory resolve as
+        // module paths, so the segments of a dynamic directory stay encoded.
+        let candidate = resolve_path_for_module(
             node_modules_directory,
-            &[module_name],
-        )))
-        .to_string();
+            remove_trailing_directory_separator(module_name),
+            false,
+        );
+        let candidate_directory = dynamic_directory_candidate(&candidate).into_owned();
         let (package_name, rest) = parse_package_name(module_name);
-        let mut package_directory = combine_paths(node_modules_directory, &[&package_name]);
+        let mut package_directory = remove_trailing_directory_separator(&resolve_path_for_module(
+            node_modules_directory,
+            &package_name,
+            true,
+        ))
+        .to_string();
         if package_name.is_empty() {
-            package_directory = candidate.clone();
+            package_directory = candidate_directory.clone();
         }
 
         if self.resolve_package_directory_only {
@@ -2010,7 +2096,7 @@ impl ResolutionState<'_> {
 
         let mut root_package_info: Option<Rc<InfoCacheEntry>> = None;
         // First look for a nested package.json, as in `node_modules/foo/bar/package.json`
-        let mut package_info = self.get_package_json_info(&candidate);
+        let mut package_info = self.get_package_json_info(&candidate_directory);
         // But only if we're not respecting export maps (if we are, we might redirect around this location)
         if !rest.is_empty() && entry_exists(&package_info) {
             if self.features.intersects(NodeResolutionFeatures::EXPORTS) {
@@ -2035,8 +2121,11 @@ impl ResolutionState<'_> {
                     return from_file;
                 }
 
-                let from_directory =
-                    self.load_node_module_from_directory_worker(ext, &candidate, &package_info);
+                let from_directory = self.load_node_module_from_directory_worker(
+                    ext,
+                    &candidate_directory,
+                    &package_info,
+                );
                 if let Some(mut from_directory) = from_directory {
                     from_directory.package_id =
                         self.get_package_id(&from_directory.path, &package_info);
@@ -2056,55 +2145,59 @@ impl ResolutionState<'_> {
             }
         }
 
-        let mut loader = |state: &mut Self,
-                          extensions: Extensions,
-                          candidate: &str|
-         -> Option<Resolved> {
-            if !rest.is_empty() || !state.esm_mode {
-                let from_file = state.load_module_from_file(extensions, candidate);
-                if let Some(mut from_file) = from_file {
-                    from_file.package_id = state.get_package_id(&from_file.path, &package_info);
-                    return Some(from_file);
+        let mut loader =
+            |state: &mut Self, extensions: Extensions, candidate: &str| -> Option<Resolved> {
+                let loader_candidate_directory = dynamic_directory_candidate(candidate);
+                if !rest.is_empty() || !state.esm_mode {
+                    let from_file = state.load_module_from_file(extensions, candidate);
+                    if let Some(mut from_file) = from_file {
+                        from_file.package_id = state.get_package_id(&from_file.path, &package_info);
+                        return Some(from_file);
+                    }
                 }
-            }
-            let from_directory =
-                state.load_node_module_from_directory_worker(extensions, candidate, &package_info);
-            if let Some(mut from_directory) = from_directory {
-                from_directory.package_id =
-                    state.get_package_id(&from_directory.path, &package_info);
-                return Some(from_directory);
-            }
-            if rest.is_empty()
-                && entry_exists(&package_info)
-                && {
-                    let exports_type = package_info
-                        .as_ref()
-                        .unwrap()
-                        .contents
-                        .as_ref()
-                        .unwrap()
-                        .fields
-                        .path_fields
-                        .exports
-                        .json_value
-                        .type_;
-                    exports_type == JSONValueType::NOT_PRESENT
-                        || exports_type == JSONValueType::NULL
+                let from_directory = state.load_node_module_from_directory_worker(
+                    extensions,
+                    &loader_candidate_directory,
+                    &package_info,
+                );
+                if let Some(mut from_directory) = from_directory {
+                    from_directory.package_id =
+                        state.get_package_id(&from_directory.path, &package_info);
+                    return Some(from_directory);
                 }
-                && state.esm_mode
-            {
-                // EsmMode disables index lookup in `loadNodeModuleFromDirectoryWorker` generally, however non-relative package resolutions still assume
-                // a default `index.js` entrypoint if no `main` or `exports` are present
-                let index_result = state
-                    .load_module_from_file(extensions, &combine_paths(candidate, &["index.js"]));
-                if let Some(mut index_result) = index_result {
-                    index_result.package_id =
-                        state.get_package_id(&index_result.path, &package_info);
-                    return Some(index_result);
+                if rest.is_empty()
+                    && entry_exists(&package_info)
+                    && {
+                        let exports_type = package_info
+                            .as_ref()
+                            .unwrap()
+                            .contents
+                            .as_ref()
+                            .unwrap()
+                            .fields
+                            .path_fields
+                            .exports
+                            .json_value
+                            .type_;
+                        exports_type == JSONValueType::NOT_PRESENT
+                            || exports_type == JSONValueType::NULL
+                    }
+                    && state.esm_mode
+                {
+                    // EsmMode disables index lookup in `loadNodeModuleFromDirectoryWorker` generally, however non-relative package resolutions still assume
+                    // a default `index.js` entrypoint if no `main` or `exports` are present
+                    let index_result = state.load_module_from_file(
+                        extensions,
+                        &combine_paths(&loader_candidate_directory, &["index.js"]),
+                    );
+                    if let Some(mut index_result) = index_result {
+                        index_result.package_id =
+                            state.get_package_id(&index_result.path, &package_info);
+                        return Some(index_result);
+                    }
                 }
-            }
-            continue_searching()
-        };
+                continue_searching()
+            };
 
         if package_info.is_some() {
             self.resolved_package_directory = true;

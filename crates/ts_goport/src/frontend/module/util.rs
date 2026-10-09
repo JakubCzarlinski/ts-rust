@@ -25,23 +25,47 @@ pub fn is_applicable_versioned_types_key(key: &str) -> bool {
     range.test(&TYPE_SCRIPT_VERSION)
 }
 
-// Go: module/util.go:28 ParseNodeModuleFromPath
+// Go: module/util.go:28 NodeModulePackageRootForFile (ts#64544)
+#[must_use]
+pub fn node_module_package_root_for_file(resolved: &str) -> String {
+    parse_node_module_package_root(resolved, false /*isDirectory*/)
+}
+
+// Go: module/util.go:32 NodeModulePackageRootForDirectory (ts#64544)
+#[must_use]
+pub fn node_module_package_root_for_directory(resolved: &str) -> String {
+    parse_node_module_package_root(resolved, true /*isDirectory*/)
+}
+
+// Go: module/util.go:28 ParseNodeModuleFromPath (removed by ts#64544, which
+// splits it into NodeModulePackageRootForFile and
+// NodeModulePackageRootForDirectory)
+// PORT: kept for the ls callers (ls/rename.rs, ls/autoimport/util.rs) until
+// the ls lane ports their ts#64544 parts.
 #[must_use]
 pub fn parse_node_module_from_path(resolved: &str, is_folder: bool) -> String {
-    let path = normalize_path(resolved);
+    parse_node_module_package_root(resolved, is_folder)
+}
+
+// Go: module/util.go:36 parseNodeModulePackageRoot (ts#64544)
+fn parse_node_module_package_root(path: &str, is_directory: bool) -> String {
+    let path = normalize_path(path);
     let Some(idx) = path.rfind("/node_modules/") else {
         return String::new();
     };
 
     // PORT: Go `int` indexes are `i32` to match `move_to_next_directory_separator_if_available`.
     let index_after_node_modules = (idx + "/node_modules/".len()) as i32;
-    let mut index_after_package_name =
-        move_to_next_directory_separator_if_available(&path, index_after_node_modules, is_folder);
+    let mut index_after_package_name = move_to_next_directory_separator_if_available(
+        &path,
+        index_after_node_modules,
+        is_directory,
+    );
     if path.as_bytes()[index_after_node_modules as usize] == b'@' {
         index_after_package_name = move_to_next_directory_separator_if_available(
             &path,
             index_after_package_name,
-            is_folder,
+            is_directory,
         );
     }
     path[..index_after_package_name as usize].to_string()

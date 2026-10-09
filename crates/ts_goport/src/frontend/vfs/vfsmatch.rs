@@ -201,7 +201,7 @@ enum SegmentKind {
     Question,
 }
 
-// Go: vfs/vfsmatch/vfsmatch.go:140 compileGlobPattern
+// Go: vfs/vfsmatch/vfsmatch.go:143 compileGlobPattern
 /// Compiles a glob spec (e.g., "src/**/*.ts") into a pattern.
 /// Returns `None` if the pattern would match nothing.
 fn compile_glob_pattern(
@@ -211,6 +211,8 @@ fn compile_glob_pattern(
     case_sensitive: bool,
 ) -> Option<GlobPattern> {
     let mut parts = get_normalized_path_components(spec, base_path);
+    // ts#64544: dynamic file names compare with case.
+    let case_sensitive = case_sensitive || is_encoded_dynamic_file_name(&parts[0]);
 
     // "src/**" without a filename matches nothing (for include patterns)
     if usage != Usage::Exclude && parts.last().map(String::as_str).unwrap_or("") == "**" {
@@ -219,6 +221,13 @@ fn compile_glob_pattern(
 
     // Normalize root: "/home/" -> "/home"
     parts[0] = remove_trailing_directory_separator(&parts[0]).to_string();
+    // ts#64544: a dynamic root ("^/~ts-uri~/<scheme>/<authority>") is one
+    // component per segment.
+    if is_encoded_dynamic_file_name(&parts[0]) {
+        let mut root_parts: Vec<String> = parts[0].split('/').map(str::to_string).collect();
+        root_parts.extend(parts.drain(1..));
+        parts = root_parts;
+    }
 
     // Directories implicitly match all files: "src" -> "src/**/*"
     if is_implicit_glob(parts.last().map(String::as_str).unwrap_or("")) {

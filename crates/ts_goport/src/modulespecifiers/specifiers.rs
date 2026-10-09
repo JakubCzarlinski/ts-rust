@@ -993,11 +993,14 @@ pub(crate) fn try_get_module_name_as_node_module(
         let mut package_root_index = parts.package_root_index;
         let mut module_file_name = String::new();
         loop {
+            // ts#64544: each pass tries the directory at the current
+            // `packageRootIndex`.
+            let mut current_parts = parts;
+            current_parts.package_root_index = package_root_index;
             // If the module could be imported by a directory name, use that directory's name
-            // PORT: Go passes `*parts`, not the updated `packageRootIndex`, so
-            // each pass tries the same directory. This keeps that behavior.
             let pkg_json_results = try_directory_with_package_json(
-                parts,
+                current_parts,
+                parts.package_root_index,
                 path_obj,
                 importing_source_file,
                 host,
@@ -1073,9 +1076,12 @@ struct PkgJsonDirAttemptResult {
     verbatim_from_exports: bool,
 }
 
-// Go: modulespecifiers/specifiers.go:837 tryDirectoryWithPackageJson
+// Go: modulespecifiers/specifiers.go:846 tryDirectoryWithPackageJson
+// ts#64544: `package_base_root_index` is the package root of the module
+// (`parts.PackageRootIndex` before the loop), for the index file name check.
 fn try_directory_with_package_json(
     parts: NodeModulePathParts,
+    package_base_root_index: isize,
     path_obj: &ModulePath,
     importing_source_file: &dyn SourceFileForSpecifierGeneration,
     host: &dyn ModuleSpecifierGenerationHost,
@@ -1093,7 +1099,7 @@ fn try_directory_with_package_json(
     let mut maybe_blocked_by_types_versions = false;
     let Some(package_json) = host.get_package_json_info(&package_json_path) else {
         // No package.json exists; an index.js will still resolve as the package name
-        let file_name = &module_file_to_try[(parts.package_root_index + 1) as usize..];
+        let file_name = &module_file_to_try[(package_base_root_index + 1) as usize..];
         if file_name == "index.d.ts"
             || file_name == "index.js"
             || file_name == "index.ts"

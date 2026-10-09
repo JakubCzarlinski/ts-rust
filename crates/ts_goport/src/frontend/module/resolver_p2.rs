@@ -236,7 +236,11 @@ impl ResolutionState<'_> {
             for subst in &substitutions {
                 // PORT: Go joins the bytes (see `scanner_util::go_value`).
                 let path = go_value_owned(subst.replacen('*', &matched_star, 1));
-                let candidate = normalize_path(&combine_paths(containing_directory, &[&path]));
+                let candidate = resolve_path_for_module(
+                    containing_directory,
+                    &path,
+                    has_trailing_directory_separator(&path),
+                );
                 trace_write!(
                     self,
                     diag::Trying_substitution_0_candidate_module_location_Colon_1,
@@ -289,7 +293,11 @@ impl ResolutionState<'_> {
             self.name
         );
 
-        let candidate = normalize_path(&combine_paths(&self.containing_directory, &[&self.name]));
+        let candidate = resolve_path_for_module(
+            &self.containing_directory,
+            &self.name,
+            has_trailing_directory_separator(&self.name),
+        );
 
         let root_dirs = self.compiler_options.root_dirs.clone().unwrap_or_default();
         let mut matched_root_dir = String::new();
@@ -355,7 +363,36 @@ impl ResolutionState<'_> {
                     // skip the initially matched entry
                     continue;
                 }
-                let candidate = combine_paths(&normalize_path(root_dir), &[&suffix]);
+                // ts#64544: a suffix and a root dir that are dynamic paths
+                // map between their encoded and logical forms.
+                let directory_only = suffix.is_empty() || has_trailing_directory_separator(&suffix);
+                let logical_suffix = suffix.as_str();
+                let candidate = match (
+                    is_encoded_dynamic_file_name(root_dir),
+                    is_encoded_dynamic_file_name(&matched_root_dir),
+                ) {
+                    (true, true) => resolve_dynamic_logical_path(
+                        &normalize_path(root_dir),
+                        &decode_dynamic_uri_path(logical_suffix),
+                        directory_only,
+                    ),
+                    (true, false) => resolve_dynamic_logical_path(
+                        &normalize_path(root_dir),
+                        logical_suffix,
+                        directory_only,
+                    ),
+                    (false, true) => {
+                        let Some(decoded) = decode_dynamic_uri_path_for_disk(logical_suffix) else {
+                            continue;
+                        };
+                        resolve_path_for_module(&normalize_path(root_dir), &decoded, directory_only)
+                    }
+                    (false, false) => resolve_path_for_module(
+                        &normalize_path(root_dir),
+                        logical_suffix,
+                        directory_only,
+                    ),
+                };
                 trace_write!(
                     self,
                     diag::Loading_0_from_the_root_dir_1_candidate_location_2,
@@ -405,10 +442,8 @@ impl ResolutionState<'_> {
             let resolved_from_file = self.load_module_from_file(extensions, candidate);
             if let Some(mut resolved_from_file) = resolved_from_file {
                 if consider_package_json {
-                    let package_directory = parse_node_module_from_path(
-                        &resolved_from_file.path,
-                        false, /*isFolder*/
-                    );
+                    let package_directory =
+                        node_module_package_root_for_file(&resolved_from_file.path);
                     if !package_directory.is_empty() {
                         let package_info = self.get_package_json_info(&package_directory);
                         let path = resolved_from_file.path.clone();
@@ -418,11 +453,18 @@ impl ResolutionState<'_> {
                 return Some(resolved_from_file);
             }
         }
-        if !self.resolver.host.fs().directory_exists(candidate) {
+        // ts#64544: a dynamic candidate is looked up as a directory segment.
+        let directory_candidate = dynamic_directory_candidate(candidate);
+        if !self
+            .resolver
+            .host
+            .fs()
+            .directory_exists(&directory_candidate)
+        {
             trace_write!(
                 self,
                 diag::Directory_0_does_not_exist_skipping_all_lookups_in_it,
-                candidate
+                directory_candidate
             );
             return continue_searching();
         }
@@ -432,7 +474,7 @@ impl ResolutionState<'_> {
         if !self.esm_mode {
             return self.load_node_module_from_directory(
                 extensions,
-                candidate,
+                &directory_candidate,
                 consider_package_json,
             );
         }
@@ -841,6 +883,12 @@ impl ResolutionState<'_> {
                     &ComparePathsOptions::default(),
                 )
             };
+            // ts#64544: the typesVersions patterns match the logical name.
+            let module_name = if is_encoded_dynamic_file_name(candidate) {
+                decode_dynamic_uri_path(&module_name)
+            } else {
+                module_name
+            };
             trace_write!(
                 self,
                 diag::X_package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2,
@@ -1120,7 +1168,8 @@ impl ResolutionState<'_> {
         crate::gostd::slices::stable_sort_by(&mut names, |a, b| compare_go_bytes(a, b));
         let mut builder = String::new();
         for name in &names {
-            let peer_package_json = self.get_package_json_info(&format!("{node_modules}{name}"));
+            let peer_package_json =
+                self.get_package_json_info(&resolve_path_for_module(&node_modules, name, true));
             if let Some(peer_package_json) = peer_package_json.filter(|p| p.exists()) {
                 let version = peer_package_json
                     .contents
@@ -1195,7 +1244,11 @@ impl ResolutionState<'_> {
             trace_write!(self, diag::X_package_json_had_a_falsy_0_field, field_name);
             return (String::new(), false);
         }
-        let path = normalize_path(&combine_paths(directory, &[&field.value]));
+        let path = resolve_path_for_module(
+            directory,
+            &field.value,
+            has_trailing_directory_separator(&field.value),
+        );
         trace_write!(
             self,
             diag::X_package_json_has_0_field_1_that_references_2,
@@ -1474,7 +1527,14 @@ pub fn match_pattern_or_exact(patterns: &ParsedPatterns, candidate: &str) -> Pat
 // (https://nodejs.org/api/modules.html#all-together), but it seems that module paths ending
 // in `.` are actually normalized to `./` before proceeding with the resolution algorithm.
 pub fn normalize_path_for_cjs_resolution(containing_directory: &str, module_name: &str) -> String {
-    let combined = combine_paths(containing_directory, &[module_name]);
+    let combined = combine_paths(
+        containing_directory,
+        &[&path_for_dynamic_resolution(
+            containing_directory,
+            module_name,
+            false,
+        )],
+    );
     // PORT: Go builds `GetPathComponents(combined, "")` only to read its last
     // entry. `last_path_component` reads that entry in place.
     let last_part = last_path_component(&combined);
