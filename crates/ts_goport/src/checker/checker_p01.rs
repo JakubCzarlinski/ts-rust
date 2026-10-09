@@ -895,6 +895,8 @@ pub struct Checker {
     pub diagnostics: DiagnosticsCollection,
     pub suggestion_diagnostics: DiagnosticsCollection,
     pub merged_symbols: FxHashMap<SymbolId, SymbolId>,
+    // Go N' checker.go:673 mergedExportsChecked (ts#64566)
+    pub merged_exports_checked: FxHashSet<SymbolId>,
     pub factory: NodeFactory,
     pub node_links: LinkStore<Node, NodeLinks>,
     pub signature_links: LinkStore<Node, Box<SignatureLinks>>,
@@ -1412,6 +1414,7 @@ impl Checker {
             diagnostics: DiagnosticsCollection::default(),
             suggestion_diagnostics: DiagnosticsCollection::default(),
             merged_symbols: FxHashMap::default(),
+            merged_exports_checked: FxHashSet::default(),
             // Go leaves `factory` as the zero `ast.NodeFactory`.
             factory: NodeFactory::new(),
             node_links: LinkStore::default(),
