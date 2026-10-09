@@ -2,7 +2,6 @@
 //! the "explain files" diagnostics for each reason.
 
 use crate::frontend::prelude::*;
-use std::cell::OnceCell;
 
 // Go: fileInclude.go:15 fileIncludeKind
 // PORT: Go `int` enum with iota constants. The newtype keeps the Go order,
@@ -40,17 +39,15 @@ pub enum FileIncludeData {
 }
 
 // Go: fileInclude.go:29 FileIncludeReason
-// PORT: `sync.Once` + pointer pairs are `OnceCell<Diagnostic>`.
+// ts#64519: the reason no longer caches its diagnostics; each program does
+// (`IncludeProcessor::reason_diagnostics`). PORT: Go ts#64519 replaces
+// `data any` with the typed fields `index`, `isDefaultLib`, `referencedFile`,
+// `automaticTypeDirective` and `canonicalSourceFile`; the port keeps one
+// typed enum (`FileIncludeData`).
 #[derive(Debug, Default)]
 pub struct FileIncludeReason {
     pub kind: FileIncludeKind,
     pub data: FileIncludeData,
-
-    // Uses relative file name
-    pub relative_file_name_diag: OnceCell<Diagnostic>,
-
-    // Uses file name as is
-    pub diag: OnceCell<Diagnostic>,
 }
 
 // PORT: Go builds reasons with `&FileIncludeReason{kind: .., data: ..}`.
@@ -60,12 +57,7 @@ pub fn new_file_include_reason(
     kind: FileIncludeKind,
     data: FileIncludeData,
 ) -> Rc<FileIncludeReason> {
-    Rc::new(FileIncludeReason {
-        kind,
-        data,
-        relative_file_name_diag: OnceCell::new(),
-        diag: OnceCell::new(),
-    })
+    Rc::new(FileIncludeReason { kind, data })
 }
 
 // Go: fileInclude.go:41 referencedFileData
@@ -255,23 +247,35 @@ impl FileIncludeReason {
         }
     }
 
-    // Go: fileInclude.go:146 (*FileIncludeReason).toDiagnostic
-    pub fn to_diagnostic(&self, program: &NewProgram, relative_file_name: bool) -> &Diagnostic {
-        if relative_file_name {
-            self.relative_file_name_diag.get_or_init(|| {
-                self.compute_diagnostic(program, &|file_name: &str| {
-                    get_relative_path_from_directory(
-                        &program.get_current_directory(),
-                        file_name,
-                        &program.compare_paths_options,
-                    )
-                })
-            })
-        } else {
-            self.diag.get_or_init(|| {
-                self.compute_diagnostic(program, &|file_name: &str| file_name.to_string())
-            })
+    // Go: fileInclude.go:148 (*FileIncludeReason).toDiagnostic
+    // ts#64519: the diagnostic is cached by the program, not by the reason,
+    // so a program that shares the reasons (`ReuseProgram`) computes its
+    // own. PORT: Go returns the cached pointer; this returns a copy.
+    pub fn to_diagnostic(&self, program: &NewProgram, relative_file_name: bool) -> Diagnostic {
+        let key = IncludeReasonDiagnosticKey {
+            reason: std::ptr::from_ref(self),
+            relative_file_name,
+        };
+        let reason_diagnostics = &program.include_processor.reason_diagnostics;
+        if let Some(diagnostic) = reason_diagnostics.borrow().get(&key) {
+            return diagnostic.clone();
         }
+        // PORT: the borrow is released while the diagnostic is computed.
+        let diagnostic = self.compute_diagnostic(program, &|file_name: &str| {
+            if relative_file_name {
+                return get_relative_path_from_directory(
+                    &program.get_current_directory(),
+                    file_name,
+                    &program.compare_paths_options,
+                );
+            }
+            file_name.to_string()
+        });
+        reason_diagnostics
+            .borrow_mut()
+            .entry(key)
+            .or_insert(diagnostic)
+            .clone()
     }
 
     // Go: fileInclude.go:162 (*FileIncludeReason).computeDiagnostic

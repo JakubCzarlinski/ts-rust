@@ -111,8 +111,6 @@ struct ProgramCheckers {
     program: Rc<NewProgram>,
     /// Its program version.
     version: &'static GoProgram,
-    /// Go `Program.opts.CreateCheckerPool`.
-    create_checker_pool: Option<CreateCheckerPool>,
     /// Go `Program.checkerPool`.
     checker_pool: Rc<dyn CheckerPool>,
     /// Go `Program.compilerCheckerPool`.
@@ -121,9 +119,13 @@ struct ProgramCheckers {
     declaration_diagnostic_cache: RefCell<FxHashMap<Node, Vec<Diagnostic>>>,
     /// The host of the load that made the files of `program`: its own host
     /// after `new_program` or an update that loads again, and the old
-    /// program's load host after an update that clones. Go `UpdateProgram`
-    /// shares `processedFiles`, whose resolver reads that host's file system
-    /// after the load too (`GetPackageScopeForPath`).
+    /// program's load host after an update that clones. The processed
+    /// files keep the resolver of the load, which reads that host's file
+    /// system after the load too (`GetPackageScopeForPath`).
+    // PORT: since ts#64519 Go keeps no resolver: `Program.newResolver`
+    // reads the program's own host. The module part of ts#64519
+    // (`module.ResolutionData`) is not ported yet, so the port keeps the
+    // load host until then.
     load_host: Rc<dyn CompilerHost>,
 }
 
@@ -458,8 +460,9 @@ fn release_if_pending(version: &'static GoProgram) {
 // Program construction and release
 // ---------------------------------------------------------------------------
 
-// Go: compiler/program.go:285 NewProgram
+// Go: compiler/program.go:313 NewProgram
 // PORT: Go `opts.CreateCheckerPool` is the `create_checker_pool` argument.
+// The program does not keep it (ts#64519).
 // The frontend program parses with no current program, then becomes a
 // program version of the process (`program::new_program_version`).
 // PORT: Go runs `initCheckerPool` before `verifyCompilerOptions`. Here the
@@ -479,13 +482,13 @@ pub fn new_program(
     p
 }
 
-// Go: compiler/program.go:305 UpdateProgram
+// Go: compiler/program.go:335 UpdateProgram
 // PORT: `NewProgram::update_program` builds the new program. It
 // becomes a program version that shares the unchanged file versions of
-// `p`, and gets its checker pool here. `create_checker_pool`, when set,
-// overrides the one of `p` (Go `newOpts.CreateCheckerPool`).
-// `create_module_resolver` goes to `NewProgram::update_program`; a Go nil
-// `createModuleResolver` is `None` (ts#64299).
+// `p`, and gets its checker pool here. Since ts#64519 the new program uses
+// `create_checker_pool` as given (`None` is the compiler pool), not the one
+// of `p`. `create_module_resolver` goes to `NewProgram::update_program`; a
+// Go nil `createModuleResolver` is `None` (ts#64299).
 pub fn update_program(
     p: &NewProgram,
     changed_file_path: &tspath::Path,
@@ -494,12 +497,6 @@ pub fn update_program(
     create_module_resolver: Option<Rc<dyn Fn(module::ResolverOptions) -> Rc<dyn module::Resolver>>>,
 ) -> (Rc<NewProgram>, Option<Rc<ParsedSourceFile>>, bool) {
     let old = PROGRAM_CHECKERS.with(|programs| programs.borrow().get(&program_key(p)).cloned());
-    let create_checker_pool = create_checker_pool.or_else(|| {
-        old.as_ref()
-            .expect("program was not made by ls_program::new_program, or it is released")
-            .create_checker_pool
-            .clone()
-    });
     let (result, new_file, reused) = {
         let _scope = crate::core::enter_program(None);
         p.update_program(changed_file_path, new_host, create_module_resolver)
@@ -571,8 +568,9 @@ fn release_now(key: usize) {
     crate::ast::free_synthetic_owner(version.id);
 }
 
-// Go: compiler/program.go:435 initCheckerPool
-// PORT: `load_host` is not in Go (`ProgramCheckers::load_host`).
+// Go: compiler/program.go:455 initCheckerPool
+// PORT: `load_host` is not in Go (`ProgramCheckers::load_host`). Go ts#64519
+// passes the factory as an argument and does not keep it.
 fn init_checker_pool(
     p: &Rc<NewProgram>,
     version: &'static GoProgram,
@@ -599,7 +597,6 @@ fn init_checker_pool(
     let checkers = Rc::new(ProgramCheckers {
         program: Rc::clone(p),
         version,
-        create_checker_pool,
         checker_pool,
         compiler_checker_pool,
         declaration_diagnostic_cache: RefCell::new(FxHashMap::default()),

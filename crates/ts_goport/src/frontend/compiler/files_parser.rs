@@ -98,7 +98,7 @@ impl ParseTask {
             if !allow_non_ts_extensions {
                 let canonical_file_name = get_canonical_file_name(
                     &self.normalized_file_path,
-                    loader.opts.host.fs().use_case_sensitive_file_names(),
+                    loader.host.fs().use_case_sensitive_file_names(),
                 );
                 if !loader.is_supported_extension(&canonical_file_name) {
                     if has_js_file_extension(&canonical_file_name) {
@@ -429,7 +429,7 @@ impl FilesParser {
         // The worker parses of these paths are freeable file versions
         // (`PrefetchQueue::freeable`). An early pool queued its jobs before
         // this set existed, so its parses would be static: it goes.
-        let freeable = if loader.opts.host.freeable_worker_parses() {
+        let freeable = if loader.host.freeable_worker_parses() {
             crate::ast::published_paths()
         } else {
             Arc::default()
@@ -442,7 +442,7 @@ impl FilesParser {
         // A host with its own file cache (`CompilerHost::prefetch_parses`)
         // gets no workers. This does not set `single_threaded`, so the
         // queue order stays that of a parallel load.
-        let mut workers = if self.single_threaded || !loader.opts.host.prefetch_parses() {
+        let mut workers = if self.single_threaded || !loader.host.prefetch_parses() {
             0
         } else {
             prefetch_worker_count()
@@ -457,7 +457,7 @@ impl FilesParser {
         let cached = if workers == 0 {
             FxHashMap::default()
         } else {
-            loader.opts.host.cached_source_file_refs()
+            loader.host.cached_source_file_refs()
         };
         // When the host gives every root file from its cache, no worker
         // parse can be used, so no worker starts. The loader parses the
@@ -490,10 +490,9 @@ impl FilesParser {
         // before the resolve config, so a worker's resolver sees it
         // (`WorkerResolver::new`).
         let build_host_cache = loader
-            .opts
             .host
             .stat_cache()
-            .filter(|_| loader.opts.host.is_plain_os_fs());
+            .filter(|_| loader.host.is_plain_os_fs());
         if let Some(cache) = build_host_cache {
             cache.start_load();
             let _ = pool.shared.stats.host.set(cache);
@@ -1070,10 +1069,10 @@ impl FilesParser {
                     {
                         let t = task.borrow();
                         for trace in &t.type_resolutions_trace {
-                            loader.opts.host.trace(trace.message, trace.args.clone());
+                            loader.host.trace(trace.message, trace.args.clone());
                         }
                         for trace in &t.resolutions_trace {
-                            loader.opts.host.trace(trace.message, trace.args.clone());
+                            loader.host.trace(trace.message, trace.args.clone());
                         }
                     }
 
@@ -1292,7 +1291,7 @@ impl FilesParser {
             );
             resolved_modules.insert(key, cache);
             for trace in &value.trace {
-                loader.opts.host.trace(trace.message, trace.args.clone());
+                loader.host.trace(trace.message, trace.args.clone());
             }
         }
 
@@ -1320,7 +1319,6 @@ impl FilesParser {
             redirect_files_by_path: redirect_files_by_path.map(Rc::new),
             // tsgo#4712
             content_mapper_diagnostics: loader.content_mapper_diagnostics.borrow().clone(),
-            module_resolution_error: loader.module_resolution_error.borrow().clone(),
         }
     }
 
@@ -1924,8 +1922,8 @@ impl PrefetchConfig {
             .lib_replacement
             .is_true();
         PrefetchConfig {
-            current_directory: loader.opts.host.get_current_directory(),
-            use_case_sensitive_file_names: loader.opts.host.fs().use_case_sensitive_file_names(),
+            current_directory: loader.host.get_current_directory(),
+            use_case_sensitive_file_names: loader.host.fs().use_case_sensitive_file_names(),
             default_library_path: if lib_replacement {
                 String::new()
             } else {
@@ -1975,7 +1973,7 @@ impl WorkerResolveConfig {
         // `process_all_program_files`.
         if !super::file_loader::workers_resolve_imports(options)
             || loader.opts.skip_module_resolution
-            || loader.opts.create_module_resolver.is_some()
+            || loader.custom_module_resolver
         {
             return None;
         }

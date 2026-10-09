@@ -1371,7 +1371,7 @@ impl GoSharedState {
                 Some((path.0.clone(), project_references.entry(entry.as_ref()?)))
             })
             .collect();
-        let can_use_project_reference_source = mapper.opts.can_use_project_reference_source();
+        let can_use_project_reference_source = mapper.use_source_of_project_reference;
         drop(mapper);
         // Go asks for the redirect of checker files only, which are program
         // files. A redirect comes from the path and the project references,
@@ -1769,6 +1769,8 @@ mod tests {
             .insert(file.path().clone(), file);
         NewProgram {
             opts: np.opts.clone(),
+            hosts: np.hosts.clone(),
+            module_resolution_error: np.module_resolution_error.clone(),
             compare_paths_options: np.compare_paths_options.clone(),
             processed_files,
             uses_uri_style_node_core_modules: np.uses_uri_style_node_core_modules,

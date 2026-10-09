@@ -47,8 +47,15 @@ pub struct SourceFileFromReferenceDiagnostic {
 // threaded (contract 10), so the atomics and sync maps are `Cell` and
 // `RefCell`, and `factoryMu` is not needed. `resolver` is `None` only until
 // `process_all_program_files` sets it, as in Go.
+// Go: fileloader.go:49 fileLoader (ts#64519: `opts ProgramConfig`, `host`,
+// `tracing`). PORT: `tracing` is the process session.
 pub struct FileLoader {
-    pub opts: ProgramOptions,
+    pub opts: ProgramConfig,
+    pub host: Rc<dyn CompilerHost>,
+    /// The program has a `create_module_resolver` factory.
+    // PORT: not in Go, which only calls the factory. Parse workers resolve
+    // ahead only for the default resolver (PERF, `process_all_program_files`).
+    pub custom_module_resolver: bool,
     pub resolver: Option<Rc<dyn Resolver>>,
     pub default_library_path: String,
     pub compare_paths_options: ComparePathsOptions,
@@ -207,8 +214,8 @@ pub struct ProcessedFiles {
     // Program-level diagnostics reported when a content mapper fails fatally (reported once per mapper).
     // tsgo#4712
     pub content_mapper_diagnostics: Vec<Diagnostic>,
-    // ts#64299
-    pub module_resolution_error: Option<GoError>,
+    // Go `moduleResolutionError` (ts#64299) is a `Program` field since
+    // ts#64519 (`NewProgram::module_resolution_error`).
     pub finished_processing: bool,
 }
 
@@ -219,8 +226,18 @@ pub struct JsxRuntimeImportSpecifier {
     pub specifier: Node,
 }
 
-// Go: fileloader.go:152 processAllProgramFiles
-pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) -> ProcessedFiles {
+// Go: fileloader.go:166 processAllProgramFiles
+// PORT: Go ts#64519 returns the processed files, the resolver's
+// `ResolutionData` and the module resolution error. The module part of
+// ts#64519 is not ported, so the processed files keep the resolver and
+// this returns the files and the error.
+pub fn process_all_program_files(
+    opts: ProgramConfig,
+    hosts: ProgramHosts,
+    factories: ProgramFactories,
+    single_threaded: bool,
+) -> (ProcessedFiles, Option<GoError>) {
+    let ProgramHosts { host } = hosts;
     let compiler_options = opts.config.compiler_options().clone();
     let root_files: Vec<String> = opts.config.file_names().to_vec();
     let supported_extensions =
@@ -237,14 +254,14 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         max_node_module_js_depth =
             i32::try_from(p).unwrap_or(if p < 0 { i32::MIN } else { i32::MAX });
     }
-    let current_directory = opts.host.get_current_directory().to_string();
+    let current_directory = host.get_current_directory().to_string();
     let mut loader = FileLoader {
         default_library_path: get_normalized_absolute_path(
-            &opts.host.default_library_path(),
+            &host.default_library_path(),
             &current_directory,
         ),
         compare_paths_options: ComparePathsOptions {
-            use_case_sensitive_file_names: opts.host.fs().use_case_sensitive_file_names(),
+            use_case_sensitive_file_names: host.fs().use_case_sensitive_file_names(),
             current_directory: current_directory.clone(),
         },
         files_parser: RefCell::new(FilesParser {
@@ -265,8 +282,8 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         // PORT: Go uses the zero `ast.NodeFactory`, which makes synthetic nodes.
         factory: NodeFactory::new(),
         project_reference_file_mapper: Rc::new(RefCell::new(ProjectReferenceFileMapper::new(
-            opts.clone(),
-            opts.host.clone(),
+            &opts,
+            host.clone(),
         ))),
         dts_directories: FxHashSet::default(),
         path_for_lib_file_cache: RefCell::new(FxHashMap::default()),
@@ -280,7 +297,9 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         concurrent_transforms: RefCell::new(FxHashMap::default()),
         mapped_prefetch_ready: Cell::new(false),
         module_resolution_error: RefCell::new(None),
+        custom_module_resolver: factories.create_module_resolver.is_some(),
         opts,
+        host,
     };
     loader.add_project_reference_tasks(single_threaded);
     let resolver_host: Rc<dyn ResolutionHost> = loader
@@ -298,7 +317,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         extra_extensions: loader.opts.config.content_mapper_extensions(),
         package_json_cache: None,
     };
-    if let Some(create_module_resolver) = loader.opts.create_module_resolver.clone() {
+    if let Some(create_module_resolver) = factories.create_module_resolver {
         loader.resolver = Some(create_module_resolver(resolver_options));
     } else {
         let mut resolver = new_resolver(resolver_options);
@@ -322,7 +341,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
             && super::files_parser::parse_workers_enabled()
             && workers_resolve_imports(&compiler_options)
             && !loader.opts.skip_module_resolution
-            && loader.opts.host.is_plain_os_fs()
+            && loader.host.is_plain_os_fs()
             && compiler_options.trace_resolution != Tristate::True
             && !loader.opts.can_use_project_reference_source()
         {
@@ -342,7 +361,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
                 .config
                 .resolved_project_reference_paths()
                 .is_empty()
-            && let Some(host) = loader.opts.host.resolve_ahead()
+            && let Some(host) = loader.host.resolve_ahead()
         {
             // PERF: a language server load after the first: workers resolve
             // the keys of the previous load ahead of the loader
@@ -421,7 +440,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
     // keeps the lookups of its parse tasks, and drops the other worker
     // lookups (`BuildStatCache`). Only the default resolver takes worker
     // answers.
-    if let Some(stats) = loader.opts.host.stat_cache() {
+    if let Some(stats) = loader.host.stat_cache() {
         let taken = loader
             .resolver
             .as_ref()
@@ -443,7 +462,9 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
         shared.end_package_json_reads(&resolver.caches.package_json_info_cache);
     }
 
-    // Clear out loader and host to ensure its not used post program creation
+    // PORT: Go ts#64519 keeps the loader and the host in a
+    // `projectReferenceFileMapperBuilder`, and the program gets only its
+    // mapper. Here the mapper holds them while loading, and loses them now.
     {
         let mut mapper = loader.project_reference_file_mapper.borrow_mut();
         mapper.loader = None;
@@ -452,6 +473,7 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
 
     let files_parser = loader.files_parser.borrow();
     let processed_files = files_parser.get_processed_files(&loader);
+    let module_resolution_error = loader.module_resolution_error.borrow().clone();
     drop(files_parser);
     drop(root_tasks);
     // PERF: in a one-program process the loader state (every parse task)
@@ -460,7 +482,14 @@ pub fn process_all_program_files(opts: ProgramOptions, single_threaded: bool) ->
     if FORGET_LOADER_STATE.with(Cell::get) {
         std::mem::forget(loader);
     }
-    processed_files
+    (processed_files, module_resolution_error)
+}
+
+/// `process_all_program_files` of the flat options, for the tests.
+#[cfg(test)]
+fn process_all_program_files_of(opts: ProgramOptions, single_threaded: bool) -> ProcessedFiles {
+    let (config, hosts, factories) = opts.split();
+    process_all_program_files(config, hosts, factories, single_threaded).0
 }
 
 #[cfg(test)]
@@ -815,8 +844,8 @@ impl FileLoader {
     pub fn to_path(&self, file: &str) -> Path {
         to_path(
             file,
-            &self.opts.host.get_current_directory(),
-            self.opts.host.fs().use_case_sensitive_file_names(),
+            &self.host.get_current_directory(),
+            self.host.fs().use_case_sensitive_file_names(),
         )
     }
 
@@ -827,8 +856,7 @@ impl FileLoader {
         lib_file: Option<Rc<LibFile>>,
         include_reason: Rc<FileIncludeReason>,
     ) {
-        let abs_path =
-            get_normalized_absolute_path(file_name, &self.opts.host.get_current_directory());
+        let abs_path = get_normalized_absolute_path(file_name, &self.host.get_current_directory());
         if self
             .opts
             .config
@@ -853,7 +881,7 @@ impl FileLoader {
         lib_file: Option<Rc<LibFile>>,
         include_reason: Rc<FileIncludeReason>,
     ) {
-        let curr_dir = self.opts.host.get_current_directory().to_string();
+        let curr_dir = self.host.get_current_directory().to_string();
         let abs_path = get_normalized_absolute_path(file_name, &curr_dir);
         let mut containing_file = curr_dir.clone();
         if let Some(config_file) = &self.opts.config.config_file {
@@ -890,7 +918,7 @@ impl FileLoader {
         if !compiler_options.config_file_path.is_empty() {
             containing_directory = get_directory_path(&compiler_options.config_file_path);
         } else {
-            containing_directory = self.opts.host.get_current_directory().to_string();
+            containing_directory = self.host.get_current_directory().to_string();
         }
         let containing_file_name =
             combine_paths(&containing_directory, &[INFERRED_TYPES_CONTAINING_FILE]);
@@ -918,7 +946,7 @@ impl FileLoader {
         let mut type_resolutions_trace: Vec<DiagAndArgs> = Vec::new();
         let mut p_diagnostics: Vec<Rc<ProcessingDiagnostic>> = Vec::new();
         // PORT: Go passes the compiler host as a `module.ResolutionHost`.
-        let host = CompilerResolutionHost::new(self.opts.host.clone());
+        let host = CompilerResolutionHost::new(self.host.clone());
         let host: &dyn ResolutionHost = &host;
         let automatic_type_directive_names =
             get_automatic_type_directive_names(self.opts.config.compiler_options(), host);
@@ -1110,7 +1138,7 @@ impl FileLoader {
         {
             return self.parse_content_mapped_file(parse_options);
         }
-        self.opts.host.get_source_file(&parse_options)
+        self.host.get_source_file(&parse_options)
     }
 
     // Go: fileloader.go:438 (*fileLoader).parseContentMappedFile (tsgo#4712)
@@ -1148,10 +1176,7 @@ impl FileLoader {
                 &transform_identity,
             )));
         }
-        let files = self
-            .opts
-            .host
-            .get_content_mapped_source_files(&opts, &mapper);
+        let files = self.host.get_content_mapped_source_files(&opts, &mapper);
         self.note_content_mapper_transform(&mapper);
         match files {
             Ok(files) => files.canonical,
@@ -1195,7 +1220,7 @@ impl FileLoader {
     // PORT: Go `fmt.Sprintf("%x", u.Bytes())` of the `xxh3.Uint128` is the
     // 32 hex digits of the `u128`.
     fn get_content_mapper_transform_identity(&self, mapper: &Rc<Mapper>) -> String {
-        if let Some(project) = self.opts.host.content_mapper_project()
+        if let Some(project) = self.host.content_mapper_project()
             && let Ok(identity) = project.identity(mapper)
         {
             return identity;
@@ -1220,7 +1245,7 @@ impl FileLoader {
         mapper_identity: &str,
         transform_identity: &str,
     ) -> ParsedSourceFile {
-        let (content, _) = self.opts.host.fs().read_file(&opts.file_name);
+        let (content, _) = self.host.fs().read_file(&opts.file_name);
         let source_file = parse_source_file(opts, "", ScriptKind::TS);
         source_file.set_content_mapper_info(crate::ast::ContentMapperSourceFileInfo {
             content_mapper: mapper_identity.to_string(),
@@ -1269,13 +1294,12 @@ impl FileLoader {
     fn note_content_mapper_transform(&self, mapper: &Rc<Mapper>) {
         let key = Rc::as_ptr(mapper);
         if self.concurrent_transforms.borrow().contains_key(&key)
-            || !self.opts.host.prefetch_content_mapped()
+            || !self.host.prefetch_content_mapped()
             || std::env::var_os("GOPORT_MAPPED_PREFETCH").is_some_and(|value| value == "0")
         {
             return;
         }
         let Some(transform) = self
-            .opts
             .host
             .content_mapper_project()
             .and_then(|project| project.concurrent_transform(mapper))
@@ -1379,7 +1403,7 @@ impl FileLoader {
         let options = self.opts.config.compiler_options();
         let allow_non_ts_extensions = options.allow_non_ts_extensions.is_true();
         let diagnostic_file_name = normalize_slashes(reference_text);
-        let fs = self.opts.host.fs();
+        let fs = self.host.fs();
 
         if has_extension(file_name) {
             let canonical_file_name =
@@ -1941,7 +1965,7 @@ impl FileLoader {
             let library_name = get_library_name_from_lib_file_name(name);
             let resolve_from = get_inferred_library_name_resolve_from(
                 self.opts.config.compiler_options(),
-                &self.opts.host.get_current_directory(),
+                &self.host.get_current_directory(),
                 name,
             );
             let (resolution, trace) = self.resolve_library(&library_name, &resolve_from);
@@ -2600,7 +2624,7 @@ mod tests {
         );
         assert!(errors.is_empty());
         let host = new_cached_fs_compiler_host(&cwd, fs, &bundled::lib_path(), None, None, None);
-        let processed = process_all_program_files(
+        let processed = process_all_program_files_of(
             ProgramOptions {
                 host,
                 config: Rc::new(config.unwrap()),
@@ -2674,7 +2698,7 @@ mod tests {
         );
         assert!(errors.is_empty());
         let host = new_cached_fs_compiler_host(&cwd, fs, &bundled::lib_path(), None, None, None);
-        let processed = process_all_program_files(
+        let processed = process_all_program_files_of(
             ProgramOptions {
                 host,
                 config: Rc::new(config.unwrap()),
@@ -3161,7 +3185,7 @@ export const a: T | Dep | number = x + (h as never);
             &bundled::wrap_fs(osvfs_fs()),
             &bundled::lib_path(),
         );
-        let processed = process_all_program_files(
+        let processed = process_all_program_files_of(
             ProgramOptions {
                 host,
                 config: Rc::new(config.unwrap()),
@@ -3773,7 +3797,7 @@ export const a: T | Dep | number = x + (h as never);
             None,
             project.clone(),
         );
-        let processed = process_all_program_files(
+        let processed = process_all_program_files_of(
             ProgramOptions {
                 host: compiler_host,
                 config,
@@ -3977,5 +4001,278 @@ export const a: T | Dep | number = x + (h as never);
             );
             assert_eq!((transforms.len(), spawns), (0, 0));
         }
+    }
+
+    /// A temp dir with `files` and a `tsconfig.json` with `tsconfig`, its
+    /// parsed config and a compiler host on it. The caller removes the dir.
+    fn ts64519_project(
+        label: &str,
+        tsconfig: &str,
+        files: &[(&str, &str)],
+    ) -> (std::path::PathBuf, String, Rc<ParsedCommandLine>) {
+        let dir =
+            std::env::temp_dir().join(format!("ts_goport_ts64519_{label}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files {
+            let path = dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        std::fs::write(dir.join("tsconfig.json"), tsconfig).unwrap();
+        let cwd = dir.to_string_lossy().replace('\\', "/");
+        let sys = System {
+            fs: bundled::wrap_fs(osvfs_fs()),
+            current_directory: cwd.clone(),
+        };
+        let (config, errors) = get_parsed_command_line_of_config_file(
+            &format!("{cwd}/tsconfig.json"),
+            None,
+            None,
+            &sys,
+            None,
+        );
+        assert!(errors.is_empty());
+        (dir, cwd, Rc::new(config.unwrap()))
+    }
+
+    /// A fresh compiler host on the OS file system in `cwd`.
+    fn ts64519_host(cwd: &str) -> Rc<dyn CompilerHost> {
+        new_cached_fs_compiler_host(
+            cwd,
+            bundled::wrap_fs(osvfs_fs()),
+            &bundled::lib_path(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn ts64519_options(
+        host: Rc<dyn CompilerHost>,
+        config: &Rc<ParsedCommandLine>,
+        create_module_resolver: Option<CreateModuleResolver>,
+    ) -> ProgramOptions {
+        ProgramOptions {
+            host,
+            config: config.clone(),
+            use_source_of_project_reference: false,
+            single_threaded: Tristate::True,
+            typings_location: String::new(),
+            project_name: String::new(),
+            create_module_resolver,
+            skip_module_resolution: false,
+        }
+    }
+
+    /// A module resolver that fails every module name, as an API resolver
+    /// whose callback fails (ts#64299).
+    struct FailingResolver(DefaultResolver);
+
+    impl Resolver for FailingResolver {
+        fn resolve_module_name(
+            &self,
+            _module_name: &str,
+            _containing_file: &str,
+            _resolution_mode: ResolutionMode,
+            _redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
+        ) -> (
+            Option<Arc<ResolvedModule>>,
+            Vec<DiagAndArgs>,
+            Option<GoError>,
+        ) {
+            (None, Vec::new(), Some(errors::new("resolver failed")))
+        }
+        fn resolve_module_name_from_directory(
+            &self,
+            module_name: &str,
+            containing_directory: &str,
+            resolution_mode: ResolutionMode,
+        ) -> (
+            Option<Arc<ResolvedModule>>,
+            Vec<DiagAndArgs>,
+            Option<GoError>,
+        ) {
+            let (resolved, trace, err) = self.0.resolve_module_name_from_directory(
+                module_name,
+                containing_directory,
+                resolution_mode,
+            );
+            (Some(resolved), trace, err)
+        }
+        fn resolve_type_reference_directive(
+            &self,
+            name: &str,
+            containing_file: &str,
+            resolution_mode: ResolutionMode,
+            redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
+        ) -> (Rc<ResolvedTypeReferenceDirective>, Vec<DiagAndArgs>) {
+            self.0.resolve_type_reference_directive(
+                name,
+                containing_file,
+                resolution_mode,
+                redirected_reference,
+            )
+        }
+        fn get_package_scope_for_path(&self, directory: &str) -> Option<Rc<InfoCacheEntry>> {
+            self.0.get_package_scope_for_path(directory)
+        }
+        fn package_json_cache_entries(
+            &self,
+            f: &mut dyn FnMut(&Path, PackageJsonCacheEntry<'_>) -> bool,
+        ) {
+            self.0.package_json_cache_entries(f);
+        }
+        fn resolve_package_directory(
+            &self,
+            module_name: &str,
+            containing_file: &str,
+            resolution_mode: ResolutionMode,
+            redirected_reference: Option<&dyn ModuleResolvedProjectReference>,
+        ) -> Option<ResolvedModule> {
+            self.0.resolve_package_directory(
+                module_name,
+                containing_file,
+                resolution_mode,
+                redirected_reference,
+            )
+        }
+    }
+
+    // Go: compiler/program_test.go:80 TestIncludeReasonDiagnosticsAreProgramLocal
+    // (ts#64519). PORT: Go compares the cached pointers of two programs; a
+    // reused program here shares the reason, and each program caches its own
+    // diagnostics.
+    #[test]
+    fn include_reason_diagnostics_are_program_local() {
+        let (dir, cwd, config) = ts64519_project(
+            "reasons",
+            r#"{"compilerOptions":{"noLib":true},"files":["index.ts"]}"#,
+            &[("index.ts", "export const a = 1;")],
+        );
+        let _scope = crate::core::enter_program(None);
+        let old = new_program(ts64519_options(ts64519_host(&cwd), &config, None));
+        let path = old
+            .get_source_file(&format!("{cwd}/index.ts"))
+            .unwrap()
+            .path()
+            .clone();
+        let (new, _, reused) = old.reuse_program(&path, ts64519_host(&cwd), None);
+        assert!(reused);
+        let new = new.unwrap();
+        let reason = old.get_include_reasons()[&path][0].clone();
+        assert!(Rc::ptr_eq(&reason, &new.get_include_reasons()[&path][0]));
+        for relative in [false, true] {
+            let old_diagnostic = reason.to_diagnostic(&old, relative);
+            assert_eq!(
+                old.include_processor.reason_diagnostics.borrow().len(),
+                usize::from(relative) + 1
+            );
+            assert_eq!(
+                new.include_processor.reason_diagnostics.borrow().len(),
+                usize::from(relative)
+            );
+            let new_diagnostic = reason.to_diagnostic(&new, relative);
+            assert_eq!(
+                new.include_processor.reason_diagnostics.borrow().len(),
+                usize::from(relative) + 1
+            );
+            assert_eq!(new_diagnostic.message_text(), old_diagnostic.message_text());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Go: compiler/program.go:396 (ts#64519): a program whose module resolver
+    // failed is never reused; it is built again.
+    #[test]
+    fn module_resolution_error_blocks_reuse() {
+        let (dir, cwd, config) = ts64519_project(
+            "resolver_error",
+            r#"{"compilerOptions":{"noLib":true},"files":["index.ts"]}"#,
+            &[
+                (
+                    "index.ts",
+                    r#"import { b } from "./b"; export const a = b;"#,
+                ),
+                ("b.ts", "export const b = 1;"),
+            ],
+        );
+        let _scope = crate::core::enter_program(None);
+        let failing: CreateModuleResolver = Rc::new(|options: ResolverOptions| {
+            let resolver: Rc<dyn Resolver> = Rc::new(FailingResolver(new_resolver(options)));
+            resolver
+        });
+        let p = new_program(ts64519_options(ts64519_host(&cwd), &config, Some(failing)));
+        assert!(p.module_resolution_error().is_some());
+        let path = p
+            .get_source_file(&format!("{cwd}/index.ts"))
+            .unwrap()
+            .path()
+            .clone();
+        let (cloned, new_file, reused) = p.reuse_program(&path, ts64519_host(&cwd), None);
+        assert!(!reused && cloned.is_none() && new_file.is_some());
+        // The full build with the default resolver resolves the import.
+        let (rebuilt, _, reused) = p.update_program(&path, ts64519_host(&cwd), None);
+        assert!(!reused);
+        assert!(rebuilt.module_resolution_error().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Go: compiler/program_test.go:95 TestProgramHostsAndFactories (ts#64519):
+    // a program does not keep its factories. A reuse calls none of them, and
+    // an update that builds again uses only the factory that it is given.
+    // PORT: the checker pool factory is `ls_program`'s; this checks the
+    // module resolver factory.
+    #[test]
+    fn program_does_not_keep_its_factories() {
+        let (dir, cwd, config) = ts64519_project(
+            "factories",
+            r#"{"compilerOptions":{"noLib":true},"files":["index.ts"]}"#,
+            &[
+                (
+                    "index.ts",
+                    r#"import { b } from "./b"; export const a = b;"#,
+                ),
+                ("b.ts", "export const b = 1;"),
+            ],
+        );
+        let _scope = crate::core::enter_program(None);
+        let resolvers = Rc::new(Cell::new(0));
+        let counting: CreateModuleResolver = {
+            let resolvers = resolvers.clone();
+            Rc::new(move |options: ResolverOptions| {
+                resolvers.set(resolvers.get() + 1);
+                let resolver: Rc<dyn Resolver> = Rc::new(new_resolver(options));
+                resolver
+            })
+        };
+        let p = new_program(ts64519_options(
+            ts64519_host(&cwd),
+            &config,
+            Some(counting.clone()),
+        ));
+        assert_eq!(resolvers.get(), 1);
+        let path = p
+            .get_source_file(&format!("{cwd}/index.ts"))
+            .unwrap()
+            .path()
+            .clone();
+        let new_host = ts64519_host(&cwd);
+        let (cloned, _, reused) = p.reuse_program(&path, new_host.clone(), Some(counting.clone()));
+        assert!(reused);
+        assert_eq!(resolvers.get(), 1);
+        assert!(Rc::ptr_eq(cloned.unwrap().host(), &new_host));
+        // An import change builds the program again.
+        std::fs::write(dir.join("index.ts"), "export const a = 2;").unwrap();
+        let (rebuilt, _, reused) = p.update_program(&path, ts64519_host(&cwd), None);
+        assert!(!reused);
+        assert_eq!(
+            resolvers.get(),
+            1,
+            "the old program's factory is not used again"
+        );
+        let (_, _, reused) = rebuilt.update_program(&path, ts64519_host(&cwd), Some(counting));
+        assert!(reused);
+        assert_eq!(resolvers.get(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

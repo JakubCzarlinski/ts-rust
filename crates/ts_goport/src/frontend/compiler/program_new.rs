@@ -5,11 +5,18 @@
 
 use crate::contentmapper::{Mapper, Project};
 use crate::frontend::prelude::*;
+use crate::gostd::GoError;
 use std::cell::OnceCell;
 
 /// Go `compiler.ProgramOptions`.
-// PORT: `CreateCheckerPool` is dropped. The checker pool stays in
-// program.rs. `Tracing` is the process session (`crate::tracing::get`).
+// Go: program.go:37 ProgramOptions (ts#64519: it embeds ProgramConfig,
+// ProgramHosts and ProgramFactories)
+// PORT: Go callers name each embedded part. The Rust literal keeps the flat
+// field list, so callers do not change; `split` gives the three parts, and
+// the program keeps only the config and the hosts.
+// PORT: `CreateCheckerPool` is the `create_checker_pool` argument of
+// `ls_program::new_program` (the checker pool stays in program.rs).
+// `Tracing` is the process session (`crate::tracing::get`).
 #[derive(Clone)]
 pub struct ProgramOptions {
     pub host: Rc<dyn CompilerHost>,
@@ -19,14 +26,71 @@ pub struct ProgramOptions {
     pub typings_location: String,
     pub project_name: String,
     // ts#64299. PORT: a nil Go func is `None`.
-    pub create_module_resolver: Option<Rc<dyn Fn(ResolverOptions) -> Rc<dyn Resolver>>>,
+    pub create_module_resolver: Option<CreateModuleResolver>,
     // SkipModuleResolution avoids all module and type reference resolution while
     // still collecting import metadata needed for emit.
     pub skip_module_resolution: bool,
 }
 
+/// Go `ProgramFactories.CreateModuleResolver` (ts#64299).
+pub type CreateModuleResolver = Rc<dyn Fn(ResolverOptions) -> Rc<dyn Resolver>>;
+
 impl ProgramOptions {
-    // Go: program.go:52 (*ProgramOptions).canUseProjectReferenceSource
+    /// The Go embedded parts of the options (ts#64519).
+    #[must_use]
+    pub fn split(self) -> (ProgramConfig, ProgramHosts, ProgramFactories) {
+        (
+            ProgramConfig {
+                config: self.config,
+                use_source_of_project_reference: self.use_source_of_project_reference,
+                single_threaded: self.single_threaded,
+                typings_location: self.typings_location,
+                project_name: self.project_name,
+                skip_module_resolution: self.skip_module_resolution,
+            },
+            ProgramHosts { host: self.host },
+            ProgramFactories {
+                create_module_resolver: self.create_module_resolver,
+            },
+        )
+    }
+}
+
+/// Go `compiler.ProgramConfig`: the options that a program keeps and that
+/// an updated program shares (ts#64519).
+// Go: program.go:43 ProgramConfig
+#[derive(Clone)]
+pub struct ProgramConfig {
+    pub config: Rc<ParsedCommandLine>,
+    pub use_source_of_project_reference: bool,
+    pub single_threaded: Tristate,
+    pub typings_location: String,
+    pub project_name: String,
+    // SkipModuleResolution avoids all module and type reference resolution while
+    // still collecting import metadata needed for emit.
+    pub skip_module_resolution: bool,
+}
+
+/// Go `compiler.ProgramHosts` (ts#64519).
+// Go: program.go:54 ProgramHosts
+// PORT: `Tracing` is the process session (`crate::tracing::get`).
+#[derive(Clone)]
+pub struct ProgramHosts {
+    pub host: Rc<dyn CompilerHost>,
+}
+
+/// Go `compiler.ProgramFactories`: used while the program is built, not
+/// kept by it (ts#64519).
+// Go: program.go:59 ProgramFactories
+// PORT: `CreateCheckerPool` is the `create_checker_pool` argument of
+// `ls_program::new_program`.
+#[derive(Clone, Default)]
+pub struct ProgramFactories {
+    pub create_module_resolver: Option<CreateModuleResolver>,
+}
+
+impl ProgramConfig {
+    // Go: program.go:64 (*ProgramConfig).canUseProjectReferenceSource
     pub fn can_use_project_reference_source(&self) -> bool {
         self.use_source_of_project_reference
             && !self
@@ -91,8 +155,19 @@ impl HasFileName for RedirectsFile {
 // stays in program.rs), `declarationDiagnosticCache` (declaration emit),
 // `knownSymlinks`, `packageNames`, `hasTSFile` and `packagesMap` (language
 // service and auto-imports). None of them is read during construction.
+// Go: program.go:97 Program (ts#64519: `opts ProgramConfig`, `hosts
+// ProgramHosts`, `resolutionData`, `includeProcessor` and
+// `moduleResolutionError`)
+// PORT: Go `resolutionData` is not ported yet: the module part of ts#64519
+// (`module.ResolutionData`) is not in the port, so `ProcessedFiles` keeps
+// the loader's resolver. Go `includeProcessor` is
+// `processed_files.include_processor`; its `Clone` starts the caches empty
+// (see `IncludeProcessor`).
 pub struct NewProgram {
-    pub opts: ProgramOptions,
+    pub opts: ProgramConfig,
+    pub hosts: ProgramHosts,
+    // ts#64299, ts#64519
+    pub module_resolution_error: Option<GoError>,
     // Go never sets this field in `NewProgram`; it keeps the zero value.
     pub compare_paths_options: ComparePathsOptions,
     pub processed_files: ProcessedFiles,
@@ -146,9 +221,9 @@ impl NewProgram {
         self.host().fs().file_exists(path)
     }
 
-    // Go: program.go:138 (*Program).ContentMapperProject (tsgo#4712)
+    // Go: program.go:154 (*Program).ContentMapperProject (tsgo#4712)
     pub fn content_mapper_project(&self) -> Option<Rc<dyn Project>> {
-        self.opts.host.content_mapper_project()
+        self.hosts.host.content_mapper_project()
     }
 
     // Go: program.go:134 (*Program).GetCurrentDirectory
@@ -368,15 +443,27 @@ impl NewProgram {
     }
 }
 
-// Go: program.go:285 NewProgram
+// Go: program.go:313 NewProgram
 pub fn new_program(opts: ProgramOptions) -> NewProgram {
+    let (config, hosts, factories) = opts.split();
+    new_program_of_parts(config, hosts, factories)
+}
+
+/// Go `NewProgram(ProgramOptions{ProgramConfig: .., ProgramHosts: ..,
+/// ProgramFactories: ..})` (ts#64519).
+fn new_program_of_parts(
+    config: ProgramConfig,
+    hosts: ProgramHosts,
+    factories: ProgramFactories,
+) -> NewProgram {
     let _trace = crate::tracing::get().map(|tr| {
         tr.push(
             crate::tracing::Phase::Program,
             "createProgram",
             vec![(
                 "configFilePath",
-                opts.config
+                config
+                    .config
                     .compiler_options()
                     .config_file_path
                     .clone()
@@ -388,9 +475,13 @@ pub fn new_program(opts: ProgramOptions) -> NewProgram {
     // PORT: Go builds `p` with a zero `processedFiles` and then calls
     // `p.SingleThreaded()`. `ProcessedFiles` has no zero value, so the files
     // are processed first. `SingleThreaded` reads only `opts`.
-    let processed_files = process_all_program_files(opts.clone(), single_threaded(&opts));
+    let single_threaded = single_threaded(&config);
+    let (processed_files, module_resolution_error) =
+        process_all_program_files(config.clone(), hosts.clone(), factories, single_threaded);
     let mut p = NewProgram {
-        opts,
+        opts: config,
+        hosts,
+        module_resolution_error,
         compare_paths_options: ComparePathsOptions::default(),
         processed_files,
         uses_uri_style_node_core_modules: Tristate::default(),
@@ -409,18 +500,20 @@ pub fn new_program(opts: ProgramOptions) -> NewProgram {
 }
 
 impl NewProgram {
-    // Go: program.go:305 (*Program).UpdateProgram
+    // Go: program.go:335 (*Program).UpdateProgram
     // Return an updated program for which it is known that only the file with the given path has changed.
     // In addition to a new program, return a boolean indicating whether the data of the old program was reused.
     // The returned source file is the changed file as acquired through newHost; it is None
     // only if the host cannot locate the file (e.g. it was deleted).
-    // PORT: the `createCheckerPool` parameter is dropped with the option.
-    // PORT: a nil `createModuleResolver` is `None` (ts#64299).
+    // PORT: the `createCheckerPool` parameter is `ls_program::update_program`'s.
+    // PORT: a nil `createModuleResolver` is `None` (ts#64299). Since ts#64519
+    // a new program gets the factory that the caller passes, not the old
+    // program's: the program does not keep its factories.
     pub fn update_program(
         &self,
         changed_file_path: &Path,
         new_host: Rc<dyn CompilerHost>,
-        create_module_resolver: Option<Rc<dyn Fn(ResolverOptions) -> Rc<dyn Resolver>>>,
+        create_module_resolver: Option<CreateModuleResolver>,
     ) -> (NewProgram, Option<Rc<ParsedSourceFile>>, bool) {
         match self.reuse_program(
             changed_file_path,
@@ -429,12 +522,18 @@ impl NewProgram {
         ) {
             (Some(result), new_file, true) => (result, new_file, true),
             (_, new_file, _) => {
-                let mut new_opts = self.opts.clone();
-                new_opts.host = new_host;
-                if create_module_resolver.is_some() {
-                    new_opts.create_module_resolver = create_module_resolver;
-                }
-                (new_program(new_opts), new_file, false)
+                let (config, hosts) = (self.opts.clone(), ProgramHosts { host: new_host });
+                (
+                    new_program_of_parts(
+                        config,
+                        hosts,
+                        ProgramFactories {
+                            create_module_resolver,
+                        },
+                    ),
+                    new_file,
+                    false,
+                )
             }
         }
     }
@@ -445,9 +544,10 @@ impl NewProgram {
     // file cannot be replaced in place. Unlike UpdateProgram, it never constructs a
     // full fallback program, so callers that build their own fallback (e.g. with a
     // different host) do not pay for a discarded program build.
-    // Go: program.go:332 (*Program).ReuseProgram
+    // Go: program.go:359 (*Program).ReuseProgram
     // PORT: Go nil `*Program` is `None`. The `createCheckerPool` parameter is
-    // dropped with the option.
+    // `ls_program::update_program`'s. Since ts#64519 Go does not call
+    // `createModuleResolver` here: a clone reuses the resolutions.
     // PORT: tsgo#4712 Go copies `contentMapperOptionDiagnostics` into the new
     // program. `NewProgram` has no field for them: the program version keeps
     // them (`program/go_frontend.rs` `content_mapper_option_diagnostics_of`).
@@ -455,14 +555,8 @@ impl NewProgram {
         &self,
         changed_file_path: &Path,
         new_host: Rc<dyn CompilerHost>,
-        create_module_resolver: Option<Rc<dyn Fn(ResolverOptions) -> Rc<dyn Resolver>>>,
+        _create_module_resolver: Option<CreateModuleResolver>,
     ) -> (Option<NewProgram>, Option<Rc<ParsedSourceFile>>, bool) {
-        let mut new_opts = self.opts.clone();
-        new_opts.host = new_host.clone();
-        if create_module_resolver.is_some() {
-            new_opts.create_module_resolver = create_module_resolver;
-        }
-
         // PORT: Go dereferences a nil old file and panics; so does this.
         let old_file = self
             .files_by_path
@@ -480,7 +574,8 @@ impl NewProgram {
             // PORT: Go passes a nil mapper to the host when the new config
             // has none for the file, and the transform then fails; here that
             // is the same fallback.
-            let Some(mapper) = new_opts
+            let Some(mapper) = self
+                .opts
                 .config
                 .get_content_mapper_for_file_name(old_file.file_name())
             else {
@@ -514,7 +609,10 @@ impl NewProgram {
         }
 
         // #4792: `canReplaceFileInProgram` is a program method.
-        if !self.can_replace_file_in_program(&old_file, new_file.as_deref()) {
+        // ts#64519: a program whose module resolver failed is built again.
+        if self.module_resolution_error.is_some()
+            || !self.can_replace_file_in_program(&old_file, new_file.as_deref())
+        {
             return (None, new_file, false);
         }
         let new_file = new_file.expect("checked by can_replace_file_in_program");
@@ -558,8 +656,12 @@ impl NewProgram {
         // TODO: reverify compiler options when config has changed?
         // PORT: Go copies the `processedFiles` struct and shares its maps.
         // Rust clones it.
+        // PORT: Go ts#64519 clones `resolutionData` here (not ported, see
+        // `NewProgram`); the processed files keep the loader's resolver.
         let mut result = NewProgram {
-            opts: new_opts,
+            opts: self.opts.clone(),
+            hosts: ProgramHosts { host: new_host },
+            module_resolution_error: None,
             compare_paths_options: self.compare_paths_options.clone(),
             processed_files: self.processed_files.clone(),
             uses_uri_style_node_core_modules: self.uses_uri_style_node_core_modules,
@@ -577,7 +679,6 @@ impl NewProgram {
             .try_reuse(&self.unresolved_imports);
         result.known_symlinks.try_reuse(&self.known_symlinks);
         result.package_names.try_reuse(&self.package_names);
-        result.init_checker_pool();
         // PORT: Go `core.FindIndex` returns -1 and the index panics; so does this.
         let index = result
             .files
@@ -605,12 +706,17 @@ impl NewProgram {
                 .files_by_path
                 .insert(new_supplemental.path().clone(), new_supplemental.clone());
         }
-        update_file_include_processor(&mut result);
+        // Go: includeprocessor.go:28 updateFileIncludeProcessor (at
+        // 673a5f17d713; removed by ts#64519: each program has its own
+        // includeProcessor). The `IncludeProcessor` clone above starts its
+        // caches empty.
+        result.init_checker_pool();
         (Some(result), Some(new_file), true)
     }
 
-    // Go: program.go:435 (*Program).initCheckerPool
-    // PORT: the checker pool stays in program.rs, so only the check is kept.
+    // Go: program.go:455 (*Program).initCheckerPool
+    // PORT: the checker pool stays in program.rs (`ls_program`), so only the
+    // check is kept.
     pub fn init_checker_pool(&mut self) {
         if !self.finished_processing {
             panic!("Program must finish processing files before initializing checker pool");
@@ -819,9 +925,9 @@ impl NewProgram {
         &self.opts.config
     }
 
-    // Go: program.go:530 (*Program).Host
+    // Go: program.go:551 (*Program).Host
     pub fn host(&self) -> &Rc<dyn CompilerHost> {
-        &self.opts.host
+        &self.hosts.host
     }
 
     /// Empties the caches of the resolver of this program's load
@@ -836,7 +942,7 @@ impl NewProgram {
         }
     }
 
-    // Go: program.go:531 (*Program).Tracing
+    // Go: program.go:552 (*Program).Tracing
     // PORT: the session is the process global `crate::tracing::get`.
 
     // Go: program.go:532 (*Program).GetConfigFileParsingDiagnostics
@@ -902,7 +1008,7 @@ impl NewProgram {
 
 // PORT: the body of Go `(*Program).SingleThreaded`. It reads only `opts`, so
 // `new_program` can call it before the program exists.
-fn single_threaded(opts: &ProgramOptions) -> bool {
+fn single_threaded(opts: &ProgramConfig) -> bool {
     opts.single_threaded
         .default_if_unknown(opts.config.compiler_options().single_threaded)
         .is_true()

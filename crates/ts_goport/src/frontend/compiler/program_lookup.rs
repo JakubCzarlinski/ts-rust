@@ -524,7 +524,7 @@ impl NewProgram {
     // Go: program.go:644 (*Program).ModuleResolutionError (ts#64299)
     // PORT: a nil Go `error` is `None`.
     pub fn module_resolution_error(&self) -> Option<crate::gostd::GoError> {
-        self.processed_files.module_resolution_error.clone()
+        self.module_resolution_error.clone()
     }
 
     // Go: program.go:2349 (*Program).ForEachResolvedModule
