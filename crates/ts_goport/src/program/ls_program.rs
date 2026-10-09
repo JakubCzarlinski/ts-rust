@@ -1642,14 +1642,24 @@ fn get_declaration_diagnostics_for_file(
 // Go: compiler/emitHost.go:39 newEmitHost
 // PORT: the language-service form of `program::new_emit_host`. The checker
 // comes from `GetTypeCheckerForFile` of `p`, which a dispatch-thread pool
-// shares as `Rc<RefCell<Checker>>`, so the resolver links to that `Rc`
-// (`get_emit_resolver_of_shared_checker`) instead of a compile worker
-// checker. The host methods read the current program, which is `p`.
+// shares as `Rc<RefCell<Checker>>`, so each resolver links to that `Rc`
+// (`new_emit_resolver_of_shared_checker`, ts#64649) instead of a compile
+// worker checker. The host keeps a weak link, as the resolvers do. The host
+// methods read the current program, which is `p`.
 fn new_emit_host(p: &NewProgram, ctx: &Context, file: Node) -> (Rc<EmitHost>, Release) {
     let (checker, done) = get_type_checker_for_file(p, ctx, file);
-    let emit_resolver =
-        crate::checker::emit_resolver_p1::get_emit_resolver_of_shared_checker(&checker);
-    let host = Rc::new(EmitHost { emit_resolver });
+    let checker = Rc::downgrade(&checker);
+    let host = crate::program::new_emit_host_with(Rc::new(move |emit_context| {
+        let checker = checker
+            .upgrade()
+            .expect("the checker of an emit host was dropped");
+        let resolver: Rc<dyn crate::printer::EmitResolver> =
+            crate::checker::emit_resolver_p1::new_emit_resolver_of_shared_checker(
+                &checker,
+                emit_context,
+            );
+        resolver
+    }));
     (host, done)
 }
 

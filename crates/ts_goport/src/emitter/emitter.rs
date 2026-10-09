@@ -169,6 +169,15 @@ impl Emitter {
         let source_map_file_path = self.paths.source_map_file_path().to_string();
         let declaration_file_path = self.paths.declaration_file_path().to_string();
         let declaration_map_path = self.paths.declaration_map_path().to_string();
+        // ts#64649 (emitter.go:50): Go makes one emit context and one emit
+        // resolver (`host.NewEmitResolver`) here for both outputs.
+        // PORT: the JS and d.ts parts of a file can run apart (the emit pool
+        // and the twins, `program_emit`), so each part makes its own context
+        // (`get_emit_context`) and its own resolver for that context in
+        // `transform_js_file` and `transform_declaration_file`. The script
+        // transforms make no node builder request, so the d.ts part's
+        // resolver caches its node builder for the whole d.ts emit, as Go's
+        // does.
         self.emit_js_file(self.source_file, &js_file_path, &source_map_file_path);
         self.emit_declaration_file(
             self.source_file,
@@ -181,18 +190,25 @@ impl Emitter {
     // Go: compiler/emitter.go:62 emitter.getDeclarationTransformers
     // #4712: takes the source file, and adds the supplemental references
     // transformer.
+    // ts#64649: takes the emit resolver of this emit.
+    // PORT: the declaration transformer still reads its resolver from its
+    // host (`get_emit_resolver`), so it gets this host with `emit_resolver`
+    // (`EmitHost::with_emit_resolver`), and the context that the resolver
+    // was made for, so its node builder requests use the cached builder.
     fn get_declaration_transformers(
         &self,
         emit_context: &Rc<EmitContext>,
+        emit_resolver: Rc<dyn EmitResolver>,
         source_file: Node,
         declaration_file_path: &str,
         declaration_map_path: &str,
     ) -> Vec<Box<dyn DeclarationTransformerLike>> {
         let force_dts_emit = self.emit_only == EmitOnly::BuilderSignature
             || self.force_emit && self.emit_only == EmitOnly::Dts;
+        let host = self.host.with_emit_resolver(emit_resolver);
         let mut transformers: Vec<Box<dyn DeclarationTransformerLike>> = Vec::with_capacity(2);
         transformers.push(Box::new(crate::declarations::new_declaration_transformer(
-            self.host.clone(),
+            host.clone(),
             Some(emit_context.clone()),
             options(),
             declaration_file_path,
@@ -201,7 +217,7 @@ impl Emitter {
         // PORT: Go passes the source file, and the transformer reads its
         // `SupplementalSourceFiles()`. The Rust transformer takes that list.
         transformers.push(Box::new(new_supplemental_references_transformer(
-            self.host.clone(),
+            host,
             source_file_supplemental_source_files(source_file).to_vec(),
             declaration_file_path,
             force_dts_emit,
@@ -210,9 +226,11 @@ impl Emitter {
     }
 
     // Go: compiler/emitter.go:70 emitter.runScriptTransformers
+    // ts#64649: takes the emit resolver of this emit.
     fn run_script_transformers(
         &self,
         emit_context: &Rc<EmitContext>,
+        emit_resolver: Rc<dyn EmitResolver>,
         mut source_file: Node,
     ) -> Node {
         let _trace = crate::tracing::get().map(|tr| {
@@ -223,16 +241,18 @@ impl Emitter {
                 false,
             )
         });
-        for mut transformer in get_script_transformers(emit_context, &self.host, source_file) {
+        for mut transformer in get_script_transformers(emit_context, emit_resolver, source_file) {
             source_file = transformer.transform_source_file(source_file);
         }
         source_file
     }
 
     // Go: compiler/emitter.go:80 emitter.runDeclarationTransformers
+    // ts#64649: takes the emit resolver of this emit.
     fn run_declaration_transformers(
         &self,
         emit_context: &Rc<EmitContext>,
+        emit_resolver: Rc<dyn EmitResolver>,
         mut source_file: Node,
         declaration_file_path: &str,
         declaration_map_path: &str,
@@ -248,6 +268,7 @@ impl Emitter {
         let mut diags = Vec::new();
         for mut transformer in self.get_declaration_transformers(
             emit_context,
+            emit_resolver,
             source_file,
             declaration_file_path,
             declaration_map_path,
@@ -322,8 +343,10 @@ impl Emitter {
 
         // Go `putEmitContext()` is the `reset` at the end of `print_js_file`.
         let (emit_context, _) = get_emit_context();
+        // ts#64649 (emitter.go:51): the emit resolver of this context.
+        let emit_resolver = self.host.new_emit_resolver(emit_context.clone());
 
-        let source_file = self.run_script_transformers(&emit_context, source_file);
+        let source_file = self.run_script_transformers(&emit_context, emit_resolver, source_file);
         Some(JsPrint {
             source_file,
             emit_context,
@@ -461,8 +484,12 @@ impl Emitter {
         });
 
         let (emit_context, put_emit_context) = get_emit_context();
+        // ts#64649 (emitter.go:51): the emit resolver of this context. It
+        // caches one node builder for the declaration transforms.
+        let emit_resolver = self.host.new_emit_resolver(emit_context.clone());
         let (source_file, diags) = self.run_declaration_transformers(
             &emit_context,
+            emit_resolver,
             source_file,
             declaration_file_path,
             declaration_map_path,
@@ -1007,9 +1034,14 @@ fn may_have_enum_declaration(source_file: Node) -> bool {
 }
 
 // Go: compiler/emitter.go:114 getScriptTransformers
+// ts#64649: takes the emit resolver, and Go reads the emit context from it
+// (`emitResolver.EmitContext()`).
+// PORT: the printer `EmitResolver` trait has no `emit_context` yet (the emit
+// lane's ts#64649 part), and the pool's resolver has none, so the context
+// is a parameter. The caller made `emit_resolver` for it.
 pub fn get_script_transformers(
     emit_context: &Rc<EmitContext>,
-    host: &Rc<crate::program::EmitHost>,
+    emit_resolver: Rc<dyn EmitResolver>,
     source_file: Node,
 ) -> Vec<TransformerBox> {
     use crate::transformers::{estransforms, inliners, jsxtransforms, tstransforms};
@@ -1022,8 +1054,6 @@ pub fn get_script_transformers(
         jsx_transform_enabled,
         emit_resolver_references,
     } = script_transform_choice(options, source_file);
-
-    let emit_resolver: Rc<dyn EmitResolver> = host.emit_resolver();
 
     let reference_resolver: Rc<dyn TransformReferenceResolver> = if emit_resolver_references {
         Rc::new(EmitResolverReferenceResolver(emit_resolver.clone()))
