@@ -2671,4 +2671,57 @@ declare const p2: {{ b: number }};
         assert_eq!(codes, [2671]);
         assert_eq!(of[AUGMENT_OBJECT], globals[AUGMENT_OBJECT]);
     }
+
+    /// Skeptic program e25 (propfilt1-skeptic-c, R183 reviewer item 3).
+    /// The merge of `./x` resolves Object (its `export=` reads
+    /// `p.toString`), the merge of `./g` (`export = globalThis`) adds
+    /// `late1` and `late2` to the members of Object in place, and the merge
+    /// of `./y` then reads them. So the filter must be built again after
+    /// each merge, not once after the loop (mutant M2).
+    #[test]
+    fn filter_follows_each_module_augmentation_merge() {
+        let a = r#"import "./x";
+import "./y";
+import "./g";
+declare global { interface Object { a1: number } }
+declare module "./x" { interface Q {} }
+declare module "./g" { interface Object { late1: number; late2: number } }
+declare module "./y" { interface R {} }
+export {};
+"#;
+        let x = r#"declare const p: { a: number };
+const o = { s: p.toString };
+export = o.s;
+"#;
+        let y = r#"declare const q: { a: number };
+const o = { s: q["late1"], t: q satisfies { late2: number }, u: q["missingY"] };
+export = o.s;
+"#;
+        let files = [
+            ("a.ts", a.to_string()),
+            ("x.ts", x.to_string()),
+            ("y.ts", y.to_string()),
+            g_ts(),
+        ];
+        let options = format!(r#"{STRICT}, "module": "commonjs""#);
+        let (a_codes, y_codes) = with_checked_a(&files, &options, |c, codes, _| {
+            let y = c
+                .files
+                .iter()
+                .copied()
+                .find(|&file| source_file_file_name(file).ends_with("/y.ts"))
+                .expect("y.ts is not in the program");
+            let ctx = crate::gostd::context::background();
+            let y_codes: Vec<i32> = c
+                .get_diagnostics_exported(&ctx, y)
+                .iter()
+                .map(|d| d.code)
+                .collect();
+            (codes, y_codes)
+        });
+        // Go N (tsgo-oracle-673a5f17d713): TS2671 for `./x` and `./y`, and
+        // in `y.ts` only TS7053 for `missingY`.
+        assert_eq!(a_codes, [2671, 2671]);
+        assert_eq!(y_codes, [7053]);
+    }
 }
