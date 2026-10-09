@@ -454,7 +454,9 @@ impl ResolutionState<'_> {
             }
         }
         // ts#64544: a dynamic candidate is looked up as a directory segment.
-        let directory_candidate = dynamic_directory_candidate(candidate);
+        // ts#64159 (resolver.go:1610): Go checks `candidate.AsDirectoryPath()`
+        // and traces the candidate itself, not its directory spelling.
+        let directory_candidate = candidate_directory_path(candidate);
         if !self
             .resolver
             .host
@@ -464,7 +466,7 @@ impl ResolutionState<'_> {
             trace_write!(
                 self,
                 diag::Directory_0_does_not_exist_skipping_all_lookups_in_it,
-                directory_candidate
+                candidate
             );
             return continue_searching();
         }
@@ -496,7 +498,9 @@ impl ResolutionState<'_> {
 
         // ./foo -> ./foo.ts
         if !self.esm_mode {
-            return self.try_adding_extensions(candidate, extensions, "");
+            // ts#64159: Go adds extensions to `candidate.path`, the name
+            // without the trailing separator of a directory-only candidate.
+            return self.try_adding_extensions(candidate_path(candidate), extensions, "");
         }
 
         continue_searching()
@@ -508,22 +512,27 @@ impl ResolutionState<'_> {
         extensions: Extensions,
         candidate: &str,
     ) -> Option<Resolved> {
-        let base = get_base_file_name(candidate);
+        // ts#64159 (resolver.go:48 resolutionCandidate): a directory-only
+        // candidate ("pkg/v.d/") splits its extension on the name without the
+        // trailing separator (Go `candidate.path`, SplitExtension :208), and
+        // the trace prints the candidate with it (Go `candidate.String()`).
+        let path = candidate_path(candidate);
+        let base = get_base_file_name(path);
         if !base.contains('.') {
             return continue_searching(); // extensionless import, no lookups performed, since we don't support extensionless files
         }
-        let mut extensionless = remove_file_extension(candidate);
-        if extensionless == candidate {
+        let mut extensionless = remove_file_extension(path);
+        if extensionless == path {
             // Once TS native extensions are handled, handle arbitrary extensions for declaration file mapping
             let mut extension =
-                get_longest_extension_from_path(candidate, &self.resolver.extra_extensions, false);
+                get_longest_extension_from_path(path, &self.resolver.extra_extensions, false);
             if extension.is_empty() {
-                extension = candidate[candidate.rfind('.').unwrap()..].to_string();
+                extension = path[path.rfind('.').unwrap()..].to_string();
             }
-            extensionless = remove_extension(candidate, &extension);
+            extensionless = remove_extension(path, &extension);
         }
 
-        let extension = &candidate[extensionless.len()..];
+        let extension = &path[extensionless.len()..];
         trace_write!(
             self,
             diag::File_name_0_has_a_1_extension_stripping_it,

@@ -1191,6 +1191,61 @@ fn test_module_specifier_contains_node_modules() {
     t.finish();
 }
 
+// Not a Go test: a guard for getLocalModuleSpecifier at specifiers.go:633.
+// ts#64159 keeps `strings.HasPrefix(maybeNonRelative, "..")` there, so a
+// `paths` result like "..lib/thing" loses to the relative path. Go N'
+// (tsgo-oracle-fed0bf24149f) gives "../../lib/thing" for the auto-import fix
+// and completion of this layout (config skeptic, LSP battery skp-dotdot).
+// PORT: it runs in a child process, because the importing file must be
+// published (see `parse_type_script_published`).
+#[test]
+fn test_get_module_specifier_prefers_relative_over_dot_dot_paths_result() {
+    super::childprog::in_child(
+        module_path!(),
+        "test_get_module_specifier_prefers_relative_over_dot_dot_paths_result",
+        get_module_specifier_prefers_relative_over_dot_dot_paths_result,
+    );
+}
+
+fn get_module_specifier_prefers_relative_over_dot_dot_paths_result() {
+    use indexmap::IndexMap;
+    use ts_goport::modulespecifiers::{ModuleSpecifierOptions, get_module_specifier};
+
+    let host = mock_host(KnownSymlinks::new("/project", true));
+    let file =
+        super::parsetestutil::parse_type_script_published("thingValue;\n", false /*jsx*/);
+    // (paths key, expected specifier)
+    let tests: &[(&str, &str)] = &[("..lib/*", "../../lib/thing"), ("@lib/*", "@lib/thing")];
+    let mut t = Subtests::new("GetModuleSpecifierPathsKeyStartingWithDotDot");
+    for &(key, expected) in tests {
+        t.run(key, || {
+            let mut paths = IndexMap::new();
+            paths.insert(key.to_string(), Some(vec!["./src/lib/*".to_string()]));
+            let options = CompilerOptions {
+                module: ModuleKind::COMMON_JS,
+                target: ScriptTarget::ES2020,
+                paths: Some(paths),
+                paths_base_path: "/project".to_string(),
+                ..Default::default()
+            };
+            let got = get_module_specifier(
+                &options,
+                &host,
+                file,
+                "/project/src/a/b/index.ts",
+                "",
+                "/project/src/lib/thing.ts",
+                ModuleSpecifierOptions::default(),
+            );
+            if got != expected {
+                return Err(format!("got {got:?}, expected {expected:?}"));
+            }
+            Ok(())
+        });
+    }
+    t.finish();
+}
+
 // Go: modulespecifiers/specifiers_test.go:260 TestTryGetRealFileNameForNonJSDeclarationFileName
 #[test]
 fn test_try_get_real_file_name_for_non_js_declaration_file_name() {

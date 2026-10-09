@@ -799,7 +799,11 @@ fn get_local_module_specifier(
     }
 
     // Prefer a relative import over a baseUrl import if it has fewer components.
-    if is_path_relative_to_parent(&maybe_non_relative)
+    // Go: modulespecifiers/specifiers.go:633 (at 673a5f17d713 :635). ts#64159
+    // keeps `strings.HasPrefix(maybeNonRelative, "..")` here: a `paths`
+    // result such as "..lib/thing" also prefers the relative path. Only
+    // isPathRelativeToParent (util.go:214) needs a ".." segment.
+    if maybe_non_relative.starts_with("..")
         || count_path_components(&relative_path) < count_path_components(&maybe_non_relative)
     {
         return relative_path;
@@ -1209,7 +1213,13 @@ fn try_directory_with_package_json(
         if from_paths.is_empty() {
             maybe_blocked_by_types_versions = true;
         } else {
-            module_file_to_try = tspath::combine_paths(&package_root_path, &[&from_paths]);
+            // ts#64159 (specifiers.go:947): Go resolves the file
+            // (`packageRootDirectory.ResolveFile(fromPaths)`), so "." and ".."
+            // segments are reduced (N: CombinePaths).
+            module_file_to_try = tspath::resolve_path_without_trailing_directory_separator(
+                &package_root_path,
+                &[&from_paths],
+            );
         }
     }
     // If the file is the main module, it can be imported by the package name
@@ -1237,54 +1247,14 @@ fn try_directory_with_package_json(
         // package got pulled into the program anyway, e.g. transitively through a file that *is* reachable. It
         // happens very easily in fourslash tests though, since every test file listed gets included. See
         // importNameCodeFix_typesVersions.ts for an example.)
-        let main_export_file = tspath::to_path(
-            &main_file_relative,
+        let package_type = package_json_content.map_or("", |c| c.fields.type_.value.as_str());
+        if is_package_main_file(
+            &module_file_to_try,
             &package_root_path,
+            &main_file_relative,
+            package_type,
             host.use_case_sensitive_file_names(),
-        );
-        let compare_opt = tspath::ComparePathsOptions {
-            use_case_sensitive_file_names: host.use_case_sensitive_file_names(),
-            current_directory: host.get_current_directory(),
-        };
-        // ts#64159 (specifiers.go isPackageMainFile): a main entry with
-        // directory intent ("./types/") does not name a sibling file.
-        let main_is_directory = tspath::has_trailing_directory_separator(&main_file_relative);
-        if !main_is_directory
-            && tspath::compare_paths(
-                tspath::remove_file_extension(&main_export_file),
-                tspath::remove_file_extension(&module_file_to_try),
-                &compare_opt,
-            ) == 0
-        {
-            // ^ An arbitrary removal of file extension for this comparison is almost certainly wrong
-            return PkgJsonDirAttemptResult {
-                package_root_path,
-                module_file_to_try,
-                ..Default::default()
-            };
-        } else if package_json_content.is_none_or(|c| {
-            c.fields.type_.value != "module"
-                && !tspath::file_extension_is_one_of(
-                    &module_file_to_try,
-                    tspath::EXTENSIONS_NOT_SUPPORTING_EXTENSIONLESS_RESOLUTION,
-                )
-                && deps::has_prefix(
-                    &module_file_to_try,
-                    &main_export_file,
-                    host.use_case_sensitive_file_names(),
-                )
-                && tspath::compare_paths(
-                    &tspath::get_directory_path(&module_file_to_try),
-                    tspath::remove_trailing_directory_separator(&main_export_file),
-                    &compare_opt,
-                ) == 0
-                && tspath::remove_file_extension(&tspath::get_base_file_name(&module_file_to_try))
-                    == "index"
-        }) {
-            // if mainExportFile is a directory, which contains moduleFileToTry, we just try index file
-            // example mainExportFile: `pkg/lib` and moduleFileToTry: `pkg/lib/index`, we can use packageRootPath
-            // but this behavior is deprecated for packages with "type": "module", so we only do this for packages without "type": "module"
-            // and make sure that the extension on index.{???} is something that supports omitting the extension
+        ) {
             return PkgJsonDirAttemptResult {
                 package_root_path,
                 module_file_to_try,
@@ -1297,6 +1267,55 @@ fn try_directory_with_package_json(
         module_file_to_try,
         ..Default::default()
     }
+}
+
+// Go: modulespecifiers/specifiers.go:982 isPackageMainFile (ts#64159)
+// ts#64159 takes this check out of tryDirectoryWithPackageJson and changes it:
+// - a main entry with directory intent ("./types/") does not name the sibling
+//   file "types.d.ts";
+// - a nil package.json content no longer makes every file the main file
+//   (N: `packageJsonContent == nil ||`);
+// - the `HasPrefix(moduleFileToTry, mainExportFile)` test is gone; the
+//   directory compare covers it.
+fn is_package_main_file(
+    module_file_name: &str,
+    package_root_directory: &str,
+    main_file_relative: &str,
+    package_type: &str,
+    use_case_sensitive_file_names: bool,
+) -> bool {
+    let main_is_directory = tspath::has_trailing_directory_separator(main_file_relative);
+    // Go `packageRootDirectory.ResolveFile(mainFileRelative)`.
+    let main_export_file = tspath::resolve_path_without_trailing_directory_separator(
+        package_root_directory,
+        &[main_file_relative],
+    );
+
+    if !main_is_directory
+        && tspath::compare_rooted_text(
+            tspath::remove_file_extension(&main_export_file),
+            tspath::remove_file_extension(module_file_name),
+            use_case_sensitive_file_names,
+        ) == 0
+    {
+        // An arbitrary removal of file extension for this comparison is almost certainly wrong.
+        return true;
+    }
+    // if mainExportFile is a directory, which contains moduleFileToTry, we just try index file
+    // example mainExportFile: `pkg/lib` and moduleFileToTry: `pkg/lib/index`, we can use packageRootPath
+    // but this behavior is deprecated for packages with "type": "module", so we only do this for packages without "type": "module"
+    // and make sure that the extension on index.{???} is something that supports omitting the extension
+    package_type != "module"
+        && !tspath::file_extension_is_one_of(
+            module_file_name,
+            tspath::EXTENSIONS_NOT_SUPPORTING_EXTENSIONLESS_RESOLUTION,
+        )
+        && tspath::compare_rooted_text(
+            &tspath::get_directory_path(module_file_name),
+            &main_export_file,
+            use_case_sensitive_file_names,
+        ) == 0
+        && tspath::remove_file_extension(&tspath::get_base_file_name(module_file_name)) == "index"
 }
 
 // Go: modulespecifiers/specifiers.go:1003 tryGetModuleNameFromExports
@@ -1934,4 +1953,45 @@ fn get_module_specifier_with_preferences(
         &preferences,
         false,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go: modulespecifiers/specifiers_test.go:328 TestIsPackageMainFilePreservesDirectoryIntent (ts#64159)
+    #[test]
+    fn is_package_main_file_preserves_directory_intent() {
+        let package_root = "/project/node_modules/pkg";
+        assert!(
+            !is_package_main_file(
+                "/project/node_modules/pkg/types.d.ts",
+                package_root,
+                "./types/",
+                "",
+                true
+            ),
+            "slash-terminated package entrypoint must not match the sibling declaration file"
+        );
+        assert!(
+            is_package_main_file(
+                "/project/node_modules/pkg/types/index.d.ts",
+                package_root,
+                "./types/",
+                "",
+                true
+            ),
+            "slash-terminated package entrypoint should match its index declaration"
+        );
+        assert!(
+            is_package_main_file(
+                "/project/node_modules/pkg/types.d.ts",
+                package_root,
+                "./types",
+                "",
+                true
+            ),
+            "extensionless package entrypoint should match the declaration file"
+        );
+    }
 }

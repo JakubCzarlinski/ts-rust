@@ -1762,6 +1762,40 @@ fn test_read_directory_with_extended_dynamic_root() {
     assert_eq!(got, vec![format!("{PACKAGE_DIRECTORY}/value.d.ts")]);
 }
 
+// Go: vfsmatch_test.go:1219 TestReadDirectoryDynamicRootUsesCaseSensitivePatterns (ts#64159)
+// PORT: Go wraps the case-sensitive map FS in `caseInsensitiveMatchFS`
+// (vfsmatch_test.go:1253); here `wrapvfs_wrap` replaces only its case
+// sensitivity.
+#[test]
+fn test_read_directory_dynamic_root_uses_case_sensitive_patterns() {
+    use ts_goport::frontend::vfs::{Replacements, wrapvfs_wrap};
+    const ROOT: &str = "^/~ts-uri~/custom/ts-nul-authority";
+    let host = wrapvfs_wrap(
+        from_map(
+            vec![
+                (format!("{ROOT}/Foo/a.ts"), MapFile::from("")),
+                (format!("{ROOT}/foo/b.ts"), MapFile::from("")),
+            ],
+            true,
+        ),
+        Replacements {
+            use_case_sensitive_file_names: Some(Box::new(|| false)),
+            ..Default::default()
+        },
+    );
+    let base = format!("{ROOT}/");
+    let got = read_directory(
+        host.as_ref(),
+        &base,
+        &base,
+        &strs(&[".ts"]),
+        &[],
+        &strs(&["Foo/**/*.ts"]),
+        UNLIMITED_DEPTH,
+    );
+    assert_eq!(got, vec![format!("{ROOT}/Foo/a.ts")]);
+}
+
 // Go: vfsmatch_test.go:1238 TestDynamicAbsoluteGlobUsesCaseSensitivePattern (ts#64544)
 #[test]
 fn test_dynamic_absolute_glob_uses_case_sensitive_pattern() {

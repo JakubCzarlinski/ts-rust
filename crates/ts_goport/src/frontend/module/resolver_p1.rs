@@ -147,6 +147,28 @@ pub(crate) fn dynamic_directory_candidate(candidate: &str) -> Cow<'_, str> {
     Cow::Owned(combine_paths(&directory, &[&encoded_base]))
 }
 
+// Go: module/resolver.go:48 resolutionCandidate (ts#64159)
+// PORT: the port keeps a candidate as one string, and a trailing separator
+// is Go's `directoryOnly`. `candidate_path` is Go's `path` field: the name
+// without that separator (a root keeps it, resolutionCandidateFromNormalized
+// :54).
+pub(crate) fn candidate_path(candidate: &str) -> &str {
+    if candidate.len() > get_root_length(candidate) {
+        return remove_trailing_directory_separator(candidate);
+    }
+    candidate
+}
+
+// Go: module/resolver.go:165 resolutionCandidate.AsDirectoryPath (ts#64159)
+// A directory-only candidate is already encoded as a directory; another
+// candidate uses its dynamic directory spelling (`dynamic_directory_candidate`).
+pub(crate) fn candidate_directory_path(candidate: &str) -> Cow<'_, str> {
+    if has_trailing_directory_separator(candidate) {
+        return Cow::Borrowed(candidate_path(candidate));
+    }
+    dynamic_directory_candidate(candidate)
+}
+
 // Go: module/resolver.go:223 resolutionKindSpecificLoader
 // PORT: Go closures capture `r`. Here the loader gets the state as its first
 // argument, so the caller can keep `&mut self`.
@@ -2084,12 +2106,16 @@ impl ResolutionState<'_> {
         // https://github.com/microsoft/typescript-go/issues/3526
         // ts#64544: the candidate and the package directory resolve as
         // module paths, so the segments of a dynamic directory stay encoded.
+        // ts#64159: Go `resolutionCandidateFromDirectoryPath(nodeModulesDirectory,
+        // moduleName)` (resolver.go:1259) keeps the directory intent of "pkg/"
+        // in the candidate (N: the separator was removed); the candidate
+        // directory has none.
         let candidate = resolve_path_for_module(
             node_modules_directory,
-            remove_trailing_directory_separator(module_name),
-            false,
+            module_name,
+            has_trailing_directory_separator(module_name),
         );
-        let candidate_directory = dynamic_directory_candidate(&candidate).into_owned();
+        let candidate_directory = candidate_directory_path(&candidate).into_owned();
         let (package_name, rest) = parse_package_name(module_name);
         let mut package_directory = remove_trailing_directory_separator(&resolve_path_for_module(
             node_modules_directory,
@@ -2164,7 +2190,7 @@ impl ResolutionState<'_> {
 
         let mut loader =
             |state: &mut Self, extensions: Extensions, candidate: &str| -> Option<Resolved> {
-                let loader_candidate_directory = dynamic_directory_candidate(candidate);
+                let loader_candidate_directory = candidate_directory_path(candidate);
                 if !rest.is_empty() || !state.esm_mode {
                     let from_file = state.load_module_from_file(extensions, candidate);
                     if let Some(mut from_file) = from_file {

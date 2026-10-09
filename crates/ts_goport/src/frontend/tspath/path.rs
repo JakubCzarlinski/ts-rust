@@ -1422,6 +1422,36 @@ pub fn compare_paths_case_insensitive(a: &str, b: &str, current_directory: &str)
     )
 }
 
+// Go: tspath/rooted_path.go:524 CaseSensitivity.compareRootedText (ts#64159)
+// Compares rooted, normalized path text and does not reduce "." or ".."
+// components (Go CaseSensitivity.ComparePaths, CompareFilePaths and
+// CompareFileNameStems call it). `compare_paths` reduces them.
+pub fn compare_rooted_text(a: &str, b: &str, use_case_sensitive_file_names: bool) -> i32 {
+    if a == b {
+        return 0;
+    }
+    if a.is_empty() {
+        return -1;
+    }
+    if b.is_empty() {
+        return 1;
+    }
+
+    if is_encoded_dynamic_file_name(a) || is_encoded_dynamic_file_name(b) {
+        return compare_strings_case_sensitive(
+            &canonical_dynamic_uri_path(a),
+            &canonical_dynamic_uri_path(b),
+        );
+    }
+    let a_root_length = get_root_length(a);
+    let b_root_length = get_root_length(b);
+    let result = compare_strings_case_insensitive(&a[..a_root_length], &b[..b_root_length]);
+    if result != 0 {
+        return result;
+    }
+    get_string_comparer(!use_case_sensitive_file_names)(&a[a_root_length..], &b[b_root_length..])
+}
+
 // Go: tspath/path.go:1111 ContainsPath
 pub fn contains_path(parent: &str, child: &str, options: &ComparePathsOptions) -> bool {
     let parent = combine_paths(&options.current_directory, &[parent]);

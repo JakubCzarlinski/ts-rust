@@ -78,8 +78,13 @@ fn get_include_base_path(absolute: &str) -> String {
             return remove_trailing_directory_separator(&get_directory_path(absolute)).to_string();
         }
     };
-    // PORT: Go `max(LastIndex(...), 0)`; a missing separator gives 0.
-    let end = absolute[..wildcard_offset].rfind('/').unwrap_or(0);
+    // ts#64159: Go `max(LastIndex(...), GetRootLength(absolute))`, so a
+    // pattern in the root ("/*.ts", "c:/*.ts") has the root as its base path
+    // (N: `max(..., 0)` gave "" and "c:"). A missing separator gives -1.
+    let end = absolute[..wildcard_offset]
+        .rfind('/')
+        .map_or(-1, |i| i as isize)
+        .max(get_root_length(absolute) as isize) as usize;
     absolute[..end].to_string()
 }
 
@@ -105,13 +110,19 @@ fn get_base_paths(
         for include in includes {
             // We also need to check the relative paths by converting them to absolute and normalizing
             // in case they escape the base path (e.g "..\somedirectory")
+            // ts#64159: a rooted include is normalized too.
             let absolute = if is_rooted_disk_path(include) {
-                include.clone()
+                normalize_path(include)
             } else {
                 normalize_path(&combine_paths(path, &[include.as_str()]))
             };
             // Append the literal and canonical candidate base paths.
-            include_base_paths.push(get_include_base_path(&absolute));
+            // ts#64159: Go `tspath.ToRootedDirectoryPath(getIncludeBasePath(absolute), path)`:
+            // resolved against `path`, with no trailing separator except on a root.
+            include_base_paths.push(resolve_path_without_trailing_directory_separator(
+                path,
+                &[&get_include_base_path(&absolute)],
+            ));
         }
 
         // Sort the offsets array using either the literal or canonical path representations.
