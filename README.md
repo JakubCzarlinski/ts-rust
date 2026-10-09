@@ -95,8 +95,8 @@ goes away when the port moves to a newer pin.
   181,711 ported Go tests pass. The language server and API answers match Go on the oracle test
   sets.
 - **Faster.** On 60 open-source projects, type checking takes about half of Go's time (geometric
-  mean). The preview packages are built in CI without PGO and BOLT, so they are slower than that
-  measured build.
+  mean). The npm packages are built in CI with PGO but without BOLT (0.1.0 has neither), so they
+  are slower than that measured build.
 - **Real projects.** On 120 open-source repos, the command-line output differs from Go's only in
   the problems below and where Go's own output changes from run to run.
 
