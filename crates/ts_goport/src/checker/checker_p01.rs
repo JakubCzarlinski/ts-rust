@@ -1086,6 +1086,8 @@ pub struct Checker {
     pub get_global_promise_type: GlobalTypeFn,
     pub get_global_promise_type_checked: GlobalTypeFn,
     pub get_global_promise_like_type: GlobalTypeFn,
+    // ts#63915, Go N' checker.go:854
+    pub get_global_abstract_module_source_type: GlobalTypeFn,
     pub get_global_promise_constructor_symbol: GlobalSymbolFn,
     pub get_global_promise_constructor_symbol_or_nil: GlobalSymbolFn,
     pub get_global_omit_symbol: GlobalSymbolFn,
@@ -1598,6 +1600,7 @@ impl Checker {
             get_global_promise_type: nil_global_type_fn(),
             get_global_promise_type_checked: nil_global_type_fn(),
             get_global_promise_like_type: nil_global_type_fn(),
+            get_global_abstract_module_source_type: nil_global_type_fn(),
             get_global_promise_constructor_symbol: nil_global_symbol_fn(),
             get_global_promise_constructor_symbol_or_nil: nil_global_symbol_fn(),
             get_global_omit_symbol: nil_global_symbol_fn(),
@@ -2091,6 +2094,12 @@ impl Checker {
             c.get_global_type_resolver("Promise", 1 /*arity*/, true /*reportErrors*/);
         c.get_global_promise_like_type =
             c.get_global_type_resolver("PromiseLike", 1 /*arity*/, true /*reportErrors*/);
+        // ts#63915, Go N' checker.go:1095
+        c.get_global_abstract_module_source_type = c.get_global_type_resolver(
+            "AbstractModuleSource",
+            0,    /*arity*/
+            true, /*reportErrors*/
+        );
         c.get_global_promise_constructor_symbol =
             c.get_global_value_symbol_resolver("Promise", true /*reportErrors*/);
         c.get_global_promise_constructor_symbol_or_nil =

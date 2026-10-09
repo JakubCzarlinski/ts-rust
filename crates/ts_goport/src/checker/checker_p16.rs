@@ -943,6 +943,22 @@ impl Checker {
 
     // Go: checker/checker.go:14756 getTargetOfImportClause
     pub fn get_target_of_import_clause(&mut self, node: Node) -> SymbolId {
+        // ts#63915, Go N' checker.go:14798: `import source x from "m"` binds
+        // x to a variable of type AbstractModuleSource.
+        if node.phase_modifier() == SyntaxKind::SourceKeyword {
+            let alias = self.get_symbol_of_declaration(node);
+            let immediate_target = self.alias_symbol_links.get(alias).immediate_target;
+            if immediate_target.is_nil() {
+                let symbol =
+                    self.new_symbol(SymbolFlags::FUNCTION_SCOPED_VARIABLE, node.name().text());
+                let declarations = self.sym(alias).declarations.clone();
+                self.sym_mut(symbol).declarations = declarations;
+                let resolved_type = self.get_global_abstract_module_source_type();
+                self.value_symbol_links.get(symbol).resolved_type = resolved_type;
+                self.alias_symbol_links.get(alias).immediate_target = symbol;
+            }
+            return self.alias_symbol_links.get(alias).immediate_target;
+        }
         let module_specifier = get_module_specifier_from_node(node.parent());
         let import_attributes_type =
             self.get_type_from_import_attributes(get_import_attributes(node.parent()));
