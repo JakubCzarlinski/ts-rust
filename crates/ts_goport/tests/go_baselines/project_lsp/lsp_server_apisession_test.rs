@@ -115,10 +115,49 @@ fn init_api_session(client: &LspClient) -> PathBuf {
     pipe
 }
 
+/// How long a read of the API pipe waits for the server.
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[cfg(unix)]
+type ApiReader = ApiStream;
+#[cfg(windows)]
+type ApiReader = PipeReader;
+
+/// The read half of the API pipe on Windows. A pipe handle has no read
+/// timeout, so each read runs on its own thread and `read` waits for it for
+/// `READ_TIMEOUT`. The thread reads only while `read` waits: a read that is
+/// pending on the handle would block the writes of `send`.
+#[cfg(windows)]
+struct PipeReader(Arc<ApiStream>);
+
+#[cfg(windows)]
+impl Read for PipeReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let (done, result) = std::sync::mpsc::channel();
+        let pipe = self.0.clone();
+        let len = buf.len();
+        std::thread::spawn(move || {
+            let mut chunk = vec![0u8; len];
+            let read = (&*pipe).read(&mut chunk).map(|n| {
+                chunk.truncate(n);
+                chunk
+            });
+            let _ = done.send(read);
+        });
+        match result.recv_timeout(READ_TIMEOUT) {
+            Ok(read) => read.map(|chunk| {
+                buf[..chunk.len()].copy_from_slice(&chunk);
+                chunk.len()
+            }),
+            Err(_) => Err(std::io::ErrorKind::TimedOut.into()),
+        }
+    }
+}
+
 /// A connected API client.
 struct ApiClient {
     stream: ApiStream,
-    reader: BufReader<ApiStream>,
+    reader: BufReader<ApiReader>,
 }
 
 impl ApiClient {
@@ -127,18 +166,21 @@ impl ApiClient {
         let stream = {
             let stream = ApiStream::connect(pipe).expect("connect to the API pipe");
             stream
-                .set_read_timeout(Some(Duration::from_secs(60)))
+                .set_read_timeout(Some(READ_TIMEOUT))
                 .expect("set a read timeout");
             stream
         };
-        // A pipe handle has no read timeout.
         #[cfg(windows)]
         let stream = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(pipe)
             .expect("connect to the API pipe");
-        let reader = BufReader::new(stream.try_clone().expect("clone the API socket"));
+        let clone = stream.try_clone().expect("clone the API socket");
+        #[cfg(unix)]
+        let reader = BufReader::new(clone);
+        #[cfg(windows)]
+        let reader = BufReader::new(PipeReader(Arc::new(clone)));
         Self { stream, reader }
     }
 
