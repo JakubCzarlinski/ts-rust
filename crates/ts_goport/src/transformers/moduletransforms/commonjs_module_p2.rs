@@ -1102,7 +1102,7 @@ impl CommonJSModuleTransformer {
         self.visit_each_child_with(VisitorKind::Root, node)
     }
 
-    // Go: transformers/moduletransforms/commonjsmodule.go:1802 CommonJSModuleTransformer.visitCallExpression
+    // Go: transformers/moduletransforms/commonjsmodule.go:1806 CommonJSModuleTransformer.visitCallExpression
     /// Visits a call expression that might reference an imported symbol and thus require an indirect call, or that might
     /// be an `import()` or `require()` call that may need to be rewritten.
     pub(super) fn visit_call_expression(&mut self, node: Node) -> Node {
@@ -1117,7 +1117,9 @@ impl CommonJSModuleTransformer {
         {
             needs_rewrite = true;
         }
-        if is_import_call(node) && self.should_transform_import_call() {
+        if node.expression().kind() == SyntaxKind::ImportKeyword
+            && self.should_transform_import_call()
+        {
             return self.visit_import_call_expression(node, needs_rewrite);
         }
         if needs_rewrite {
