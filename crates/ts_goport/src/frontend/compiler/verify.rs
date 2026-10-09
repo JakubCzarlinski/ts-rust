@@ -683,14 +683,15 @@ impl NewProgram {
                     emitted_files.push(file.file_name().to_string());
                 }
             }
+            // ts#64159 (program.go:1245): the base directory (rule R1), and
+            // the directories compare as rooted text (rule R3).
             let dir59 = get_computed_common_source_directory(
                 &emitted_files,
-                &self.get_current_directory(),
+                &self.base_directory(),
                 self.use_case_sensitive_file_names(),
             );
             if !dir59.is_empty()
-                && get_canonical_file_name(&dir, self.use_case_sensitive_file_names())
-                    != get_canonical_file_name(&dir59, self.use_case_sensitive_file_names())
+                && compare_rooted_text(&dir, &dir59, self.use_case_sensitive_file_names()) != 0
             {
                 // change in layout
                 let option1 = if !options.out_file.is_empty() {
@@ -713,6 +714,9 @@ impl NewProgram {
                     diag::The_common_source_directory_of_0_is_1_The_rootDir_setting_must_be_explicitly_set_to_this_or_another_path_to_adjust_your_output_s_file_layout,
                     &args![
                         get_base_file_name(&options.config_file_path),
+                        // ts#64159 (program.go:1249): the relative path, or the
+                        // absolute one on another root (rule R4), which
+                        // `get_relative_path_from_file` already gives.
                         get_relative_path_from_file(&options.config_file_path, &dir59, &self.compare_paths_options)
                     ],
                 );

@@ -167,7 +167,7 @@ impl ProcessingDiagnostic {
                 }
                 include_details
                     .get_or_insert_with(Vec::new)
-                    .push(include_reason.to_diagnostic(program, false).clone());
+                    .push(include_reason.to_diagnostic(program, false, ""));
                 process_related_info(include_reason, preferred_location, related_info);
             };
 

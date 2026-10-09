@@ -226,7 +226,29 @@ impl NewProgram {
         self.hosts.host.content_mapper_project()
     }
 
-    // Go: program.go:134 (*Program).GetCurrentDirectory
+    // Go: program.go:150 (*Program).BaseDirectory (ts#64159, rule R1)
+    /// The directory that the program's paths resolve against: the config
+    /// file's directory, or the current directory without a config file
+    /// (`ParsedCommandLine.BaseDirectory()`, which is
+    /// `ParsedCommandLine::get_current_directory` here).
+    // PORT: a hand-built `ParsedCommandLine` with no current directory (the
+    // compiler test harness until its ts#64159 part, harnessutil.go:208)
+    // gives the host's current directory, as N did.
+    pub fn base_directory(&self) -> String {
+        let base_directory = self.opts.config.get_current_directory();
+        if base_directory.is_empty() {
+            return self.host().get_current_directory();
+        }
+        base_directory.to_string()
+    }
+
+    // Go: program.go:134 (*Program).GetCurrentDirectory (at 673a5f17d713;
+    // ts#64159 makes it return BaseDirectory, program.go:154)
+    // PORT: this stays the host's current directory. In tsc the two differ
+    // only for a config file outside the current directory; there the
+    // config parse has made the file names and path options absolute, so
+    // the program's reads give Go N' output (lane probes ts5011, explain).
+    // Use `base_directory` where Go N' calls BaseDirectory.
     pub fn get_current_directory(&self) -> String {
         self.host().get_current_directory()
     }

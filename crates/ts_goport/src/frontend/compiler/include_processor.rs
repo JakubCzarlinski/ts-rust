@@ -58,10 +58,12 @@ pub struct IncludeProcessor {
 /// Go `includeReasonDiagnosticKey` (ts#64519).
 // Go: includeprocessor.go:31 includeReasonDiagnosticKey
 // PORT: the Go `*FileIncludeReason` key is the reason's address.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct IncludeReasonDiagnosticKey {
     pub reason: *const FileIncludeReason,
     pub relative_file_name: bool,
+    // ts#64159 (includeprocessor.go:34)
+    pub relative_to: String,
 }
 
 // PORT: Go `ReuseProgram` copies `processedFiles` (the reasons and the
@@ -345,12 +347,15 @@ impl IncludeProcessor {
                 || source_file.common_js_module_indicator.is_some())
         {
             let meta_data = program.get_source_file_meta_data(&file.path());
+            // ts#64159 (includeprocessor.go:168): the package.json name is
+            // `PackageJsonDirectory.ResolveFile("package.json")`, so one in
+            // the root is "/package.json" (N: "//package.json").
             match program.get_implied_node_format_for_emit(file) {
                 ModuleKind::ES_NEXT => {
                     if meta_data.package_json_type == "module" {
                         result.push(new_compiler_diagnostic(
                             diag::File_is_ECMAScript_module_because_0_has_field_type_with_value_module,
-                            args![to_file_name(&format!("{}/package.json", meta_data.package_json_directory))],
+                            args![to_file_name(&combine_paths(&meta_data.package_json_directory, &["package.json"]))],
                         ));
                     }
                 }
@@ -358,15 +363,15 @@ impl IncludeProcessor {
                     if !meta_data.package_json_type.is_empty() {
                         result.push(new_compiler_diagnostic(
                             diag::File_is_CommonJS_module_because_0_has_field_type_whose_value_is_not_module,
-                            args![to_file_name(&format!("{}/package.json", meta_data.package_json_directory))],
+                            args![to_file_name(&combine_paths(&meta_data.package_json_directory, &["package.json"]))],
                         ));
                     } else if !meta_data.package_json_directory.is_empty() {
                         if meta_data.package_json_type.is_empty() {
                             result.push(new_compiler_diagnostic(
                                 diag::File_is_CommonJS_module_because_0_does_not_have_field_type,
-                                args![to_file_name(&format!(
-                                    "{}/package.json",
-                                    meta_data.package_json_directory
+                                args![to_file_name(&combine_paths(
+                                    &meta_data.package_json_directory,
+                                    &["package.json"]
                                 ))],
                             ));
                         }

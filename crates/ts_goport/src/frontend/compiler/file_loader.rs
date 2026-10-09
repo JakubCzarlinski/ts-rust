@@ -883,16 +883,7 @@ impl FileLoader {
     ) {
         let curr_dir = self.host.get_current_directory().to_string();
         let abs_path = get_normalized_absolute_path(file_name, &curr_dir);
-        let mut containing_file = curr_dir.clone();
-        if let Some(config_file) = &self.opts.config.config_file {
-            containing_file = get_normalized_absolute_path(&config_file.file_name, &curr_dir);
-        }
-        let (resolved_file, diagnostic) = self.get_source_file_from_reference(
-            &abs_path,
-            file_name,
-            &containing_file,
-            &include_reason,
-        );
+        let (resolved_file, diagnostic) = self.get_source_file_from_reference(&abs_path, file_name);
         let mut root_task = ParseTask {
             normalized_file_path: resolved_file,
             lib_file,
@@ -1392,13 +1383,13 @@ impl FileLoader {
         false
     }
 
-    // Go: fileloader.go:689 (*fileLoader).getSourceFileFromReference
+    // Go: fileloader.go:682 (*fileLoader).getSourceFileFromReference
+    // ts#64159: the "A file cannot have a reference to itself" check moved
+    // to `resolve_tripleslash_path_reference`, after the extension lookup.
     pub fn get_source_file_from_reference(
         &self,
         file_name: &str,
         reference_text: &str,
-        containing_file: &str,
-        include_reason: &FileIncludeReason,
     ) -> (String, Option<SourceFileFromReferenceDiagnostic>) {
         let options = self.opts.config.compiler_options();
         let allow_non_ts_extensions = options.allow_non_ts_extensions.is_true();
@@ -1436,19 +1427,6 @@ impl FileLoader {
                     Some(SourceFileFromReferenceDiagnostic {
                         message: diag::File_0_not_found,
                         args: args![diagnostic_file_name],
-                    }),
-                );
-            }
-
-            if include_reason.is_referenced_file()
-                && get_canonical_file_name(containing_file, fs.use_case_sensitive_file_names())
-                    == canonical_file_name
-            {
-                return (
-                    String::new(),
-                    Some(SourceFileFromReferenceDiagnostic {
-                        message: diag::A_file_cannot_have_a_reference_to_itself,
-                        args: Vec::new(),
                     }),
                 );
             }
@@ -1491,7 +1469,7 @@ impl FileLoader {
         )
     }
 
-    // Go: fileloader.go:736 (*fileLoader).resolveTripleslashPathReference
+    // Go: fileloader.go:723 (*fileLoader).resolveTripleslashPathReference
     pub fn resolve_tripleslash_path_reference(
         &self,
         module_name: &str,
@@ -1505,21 +1483,18 @@ impl FileLoader {
             referenced_file_name = combine_paths(&base_path, &[module_name]);
         }
         let normalized_file_name = normalize_path(&referenced_file_name);
+        let containing_path = self.to_path(containing_file);
         let include_reason = new_file_include_reason(
             FileIncludeKind::REFERENCE_FILE,
             FileIncludeData::ReferencedFile(ReferencedFileData {
-                file: self.to_path(containing_file),
+                file: containing_path.clone(),
                 index,
                 synthetic: Node::NIL,
             }),
         );
 
-        let (resolved_file_name, diagnostic) = self.get_source_file_from_reference(
-            &normalized_file_name,
-            module_name,
-            containing_file,
-            &include_reason,
-        );
+        let (resolved_file_name, diagnostic) =
+            self.get_source_file_from_reference(&normalized_file_name, module_name);
         if let Some(diagnostic) = diagnostic {
             return (
                 None,
@@ -1527,6 +1502,19 @@ impl FileLoader {
                     Some(include_reason),
                     diagnostic.message,
                     diagnostic.args,
+                )),
+            );
+        }
+        // ts#64159 (fileloader.go:747): the check is on the resolved file,
+        // so `/// <reference path="a" />` in a.ts (found as "a" + ".ts")
+        // is an error too. N checked only a name with an extension.
+        if containing_path == self.to_path(&resolved_file_name) {
+            return (
+                None,
+                Some(new_explaining_processing_diagnostic(
+                    Some(include_reason),
+                    diag::A_file_cannot_have_a_reference_to_itself,
+                    Vec::new(),
                 )),
             );
         }
@@ -4175,7 +4163,7 @@ export const a: T | Dep | number = x + (h as never);
         let reason = old.get_include_reasons()[&path][0].clone();
         assert!(Rc::ptr_eq(&reason, &new.get_include_reasons()[&path][0]));
         for relative in [false, true] {
-            let old_diagnostic = reason.to_diagnostic(&old, relative);
+            let old_diagnostic = reason.to_diagnostic(&old, relative, "");
             assert_eq!(
                 old.include_processor.reason_diagnostics.borrow().len(),
                 usize::from(relative) + 1
@@ -4184,7 +4172,7 @@ export const a: T | Dep | number = x + (h as never);
                 new.include_processor.reason_diagnostics.borrow().len(),
                 usize::from(relative)
             );
-            let new_diagnostic = reason.to_diagnostic(&new, relative);
+            let new_diagnostic = reason.to_diagnostic(&new, relative, "");
             assert_eq!(
                 new.include_processor.reason_diagnostics.borrow().len(),
                 usize::from(relative) + 1

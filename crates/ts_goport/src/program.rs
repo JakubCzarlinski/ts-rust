@@ -2737,11 +2737,28 @@ pub fn go_frontend_program() -> Option<Rc<crate::frontend::compiler::NewProgram>
     go_frontend()
 }
 
-// Go: compiler/program.go:2120 ExplainFiles
+// Go: compiler/program.go:2144 ExplainFiles
+// ts#64159: Go takes the directory that the names are relative to, and tsc
+// passes `Sys.GetCurrentDirectory()` (execute/tsc/emit.go:156).
+// PORT: this passes the program host's current directory, which is the
+// system's in tsc, so the build lane's caller (`execute/tsc/emit.rs`) keeps
+// its call. `explain_files_relative_to` takes the directory.
 pub fn explain_files(w: &mut dyn std::io::Write, locale: &crate::locale::Locale) {
+    let program = go_frontend().expect("explain files of an alias resolver program");
+    let current_directory = program.host().get_current_directory();
+    program.explain_files(w, locale, &current_directory);
+}
+
+// Go: compiler/program.go:2144 ExplainFiles (ts#64159), with the directory
+// that the names are relative to.
+pub fn explain_files_relative_to(
+    w: &mut dyn std::io::Write,
+    locale: &crate::locale::Locale,
+    current_directory: &str,
+) {
     go_frontend()
         .expect("explain files of an alias resolver program")
-        .explain_files(w, locale);
+        .explain_files(w, locale, current_directory);
 }
 
 // Go: compiler/program.go:511 SourceFiles

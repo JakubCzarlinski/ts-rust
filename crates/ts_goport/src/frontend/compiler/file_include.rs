@@ -3,6 +3,36 @@
 
 use crate::frontend::prelude::*;
 
+/// Go `caseSensitivity.RelativePathFromDirectory(directory, fileName)` and
+/// its fallback to the absolute name (ts#64159: fileInclude.go:155,
+/// program.go:2145). Used for the include-reason text and `explain_files`.
+// PORT: the names are normalized, so not reducing "." and ".." (rule R3)
+// changes nothing here. Another root, or an empty `directory` (Go tests pass
+// ""), gives the absolute name (rule R4).
+pub(crate) fn relative_file_name_from_directory(
+    directory: &str,
+    file_name: &str,
+    program: &NewProgram,
+) -> String {
+    let directory_root = &directory[..get_root_length(directory)];
+    let file_root = &file_name[..get_root_length(file_name)];
+    if directory_root.is_empty()
+        || !directory_root
+            .trim_end_matches('/')
+            .eq_ignore_ascii_case(file_root.trim_end_matches('/'))
+    {
+        return file_name.to_string();
+    }
+    get_relative_path_from_directory(
+        directory,
+        file_name,
+        &ComparePathsOptions {
+            use_case_sensitive_file_names: program.use_case_sensitive_file_names(),
+            current_directory: directory.to_string(),
+        },
+    )
+}
+
 // Go: fileInclude.go:15 fileIncludeKind
 // PORT: Go `int` enum with iota constants. The newtype keeps the Go order,
 // so `is_referenced_file` can compare with `<=`.
@@ -251,10 +281,21 @@ impl FileIncludeReason {
     // ts#64519: the diagnostic is cached by the program, not by the reason,
     // so a program that shares the reasons (`ReuseProgram`) computes its
     // own. PORT: Go returns the cached pointer; this returns a copy.
-    pub fn to_diagnostic(&self, program: &NewProgram, relative_file_name: bool) -> Diagnostic {
+    // ts#64159: a relative file name is relative to `relative_to` (Go
+    // `relativeTo`, fileInclude.go:148), not to the program's directory:
+    // `explain_files` passes the system current directory, a processing
+    // diagnostic passes "" with `relative_file_name` false
+    // (processingDiagnostic.go:95). The key holds `relative_to`.
+    pub fn to_diagnostic(
+        &self,
+        program: &NewProgram,
+        relative_file_name: bool,
+        relative_to: &str,
+    ) -> Diagnostic {
         let key = IncludeReasonDiagnosticKey {
             reason: std::ptr::from_ref(self),
             relative_file_name,
+            relative_to: relative_to.to_string(),
         };
         let reason_diagnostics = &program.include_processor.reason_diagnostics;
         if let Some(diagnostic) = reason_diagnostics.borrow().get(&key) {
@@ -263,11 +304,7 @@ impl FileIncludeReason {
         // PORT: the borrow is released while the diagnostic is computed.
         let diagnostic = self.compute_diagnostic(program, &|file_name: &str| {
             if relative_file_name {
-                return get_relative_path_from_directory(
-                    &program.get_current_directory(),
-                    file_name,
-                    &program.compare_paths_options,
-                );
+                return relative_file_name_from_directory(relative_to, file_name, program);
             }
             file_name.to_string()
         });
@@ -292,10 +329,9 @@ impl FileIncludeReason {
             FileIncludeKind::ROOT_FILE => {
                 if program.opts.config.config_file.is_some() {
                     let config = &program.opts.config;
-                    let file_name = get_normalized_absolute_path(
-                        &config.file_names()[self.as_index() as usize],
-                        &program.get_current_directory(),
-                    );
+                    // ts#64159 (fileInclude.go:173): the name as listed, which
+                    // config parsing made absolute (N normalized it again).
+                    let file_name = config.file_names()[self.as_index() as usize].clone();
                     let matched_file_spec = config.get_matched_file_spec(&file_name);
                     if !matched_file_spec.is_empty() {
                         return new_compiler_diagnostic(
@@ -493,10 +529,8 @@ impl FileIncludeReason {
         let config_source_file = config_file.source_file;
         match self.kind {
             FileIncludeKind::ROOT_FILE => {
-                let file_name = get_normalized_absolute_path(
-                    &config.file_names()[self.as_index() as usize],
-                    &program.get_current_directory(),
-                );
+                // ts#64159 (fileInclude.go:268): the name as listed.
+                let file_name = config.file_names()[self.as_index() as usize].clone();
                 let matched_file_spec = config.get_matched_file_spec(&file_name);
                 if !matched_file_spec.is_empty() {
                     let files_node = get_tsconfig_prop_array_element_value(

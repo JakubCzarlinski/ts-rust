@@ -115,17 +115,24 @@ impl NewProgram {
             .any(|missing_path| self.to_path(missing_path) == *path)
     }
 
-    // Go: program.go:2120 (*Program).ExplainFiles
+    // Go: program.go:2144 (*Program).ExplainFiles
     // Each line is one write, as Go's `fmt.Fprintln`; its errors are ignored.
     // Go `fmt.Fprintln(w, "  ", x)` puts one more space between the operands.
     // PORT: the Go `explainFile` closure increments `filesExplained`; here
     // the callers do it, so the loop condition can read the counter.
-    pub fn explain_files(&self, w: &mut dyn std::io::Write, locale: &crate::locale::Locale) {
+    // ts#64159: the names are relative to `current_directory` (the system
+    // current directory, execute/tsc/emit.go:156), not to the program's.
+    pub fn explain_files(
+        &self,
+        w: &mut dyn std::io::Write,
+        locale: &crate::locale::Locale,
+        current_directory: &str,
+    ) {
         let to_relative_file_name = |file_name: &str| {
-            get_relative_path_from_directory(
-                &self.get_current_directory(),
+            super::file_include::relative_file_name_from_directory(
+                current_directory,
                 file_name,
-                &self.compare_paths_options,
+                self,
             )
         };
         let explain_file = |w: &mut dyn std::io::Write, file: &dyn HasFileName| {
@@ -138,8 +145,12 @@ impl NewProgram {
                 .get(&file.path())
             {
                 for reason in reasons {
-                    let line =
-                        format!("   {}\n", reason.to_diagnostic(self, true).localize(locale));
+                    let line = format!(
+                        "   {}\n",
+                        reason
+                            .to_diagnostic(self, true, current_directory)
+                            .localize(locale)
+                    );
                     let _ = w.write_all(line.as_bytes());
                 }
             }
@@ -193,11 +204,17 @@ impl NewProgram {
         &self,
         ref_: &FileReference,
     ) -> Option<Rc<ParsedSourceFile>> {
-        let (path, ok) = get_lib_file_name(&ref_.file_name);
+        let (name, ok) = get_lib_file_name(&ref_.file_name);
         if !ok {
             return None;
         }
-        self.processed_files.files_by_path.get(&Path(path)).cloned()
+        // ts#64159 (program.go:2187): the lib file of that name. N looked the
+        // bare name ("lib.dom.d.ts") up as a path and found nothing.
+        self.processed_files
+            .lib_files
+            .iter()
+            .find(|(_, lib_file)| lib_file.name == name)
+            .and_then(|(path, _)| self.processed_files.files_by_path.get(path).cloned())
     }
 
     // Go: program.go:2171 (*Program).GetResolvedTypeReferenceDirectiveFromTypeReferenceDirective
