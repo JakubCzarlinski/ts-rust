@@ -326,7 +326,10 @@ impl NewProgram {
                     continue;
                 }
                 for &imp in &file.imports {
-                    if is_external_module_name_relative(imp.text()) {
+                    // ts#63915
+                    if is_source_phase_import(imp.parent())
+                        || is_external_module_name_relative(imp.text())
+                    {
                         continue;
                     }
                     if let Some(resolved_modules) =
@@ -571,7 +574,7 @@ pub fn for_each_resolution<T>(
     }
 }
 
-// Go: program.go:2373 plainJSErrors
+// Go: program.go:2404 plainJSErrors
 // PORT: Go package-level set; built once on first use.
 pub fn plain_js_errors() -> &'static FxHashSet<i32> {
     static PLAIN_JS_ERRORS: OnceLock<FxHashSet<i32>> = OnceLock::new();
@@ -615,6 +618,8 @@ pub fn plain_js_errors() -> &'static FxHashSet<i32> {
             diag::A_return_statement_cannot_be_used_inside_a_class_static_block.code() as i32,
             diag::A_set_accessor_cannot_have_rest_parameter.code() as i32,
             diag::A_set_accessor_must_have_exactly_one_parameter.code() as i32,
+            // ts#63915
+            diag::A_source_phase_import_must_specify_a_local_binding.code() as i32,
             diag::An_export_declaration_can_only_be_used_at_the_top_level_of_a_module.code() as i32,
             diag::An_export_declaration_cannot_have_modifiers.code() as i32,
             diag::An_import_declaration_can_only_be_used_at_the_top_level_of_a_module.code() as i32,
@@ -638,11 +643,19 @@ pub fn plain_js_errors() -> &'static FxHashSet<i32> {
             diag::Jump_target_cannot_cross_function_boundary.code() as i32,
             diag::Line_terminator_not_permitted_before_arrow.code() as i32,
             diag::Modifiers_cannot_appear_here.code() as i32,
+            // ts#63915
+            diag::Named_and_namespace_imports_are_not_allowed_in_a_source_phase_import.code() as i32,
             diag::Only_a_single_variable_declaration_is_allowed_in_a_for_in_statement.code() as i32,
             diag::Only_a_single_variable_declaration_is_allowed_in_a_for_of_statement.code() as i32,
+            // ts#63915
+            diag::Optional_chaining_cannot_be_used_with_import_source.code() as i32,
             diag::Private_identifiers_are_not_allowed_outside_class_bodies.code() as i32,
             diag::Private_identifiers_are_only_allowed_in_class_bodies_and_may_only_be_used_as_part_of_a_class_member_declaration_property_access_or_on_the_left_hand_side_of_an_in_expression.code() as i32,
             diag::Property_0_is_not_accessible_outside_class_1_because_it_has_a_private_identifier.code() as i32,
+            // ts#63915
+            diag::Source_phase_imports_are_not_allowed_on_statements_that_compile_to_CommonJS_require_calls.code() as i32,
+            // ts#63915
+            diag::Source_phase_imports_are_only_supported_when_the_module_option_is_set_to_esnext_nodenext_or_preserve.code() as i32,
             diag::Tagged_template_expressions_are_not_permitted_in_an_optional_chain.code() as i32,
             diag::The_left_hand_side_of_a_for_of_statement_may_not_be_async.code() as i32,
             diag::The_variable_declaration_of_a_for_in_statement_cannot_have_an_initializer.code() as i32,
@@ -651,6 +664,8 @@ pub fn plain_js_errors() -> &'static FxHashSet<i32> {
             diag::Variable_declaration_list_cannot_be_empty.code() as i32,
             diag::X_0_and_1_operations_cannot_be_mixed_without_parentheses.code() as i32,
             diag::X_0_expected.code() as i32,
+            // ts#63915
+            diag::X_0_is_not_a_valid_meta_property_for_keyword_import_Did_you_mean_meta_defer_or_source.code() as i32,
             diag::X_0_is_not_a_valid_meta_property_for_keyword_1_Did_you_mean_2.code() as i32,
             diag::X_0_list_cannot_be_empty.code() as i32,
             diag::X_0_modifier_already_seen.code() as i32,
@@ -731,7 +746,7 @@ impl NewProgram {
         None
     }
 
-    // Go: program.go:632 (*Program).GetResolvedModuleFromModuleSpecifier
+    // Go: program.go:653 (*Program).GetResolvedModuleFromModuleSpecifier
     pub fn get_resolved_module_from_module_specifier(
         &self,
         file: &dyn HasFileName,
@@ -739,6 +754,10 @@ impl NewProgram {
     ) -> Option<Arc<ResolvedModule>> {
         if !is_string_literal_like(module_specifier) {
             panic!("moduleSpecifier must be a StringLiteralLike");
+        }
+        // ts#63915
+        if is_source_phase_import(module_specifier.parent()) {
+            return None;
         }
         let mode = self.get_mode_for_usage_location(file, module_specifier);
         self.get_resolved_module(file, module_specifier.text(), mode)

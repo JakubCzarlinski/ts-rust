@@ -4956,11 +4956,11 @@ pub fn get_diagnostics_of_any_program(
     all_diagnostics
 }
 
-// Go: compiler/program.go plainJSErrors
+// Go: compiler/program.go:2404 plainJSErrors
 // PORT: built on each call from the generated message statics (a static set
 // cannot read them at compile time). It is only used for plain JS files.
 fn is_plain_js_error(code: i32) -> bool {
-    let messages: [&'static crate::diagnostics::Message; 91] = [
+    let messages: [&'static crate::diagnostics::Message; 97] = [
         // binder errors
         diag::Cannot_redeclare_block_scoped_variable_0,
         diag::A_module_cannot_have_multiple_default_exports,
@@ -4999,6 +4999,8 @@ fn is_plain_js_error(code: i32) -> bool {
         diag::A_return_statement_cannot_be_used_inside_a_class_static_block,
         diag::A_set_accessor_cannot_have_rest_parameter,
         diag::A_set_accessor_must_have_exactly_one_parameter,
+        // ts#63915
+        diag::A_source_phase_import_must_specify_a_local_binding,
         diag::An_export_declaration_can_only_be_used_at_the_top_level_of_a_module,
         diag::An_export_declaration_cannot_have_modifiers,
         diag::An_import_declaration_can_only_be_used_at_the_top_level_of_a_module,
@@ -5022,11 +5024,19 @@ fn is_plain_js_error(code: i32) -> bool {
         diag::Jump_target_cannot_cross_function_boundary,
         diag::Line_terminator_not_permitted_before_arrow,
         diag::Modifiers_cannot_appear_here,
+        // ts#63915
+        diag::Named_and_namespace_imports_are_not_allowed_in_a_source_phase_import,
         diag::Only_a_single_variable_declaration_is_allowed_in_a_for_in_statement,
         diag::Only_a_single_variable_declaration_is_allowed_in_a_for_of_statement,
+        // ts#63915
+        diag::Optional_chaining_cannot_be_used_with_import_source,
         diag::Private_identifiers_are_not_allowed_outside_class_bodies,
         diag::Private_identifiers_are_only_allowed_in_class_bodies_and_may_only_be_used_as_part_of_a_class_member_declaration_property_access_or_on_the_left_hand_side_of_an_in_expression,
         diag::Property_0_is_not_accessible_outside_class_1_because_it_has_a_private_identifier,
+        // ts#63915
+        diag::Source_phase_imports_are_not_allowed_on_statements_that_compile_to_CommonJS_require_calls,
+        // ts#63915
+        diag::Source_phase_imports_are_only_supported_when_the_module_option_is_set_to_esnext_nodenext_or_preserve,
         diag::Tagged_template_expressions_are_not_permitted_in_an_optional_chain,
         diag::The_left_hand_side_of_a_for_of_statement_may_not_be_async,
         diag::The_variable_declaration_of_a_for_in_statement_cannot_have_an_initializer,
@@ -5035,6 +5045,8 @@ fn is_plain_js_error(code: i32) -> bool {
         diag::Variable_declaration_list_cannot_be_empty,
         diag::X_0_and_1_operations_cannot_be_mixed_without_parentheses,
         diag::X_0_expected,
+        // ts#63915
+        diag::X_0_is_not_a_valid_meta_property_for_keyword_import_Did_you_mean_meta_defer_or_source,
         diag::X_0_is_not_a_valid_meta_property_for_keyword_1_Did_you_mean_2,
         diag::X_0_list_cannot_be_empty,
         diag::X_0_modifier_already_seen,

@@ -1759,7 +1759,9 @@ impl FileLoader {
                         (Some(kept), Some(kept_index)) => kept.get(kept_index),
                         _ => (entry.text(), import_usage(entry), None),
                     };
-                if module_name.is_empty() {
+                // ts#63915: a source phase import is not resolved
+                // (fileloader.go:884).
+                if module_name.is_empty() || is_source_phase_import(entry.parent()) {
                     continue;
                 }
 
@@ -2222,6 +2224,8 @@ enum ImportUsage {
     Require,
     /// `import(...)`.
     ImportCall,
+    /// `import.source(...)` (ts#63915).
+    SourcePhaseImportCall,
     /// Any other module name.
     Other,
 }
@@ -2277,7 +2281,12 @@ fn emit_usage(parent: Node) -> ImportUsage {
     {
         return ImportUsage::Require;
     }
-    if is_import_call(walk_up_parenthesized_expressions(parent)) {
+    let call = walk_up_parenthesized_expressions(parent);
+    if is_import_call(call) {
+        // ts#63915
+        if is_source_phase_import_call(call) {
+            return ImportUsage::SourcePhaseImportCall;
+        }
         return ImportUsage::ImportCall;
     }
     ImportUsage::Other
@@ -2431,7 +2440,7 @@ pub(crate) fn get_emit_syntax_for_usage_location_worker(
 /// (`emit_usage`). `file_emit_mode` keeps Go `GetEmitModuleFormatOfFileWorker`
 /// of the file, which reads only the file name, the options and the
 /// metadata, for the other names of the file.
-// Go: fileloader.go:1087 getEmitSyntaxForUsageLocationWorker
+// Go: fileloader.go:1075 getEmitSyntaxForUsageLocationWorker
 fn emit_syntax_for_usage(
     usage: ImportUsage,
     file_name: &str,
@@ -2444,6 +2453,10 @@ fn emit_syntax_for_usage(
     }
     let file_emit_mode = *file_emit_mode
         .get_or_insert_with(|| get_emit_module_format_of_file_worker(file_name, options, meta));
+    // ts#63915: `import.source(...)` is ESNext syntax (fileloader.go:1092).
+    if usage == ImportUsage::SourcePhaseImportCall {
+        return ModuleKind::ES_NEXT;
+    }
     if usage == ImportUsage::ImportCall {
         return if should_transform_import_call(file_name, options, file_emit_mode) {
             ModuleKind::COMMON_JS
@@ -4274,5 +4287,75 @@ export const a: T | Dep | number = x + (h as never);
         assert!(reused);
         assert_eq!(resolvers.get(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Go: compiler/program_test.go:482 TestImportSourceProgram (ts#63915)
+    #[test]
+    fn import_source_program() {
+        for (name, source, evaluation) in [
+            (
+                "static",
+                r#"import source a from "./a.js";"#,
+                r#"import { a as value } from "./a.js";"#,
+            ),
+            (
+                "dynamic",
+                r#"import.source("./a.js");"#,
+                r#"import("./a.js");"#,
+            ),
+        ] {
+            let content =
+                format!(r#"{source}import source b from "missing"; import.source("other");"#);
+            let (dir, cwd, config) = ts64519_project(
+                &format!("import_source_{name}"),
+                r#"{"compilerOptions":{"module":"esnext","noLib":true},"files":["index.ts"]}"#,
+                &[("index.ts", &content), ("a.ts", "export const a = 1;")],
+            );
+            let _scope = crate::core::enter_program(None);
+            let index = format!("{cwd}/index.ts");
+            let a = format!("{cwd}/a.ts");
+            let program = new_program(ts64519_options(ts64519_host(&cwd), &config, None));
+            let file = program.get_source_file(&index).unwrap();
+            assert!(program.get_source_file(&a).is_none(), "{name}");
+            assert!(
+                program
+                    .resolved_modules
+                    .get(file.path())
+                    .is_none_or(|resolutions| resolutions.is_empty()),
+                "{name}"
+            );
+            assert!(program.get_unresolved_imports().is_empty(), "{name}");
+            assert!(program.unresolved_package_names().is_empty(), "{name}");
+            let path = file.path().clone();
+            let assert_resolutions = |program: &NewProgram, file: &ParsedSourceFile| {
+                for &specifier in &file.imports {
+                    let resolved =
+                        program.get_resolved_module_from_module_specifier(file, specifier);
+                    assert_eq!(
+                        resolved.is_some_and(|resolved| resolved.is_resolved()),
+                        !is_source_phase_import(specifier.parent()),
+                        "{name}"
+                    );
+                }
+            };
+
+            let edited = format!("{evaluation}{}", content.strip_prefix(source).unwrap());
+            std::fs::write(dir.join("index.ts"), &edited).unwrap();
+            let (program, file, reused) = program.update_program(&path, ts64519_host(&cwd), None);
+            assert!(!reused, "{name}");
+            assert!(program.get_source_file(&a).is_some(), "{name}");
+            assert_resolutions(&program, &file.unwrap());
+
+            std::fs::write(dir.join("index.ts"), &content).unwrap();
+            let (program, _, reused) = program.update_program(&path, ts64519_host(&cwd), None);
+            assert!(!reused, "{name}");
+            assert!(program.get_source_file(&a).is_none(), "{name}");
+
+            std::fs::write(dir.join("index.ts"), format!("{evaluation}{content}")).unwrap();
+            let program = new_program(ts64519_options(ts64519_host(&cwd), &config, None));
+            let file = program.get_source_file(&index).unwrap();
+            assert_resolutions(&program, &file);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

@@ -743,6 +743,8 @@ impl NewProgram {
                 equal_module_specifiers(*n1, *n2)
                     && self.get_mode_for_usage_location(file1, *n1)
                         == self.get_mode_for_usage_location(file2, *n2)
+                    // ts#63915
+                    && is_source_phase_import(n1.parent()) == is_source_phase_import(n2.parent())
             })
             && slices_equal_func(
                 &file1.module_augmentations,
