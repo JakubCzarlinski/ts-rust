@@ -2798,6 +2798,13 @@ pub(crate) static PANIC_IN_JOB: Mutex<Option<String>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static MAPPED_TAKEN: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 
+/// Content-mapped files whose worker job the loader does not claim, for
+/// the tests: `take_prefetched_mapped` waits up to 60 s for a worker to
+/// start it, so a worker sends its transform. Any thread's load sees it,
+/// so a test names files of its own temp dir.
+#[cfg(test)]
+pub(crate) static MAPPED_WAIT_FOR_WORKER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// A parse worker: parses queued files, newest first (the loader's queue
 /// is a stack too), until the queue closes. After each parse it queues the
 /// files that the parse references. The first free worker after the root
@@ -3797,6 +3804,18 @@ pub(crate) fn take_prefetched_mapped(
     let job = lock(&shared.queue).by_name.get(&opts.file_name).cloned()?;
     job.mapped.as_ref()?;
     let mut state = lock(&job.state);
+    #[cfg(test)]
+    if lock(&MAPPED_WAIT_FOR_WORKER).contains(&opts.file_name) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while matches!(*state, PrefetchState::Queued) && std::time::Instant::now() < deadline {
+            // A worker sets `Running` without a wake, so this polls.
+            state = job
+                .done
+                .wait_timeout(state, std::time::Duration::from_millis(5))
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
     let mut waited: Option<std::time::Instant> = None;
     let result = loop {
         match std::mem::replace(&mut *state, PrefetchState::Claimed) {
