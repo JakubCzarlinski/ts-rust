@@ -873,6 +873,34 @@ impl Checker {
         if symbol == self.get_merged_symbol(symbol_from_symbol_table) {
             like_symbols = true;
         }
+        // ts#64573 (Go N' symbolaccessibility.go:729): follow an alias chain
+        // (an `export =` of a class with a top-level `export type`).
+        if !like_symbols
+            && resolved_alias_symbol.is_some()
+            && self
+                .sym(resolved_alias_symbol)
+                .flags
+                .intersects(SymbolFlags::ALIAS)
+        {
+            let mut resolved_alias_symbol = resolved_alias_symbol;
+            let mut seen_aliases: FxHashSet<SymbolId> = FxHashSet::default();
+            // PORT: Go `resolveAlias` never returns nil; the `is_some` test
+            // only guards the read.
+            while resolved_alias_symbol.is_some()
+                && self
+                    .sym(resolved_alias_symbol)
+                    .flags
+                    .intersects(SymbolFlags::ALIAS)
+                && seen_aliases.insert(resolved_alias_symbol)
+            {
+                let target = self.resolve_alias(resolved_alias_symbol);
+                resolved_alias_symbol = self.get_merged_symbol(target);
+                if symbol == resolved_alias_symbol {
+                    like_symbols = true;
+                    break;
+                }
+            }
+        }
         if !like_symbols {
             return false;
         }
