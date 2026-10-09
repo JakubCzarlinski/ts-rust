@@ -745,7 +745,7 @@ impl FilesParser {
     }
 
     /// The body of the closure that Go `start` queues.
-    // Go: filesparser.go:269 (*filesParser).start (queued func)
+    // Go: filesparser.go:273 (*filesParser).start (queued func)
     fn run_queued(&mut self, loader: &FileLoader, queued: QueuedParseTask) {
         let QueuedParseTask {
             task,
@@ -789,11 +789,11 @@ impl FilesParser {
         } else {
             depth
         };
-        let mut relower = false;
+        let lowered;
         {
             let mut d = data.borrow_mut();
-            if current_depth < d.lowest_depth {
-                relower = d.lowest_depth != i32::MAX;
+            lowered = current_depth < d.lowest_depth;
+            if lowered {
                 // If we're seeing this task at a lower depth than before,
                 // reprocess its subtasks to ensure they are loaded.
                 d.lowest_depth = current_depth;
@@ -819,26 +819,11 @@ impl FilesParser {
                     data.borrow_mut().started_sub_tasks = true;
                 }
             }
-            if !task_by_file_name.borrow().started_sub_tasks && load_sub_tasks {
+            // ts#64632: a later arrival that lowers the depth starts the
+            // subtasks again at the new depth, so each file ends at its
+            // lowest depth over all paths, in every run order.
+            if load_sub_tasks && (lowered || !task_by_file_name.borrow().started_sub_tasks) {
                 task_by_file_name.borrow_mut().started_sub_tasks = true;
-                let sub_tasks = task_by_file_name.borrow().sub_tasks.clone();
-                let lowest_depth = data.borrow().lowest_depth;
-                self.start(loader, &sub_tasks, lowest_depth);
-            } else if relower
-                && !self.single_threaded
-                && task_by_file_name.borrow().started_sub_tasks
-            {
-                // PORT: parallel tsgo runs each queued task in its own
-                // goroutine, so the shallowest path to a file usually arrives
-                // first and its subtasks start at that depth. This queue pops
-                // LIFO (Go singleThreadedWorkGroup order) and can reach a file
-                // first through a deeper path. Go then lowers `lowestDepth`
-                // but does not restart subtasks that already started, so the
-                // children keep a depth > 0 (node_modules files: no TS6059, no
-                // emit). Start them again at the new depth to give the result
-                // of parallel tsgo. This is also the Strada rule. Tested in
-                // pinned Go: all project configs match parallel tsgo.
-                // `--singleThreaded` keeps the exact Go order.
                 let sub_tasks = task_by_file_name.borrow().sub_tasks.clone();
                 let lowest_depth = data.borrow().lowest_depth;
                 self.start(loader, &sub_tasks, lowest_depth);
