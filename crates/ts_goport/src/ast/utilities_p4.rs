@@ -1128,7 +1128,7 @@ pub fn get_non_augmentation_declaration(symbols: &SymbolArena, symbol: SymbolId)
         .unwrap_or(Node::NIL)
 }
 
-// Go: ast/utilities.go:3627 IsTypeDeclaration
+// Go: ast/utilities.go:3658 IsTypeDeclaration
 pub fn is_type_declaration(node: Node) -> bool {
     match node.kind() {
         SyntaxKind::TypeParameter
@@ -1137,7 +1137,7 @@ pub fn is_type_declaration(node: Node) -> bool {
         | SyntaxKind::TypeAliasDeclaration
         | SyntaxKind::JsTypeAliasDeclaration
         | SyntaxKind::EnumDeclaration => true,
-        SyntaxKind::ImportClause => node.is_type_only(),
+        SyntaxKind::ImportClause => node.is_type_only() && node.name().is_some(),
         SyntaxKind::ImportSpecifier | SyntaxKind::ExportSpecifier => {
             node.parent().parent().is_type_only()
         }
