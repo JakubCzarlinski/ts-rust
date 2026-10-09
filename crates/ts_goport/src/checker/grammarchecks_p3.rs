@@ -451,9 +451,15 @@ impl Checker {
                         args![],
                     );
                 }
-                if node.named_bindings().is_some()
-                    && node.named_bindings().kind() == SyntaxKind::NamedImports
-                {
+                // ts#64640, Go N' grammarchecks.go:2113
+                if node.named_bindings().is_nil() {
+                    return self.grammar_error_on_node(
+                        node,
+                        diag::A_deferred_import_must_specify_a_namespace_binding,
+                        args![],
+                    );
+                }
+                if node.named_bindings().kind() == SyntaxKind::NamedImports {
                     return self.grammar_error_on_node(
                         node,
                         diag::Named_imports_are_not_allowed_in_a_deferred_import,
