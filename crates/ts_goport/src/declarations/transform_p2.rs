@@ -696,6 +696,7 @@ impl DeclarationTransformer {
         {
             let export_assignment =
                 f.new_export_assignment(ModifierList::NIL, is_export_equals, Node::NIL, expression);
+            ec.assign_source_map_range(export_assignment, input);
             self.preserve_js_doc(export_assignment, input);
             return export_assignment;
         }
@@ -725,6 +726,7 @@ impl DeclarationTransformer {
             // Reuse the same name node for the export so unique names resolve consistently
             let export_assignment =
                 f.new_export_assignment(ModifierList::NIL, is_export_equals, Node::NIL, new_id);
+            ec.assign_source_map_range(export_assignment, input);
             self.remove_all_comments(export_assignment);
             return f.new_syntax_list(&[export_assignment, class_decl]);
         } else if is_function_like(unwrapped) {
@@ -745,6 +747,7 @@ impl DeclarationTransformer {
             // Reuse the same name node for the export so unique names resolve consistently
             let export_assignment =
                 f.new_export_assignment(ModifierList::NIL, is_export_equals, Node::NIL, new_id);
+            ec.assign_source_map_range(export_assignment, input);
             self.remove_all_comments(export_assignment);
             return f.new_syntax_list(&[export_assignment, func_decl]);
         }
@@ -775,6 +778,7 @@ impl DeclarationTransformer {
         );
         let export_assignment =
             f.new_export_assignment(ModifierList::NIL, is_export_equals, Node::NIL, new_id);
+        ec.assign_source_map_range(export_assignment, input);
         // Remove comments from the export declaration and copy them onto the synthetic _default declaration
         self.preserve_js_doc(statement, input);
         f.new_syntax_list(&[statement, export_assignment])
