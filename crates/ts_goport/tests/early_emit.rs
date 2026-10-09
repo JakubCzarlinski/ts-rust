@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ts_goport::core::enter_program;
 use ts_goport::emitter::program_emit::emit_can_start_with_check;
@@ -249,6 +249,50 @@ fn early_emit_reads_the_global_diagnostics_before_the_emit() {
     }
 }
 
+/// Waits until a file written now gets a later mtime than every file under
+/// `root`, so `tsc -b` sees the next edit as newer than the outputs of the
+/// last build. A file system clock can move in steps: Linux stamps files
+/// with its tick clock (4 ms at 250 Hz) unless the file system has
+/// fine-grained timestamps (Linux 6.13). An edit right after a build can then
+/// get the mtime of the project's build info, and `tsc -b` sees the project
+/// as up to date (Go `getUpToDateStatus` rebuilds only for an input newer
+/// than the build info). On main CI that made p1 of `build_emit_only_solution`
+/// up to date: it finished first, and p3 read p2's old output (TS2305).
+fn wait_for_a_later_mtime(root: &Path) {
+    let newest = newest_mtime(root);
+    let probe = root.join("mtime-probe");
+    loop {
+        fs::write(&probe, "").unwrap_or_else(|error| panic!("write {}: {error}", probe.display()));
+        let probed = fs::metadata(&probe)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or_else(|error| panic!("mtime of {}: {error}", probe.display()));
+        if probed > newest {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    fs::remove_file(&probe).unwrap_or_else(|error| panic!("remove {}: {error}", probe.display()));
+}
+
+/// The latest mtime of a file under `dir`.
+fn newest_mtime(dir: &Path) -> SystemTime {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()));
+    entries
+        .map(|entry| {
+            let path = entry.expect("a dir entry").path();
+            if path.is_dir() {
+                newest_mtime(&path)
+            } else {
+                fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or_else(|error| panic!("mtime of {}: {error}", path.display()))
+            }
+        })
+        .max()
+        .unwrap_or(UNIX_EPOCH)
+}
+
 /// Makes the solution of `build_emit_only_task_finishes_when_its_emit_ends`
 /// in a scratch dir, with `p1_options` added to p1's compiler options and
 /// `p1_files` added to p1's `src`, runs its builds and returns the exit code
@@ -316,6 +360,7 @@ fn build_emit_only_solution(p1_options: &str, p1_files: &[(&str, &str)]) -> (Opt
     );
     // The cold build: p3 cannot see `v2` yet.
     tsgo_b(&["tsconfig.json"]);
+    wait_for_a_later_mtime(&root);
     write("p1/src/index.ts", &big("v2"));
     write(
         "p2/src/index.ts",
