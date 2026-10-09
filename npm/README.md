@@ -68,7 +68,8 @@ The release workflow (`.github/workflows/release.yml`) makes a release:
    version is the tag without the `v`.
 2. It builds the tsc on Linux x64 and Linux arm64 (static musl, non-PIE: it starts on any Linux of
    its arch; each builds natively on a Blacksmith runner of that arch) and on a Mac (jemalloc does
-   not cross-build for macOS with zig), from the same source.
+   not cross-build for macOS with zig), from the same source. Each is a PGO build trained on its
+   own platform (see below).
 3. It packs the set with `npm-pack.sh --name tsc-rs --package-version <v> --also linux-arm64=<tsc> --also darwin-arm64=<tsc>`,
    makes one archive per platform (the tsc, the lib files, LICENSE and NOTICE.txt) and installs
    the packages in a fresh project on each platform (GitHub-hosted `ubuntu-latest`,
@@ -83,11 +84,13 @@ Pull requests that change the release files run steps 2 and 3 with the version `
 To make a prerelease the default after a check of `npx tsc-rs@next` on each platform, run
 `npm dist-tag add tsc-rs@<v> latest`, and the same for each platform package.
 
-The CI builds are the plain shipped profile (fat LTO). They have no PGO and BOLT, which give 14 to
-15% fewer cycles (build-release.sh header), because those need a host with BOLT and the project
-inputs. For a faster build, make the Linux tsc on zbook with
+The CI builds are PGO builds of the shipped profile (fat LTO): `build-pgo.sh` trains each
+platform's tsc on the set of `scripts/goport/pgo-train.sh`, and the job fails unless the PGO tsc
+gives the same output as a plain build on that set. They have no BOLT: BOLT refuses the static
+Linux bin, and macOS has no perf branch sampling for its profile. To make the Linux x64 tsc by
+hand on zbook, use
 `RELEASE_FEATURES=noembed RELEASE_LIBC=musl RELEASE_PIE=0 crates/ts_goport/scripts/build-release.sh <out>/linux-x64`
-and pack and test it by hand:
+and pack and test it:
 
 ```sh
 GOPORT_PIN=<pin> scripts/goport/npm-pack.sh --name tsc-rs --package-version <v> \
