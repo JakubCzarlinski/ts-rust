@@ -490,3 +490,146 @@ child_test! {
         assert_eq!(auto_import.module_specifier, "./ext/other");
     }
 }
+
+/// A project for the module augmentation tests (aispec1, knownprob1 S3), as
+/// in Hono, where each middleware augments `ContextVariableMap`: each
+/// `src/mw/<name>/index.ts` re-exports `exports` from `./<name>` and augments
+/// `'../..'`, which is `src/index.ts`. Opens `src/main.ts`.
+fn augmentation_client(middleware: &[(&str, &[&str])]) -> (LspClient, lsproto::DocumentUri) {
+    let mut entries = vec![
+        (
+            "/home/projects/tsconfig.json".to_string(),
+            r#"{"compilerOptions": {"module": "esnext", "moduleResolution": "bundler", "target": "esnext", "strict": true}}"#.to_string(),
+        ),
+        ("/home/projects/src/index.ts".to_string(), "export type { Vars } from './context'\n".to_string()),
+        ("/home/projects/src/context.ts".to_string(), "export interface Vars {}\n".to_string()),
+        ("/home/projects/src/main.ts".to_string(), "export const x = 1\n".to_string()),
+    ];
+    for (name, exports) in middleware {
+        entries.push((
+            format!("/home/projects/src/mw/{name}/index.ts"),
+            format!(
+                "export {{ {} }} from './{name}'\n\ndeclare module '../..' {{\n  interface Vars {{\n    {name}: string\n  }}\n}}\n",
+                exports.join(", ")
+            ),
+        ));
+        entries.push((
+            format!("/home/projects/src/mw/{name}/{name}.ts"),
+            exports
+                .iter()
+                .map(|e| format!("export const {e} = () => '{e}'\n"))
+                .collect(),
+        ));
+    }
+    let entries: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let client = init_completion_client("/home/projects", &entries);
+    let main_uri = lsconv::file_name_to_document_uri("/home/projects/src/main.ts");
+    open(&client, &main_uri, "export const x = 1\n");
+    (client, main_uri)
+}
+
+/// Sets the second line of `src/main.ts` to `const y = <prefix>` and asks for
+/// completions at its end. Returns the auto-import module specifier of each
+/// label of `labels` that is in the list.
+fn auto_import_specifiers(
+    client: &LspClient,
+    u: &lsproto::DocumentUri,
+    version: i32,
+    prefix: &str,
+    labels: &[&str],
+) -> Vec<(String, String)> {
+    let line = format!("const y = {prefix}");
+    client.send_notification(
+        &lsproto::TEXT_DOCUMENT_DID_CHANGE_INFO,
+        lsproto::DidChangeTextDocumentParams {
+            text_document: lsproto::VersionedTextDocumentIdentifier {
+                uri: u.clone(),
+                version,
+            },
+            content_changes: vec![lsproto::TextDocumentContentChangePartialOrWholeDocument {
+                partial: None,
+                whole_document: Some(lsproto::TextDocumentContentChangeWholeDocument {
+                    text: format!("export const x = 1\n{line}"),
+                }),
+            }],
+        },
+    );
+    let (msg, resp) = client.send_request(
+        &lsproto::TEXT_DOCUMENT_COMPLETION_INFO,
+        completion_params(u, 1, line.len() as u32),
+    );
+    assert!(msg.error.is_none(), "{:?}", msg.error);
+    let items = completion_items(resp);
+    labels
+        .iter()
+        .filter_map(|label| {
+            let item = find_completion_item(&items, label)?;
+            let auto_import = item.data.as_ref()?.auto_import.as_ref()?;
+            Some((label.to_string(), auto_import.module_specifier.clone()))
+        })
+        .collect()
+}
+
+child_test! {
+    // PORT: no Go counterpart (aispec1, knownprob1 S3). Go caches the
+    // auto-import specifier of each importing file by the export's Path, the
+    // file that declares it (ls/autoimport/specifiers.go GetModuleSpecifier),
+    // but computes it from the export's ModuleFileName. The `Vars` export of
+    // the augmentation has Path `src/mw/rid/index.ts` and ModuleFileName
+    // `src/index.ts`. A completion for `V` computes only that export, so it
+    // stores "." for `src/mw/rid/index.ts`, and the next completion gives
+    // `requestId` the specifier "." in place of "./mw/rid". Go N
+    // (tsgo-oracle-673a5f17d713) answers "." in 40 of 40 runs (aispec1
+    // augment-one).
+    fn augmentation_completion_sets_the_specifier_of_the_declaring_file() {
+        let (client, main_uri) = augmentation_client(&[("rid", &["requestId"])]);
+        let labels = ["requestId"];
+        assert_eq!(auto_import_specifiers(&client, &main_uri, 2, "V", &labels), []);
+        assert_eq!(
+            auto_import_specifiers(&client, &main_uri, 3, "", &labels),
+            [("requestId".to_string(), ".".to_string())]
+        );
+    }
+}
+
+child_test! {
+    // PORT: no Go counterpart (aispec1, knownprob1 S3). One completion with
+    // no prefix computes the augmentation group and the groups of both
+    // files. The merged augmentation export has the Path of one of the two
+    // files. When its group is made before the groups of that file, the
+    // exports of that file get ".". Go merges a random last Path and
+    // computes the groups in map order, so its answer varies. Go N
+    // (tsgo-oracle-673a5f17d713, trace aispec1 augment-two, 2 sets of 40
+    // runs) gives 3 answers: no "." in 28 and 31 runs, "." for the four
+    // exports of `a` in 5 and 7, and of `b` in 7 and 2. The test accepts
+    // each of them. goport always gives no ".": it merges the last Path in
+    // program order (`src/mw/b`) and computes augmentation groups last
+    // (autoimport/view.rs get_completions).
+    fn single_completion_computes_the_augmentation_last() {
+        let (client, main_uri) = augmentation_client(&[
+            ("a", &["aOne", "aTwo", "aThree", "aFour"]),
+            ("b", &["bOne", "bTwo", "bThree", "bFour"]),
+        ]);
+        let labels = ["aOne", "aTwo", "aThree", "aFour", "bOne", "bTwo", "bThree", "bFour"];
+        // The answer when the exports of the file `poisoned` get ".".
+        let answer = |poisoned: &str| -> Vec<(String, String)> {
+            labels
+                .iter()
+                .map(|label| {
+                    let file = &label[..1];
+                    let specifier = if file == poisoned {
+                        ".".to_string()
+                    } else {
+                        format!("./mw/{file}")
+                    };
+                    (label.to_string(), specifier)
+                })
+                .collect()
+        };
+        let got = auto_import_specifiers(&client, &main_uri, 2, "", &labels);
+        assert!(["", "a", "b"].map(answer).contains(&got), "{got:?}");
+    }
+}

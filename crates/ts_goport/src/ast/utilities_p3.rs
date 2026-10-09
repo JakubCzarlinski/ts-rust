@@ -1264,9 +1264,10 @@ pub fn node_contains_position(node: Node, position: i32) -> bool {
         && (position < node.end() || position == node.end() && node.kind() == SyntaxKind::EndOfFile)
 }
 
-/// `get_node_at_position` for a series of positions that never go down, in
-/// one tree that does not change between the calls. It gives the node that
-/// `get_node_at_position` gives for each position.
+/// `get_node_at_position` for a series of positions in one tree that does
+/// not change between the calls. It gives the node that
+/// `get_node_at_position` gives for each position. It is fast when the
+/// positions never go down; a smaller position descends from the root.
 // PERF: loadcrit1 step 0. `for_each_dynamic_import_or_require_call` looks up
 // each `import`/`require` word. Go descends from the root for each word and
 // checks the children of each level in order (ast/utilities.go:2705). A
@@ -1363,7 +1364,12 @@ impl CursorLevel {
 impl NodeAtPositionCursor {
     // Go: ast/utilities.go:2705 GetNodeAtPosition
     fn node_at(&mut self, file: Node, position: i32, include_js_doc: bool) -> Node {
-        debug_assert!(position >= self.last_position, "positions go down");
+        if position < self.last_position {
+            // The skips may pass the node of a smaller position. Go has no
+            // cursor and descends from the root for each position, so do
+            // that. The levels stay valid for `last_position` on.
+            return get_node_at_position(file, position, include_js_doc);
+        }
         self.last_position = position;
         if self.levels.is_empty() {
             self.levels.push(CursorLevel::new(file));
@@ -1573,5 +1579,30 @@ mod node_at_position_cursor_tests {
              export const y = () => <></>; import(\"z\");",
             ScriptKind::TSX,
         ));
+    }
+
+    /// After the cursor has passed a position, a smaller one still gets the
+    /// node of a root descent (loadcrit1 follow-up: Go has no cursor). The
+    /// positions go up, down and up again, so a fallback that moves
+    /// `last_position` down fails (the followups33 skeptic's mutant CURS).
+    #[test]
+    fn a_smaller_position_gets_the_node_of_a_root_descent() {
+        let mut wide = String::from("declare const _default: {\n");
+        for i in 0..20 {
+            wide += &format!("    m{i}: typeof import(\"./m{i}\");\n");
+        }
+        wide += "};\nexport default _default;\n";
+        let file = parse("/wide.d.ts", wide.leak(), ScriptKind::TS);
+        let end = source_file_text(file).len() as i32;
+        for include_js_doc in [false, true] {
+            let mut cursor = NodeAtPositionCursor::default();
+            for position in (0..=end).chain((0..=end).rev()).chain(0..=end) {
+                assert_eq!(
+                    cursor.node_at(file, position, include_js_doc),
+                    get_node_at_position(file, position, include_js_doc),
+                    "position {position}, JSDoc {include_js_doc}"
+                );
+            }
+        }
     }
 }

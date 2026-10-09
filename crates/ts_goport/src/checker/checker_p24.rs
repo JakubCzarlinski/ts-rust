@@ -470,7 +470,9 @@ impl Checker {
                 .flags
                 .intersects(SymbolFlags::TRANSIENT)
             {
-                let links = self.value_symbol_links.get(single_prop);
+                let links = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, single_prop);
                 single_prop_type = links.resolved_type;
                 single_prop_mapper = links.mapper;
             }
@@ -481,7 +483,7 @@ impl Checker {
                 self.sym_mut(clone).parent = parent;
             }
             let write_type = self.get_write_type_of_symbol(single_prop);
-            let links = self.value_symbol_links.get(clone);
+            let links = self.value_symbol_links.get_by_id(&self.symbols, clone);
             links.containing_type = containing_type;
             links.mapper = single_prop_mapper;
             links.write_type = write_type;
@@ -498,6 +500,12 @@ impl Checker {
         // declarations is stored with no heap list (no malloc). A longer list
         // moves into one `Vec` for `Declarations::from`, as before.
         let mut declarations: SmallVec<[Node; 4]> = SmallVec::with_capacity(declaration_count);
+        // PERF: Go `core.AppendIfUnique` scans the list for each declaration,
+        // which is quadratic in a long list (blueprint: 43k calls with 181
+        // declarations, 178 of them distinct; the scans were about half of
+        // its check). A long list keeps a set of its nodes beside it
+        // (`DeclarationSet`); the list and its order stay Go's.
+        let mut declaration_set = DeclarationSet::default();
         let mut first_type = TypeId::NIL;
         let mut name_type = TypeId::NIL;
         let mut prop_types: SmallVec<[TypeId; 4]> =
@@ -517,14 +525,15 @@ impl Checker {
             }
             for &declaration in self.sym(prop).declarations.iter() {
                 // Go: core.AppendIfUnique
-                if !declarations.contains(&declaration) {
-                    declarations.push(declaration);
-                }
+                declaration_set.add(&mut declarations, declaration, declaration_count);
             }
             let t = self.get_type_of_symbol(prop);
             if first_type.is_nil() {
                 first_type = t;
-                name_type = self.value_symbol_links.get(prop).name_type;
+                name_type = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, prop)
+                    .name_type;
             }
             let write_type = self.get_write_type_of_symbol(prop);
             if write_types.is_some() || write_type != t {
@@ -567,7 +576,7 @@ impl Checker {
             self.sym_mut(result).parent = parent;
         }
         {
-            let links = self.value_symbol_links.get(result);
+            let links = self.value_symbol_links.get_by_id(&self.symbols, result);
             links.containing_type = containing_type;
             links.name_type = name_type;
         }
@@ -585,14 +594,18 @@ impl Checker {
         } else {
             self.get_intersection_type(&prop_types)
         };
-        self.value_symbol_links.get(result).resolved_type = resolved_type;
+        self.value_symbol_links
+            .get_by_id(&self.symbols, result)
+            .resolved_type = resolved_type;
         if let Some(write_types) = write_types {
             let write_type = if is_union {
                 self.get_union_type(&write_types)
             } else {
                 self.get_intersection_type(&write_types)
             };
-            self.value_symbol_links.get(result).write_type = write_type;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, result)
+                .write_type = write_type;
         }
         result
     }
@@ -602,7 +615,7 @@ impl Checker {
         // if symbol is instantiated its flags are not copied from the 'target'
         // so we'll need to get back original 'target' symbol to work with correct set of flags
         if s.is_some() && self.sym(s).check_flags.intersects(CheckFlags::INSTANTIATED) {
-            return self.value_symbol_links.get(s).target;
+            return self.value_symbol_links.get_by_id(&self.symbols, s).target;
         }
         s
     }
@@ -662,8 +675,11 @@ impl Checker {
             s.parent = parent;
             s.value_declaration = value_declaration;
         }
-        let source_name_type = self.value_symbol_links.get(source).name_type;
-        let links = self.value_symbol_links.get(symbol);
+        let source_name_type = self
+            .value_symbol_links
+            .get_by_id(&self.symbols, source)
+            .name_type;
+        let links = self.value_symbol_links.get_by_id(&self.symbols, symbol);
         links.resolved_type = t;
         links.target = source;
         links.name_type = source_name_type;
@@ -2267,6 +2283,75 @@ fn table_key_name(key: TableKey<'_>) -> Name {
     }
 }
 
+/// Go `core.AppendIfUnique` for the declarations list of
+/// `create_union_or_intersection_property`, which can grow long. While the
+/// list is short, an add scans it. From `SCAN` nodes on, an open-addressing
+/// table of the listed nodes answers instead. A node is pushed only when it
+/// is new, so the list keeps Go's order.
+// Go: core/core.go:380 AppendIfUnique
+#[derive(Default)]
+struct DeclarationSet {
+    /// Empty until the list reaches `SCAN` nodes, then a power-of-two table
+    /// at most half full. `Node::NIL` marks a free slot.
+    slots: Vec<Node>,
+}
+
+impl DeclarationSet {
+    /// The list length from which the table answers. Lists are mostly
+    /// shorter than 8 or longer than 32; blueprint runs fastest from 8 to 16.
+    const SCAN: usize = 16;
+
+    /// Pushes `node` to `list` unless the list has it. `len_hint` is the
+    /// expected final list length, which sizes the table. The table doubles
+    /// before it is more than half full, so a longer list is also correct.
+    /// `Node::NIL` cannot go in the table and takes the scan.
+    fn add(&mut self, list: &mut SmallVec<[Node; 4]>, node: Node, len_hint: usize) {
+        if list.len() < Self::SCAN || node.is_nil() {
+            if !list.contains(&node) {
+                list.push(node);
+                if list.len() == Self::SCAN {
+                    self.fill(list, (len_hint.max(Self::SCAN) * 2).next_power_of_two());
+                }
+            }
+            return;
+        }
+        if list.len() * 2 >= self.slots.len() {
+            self.fill(list, self.slots.len() * 2);
+        }
+        if self.insert(node) {
+            list.push(node);
+        }
+    }
+
+    /// Makes a table of `len` slots (a power of two) that has each listed
+    /// node.
+    fn fill(&mut self, list: &[Node], len: usize) {
+        self.slots = vec![Node::NIL; len];
+        for &listed in list {
+            self.insert(listed);
+        }
+    }
+
+    /// Puts `node` in the table. False when the table has it.
+    fn insert(&mut self, node: Node) -> bool {
+        let mask = self.slots.len() - 1;
+        // Fibonacci hashing: the top bits of the product pick the first slot.
+        let shift = 64 - self.slots.len().trailing_zeros();
+        let mut i = (node.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
+        loop {
+            let slot = self.slots[i];
+            if slot.is_nil() {
+                self.slots[i] = node;
+                return true;
+            }
+            if slot == node {
+                return false;
+            }
+            i = (i + 1) & mask;
+        }
+    }
+}
+
 /// Go `orderedSet.Add` for a small symbol set kept as a list. Lookups scan the
 /// list while it is short; from `ORDERED_SYMBOL_SET_SCAN` symbols on, `index`
 /// holds every member and answers them instead.
@@ -2400,5 +2485,79 @@ type I = A & M;
             )
         );
         assert!(got.0.len() >= 4);
+    }
+
+    /// `DeclarationSet::add` gives the list of Go `core.AppendIfUnique`
+    /// (a scan per add), before and after the table takes over, for nodes
+    /// of several files.
+    #[test]
+    fn declaration_set_keeps_the_append_if_unique_list() {
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut cases: Vec<Vec<Node>> = Vec::new();
+        for (adds, distinct) in [
+            (10, 4),
+            (16, 16),
+            (40, 16),
+            (17, 17),
+            (700, 300),
+            (2000, 2000),
+        ] {
+            let nodes = (0..adds)
+                .map(|_| {
+                    seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                    let k = (seed >> 33) % distinct;
+                    Node(((k % 3 + 1) << 32) | (k * 7 + 1))
+                })
+                .collect();
+            cases.push(nodes);
+        }
+        // Every node distinct: the table is filled to its bound.
+        cases.push((1..=64).map(|k| Node((1 << 32) | k)).collect());
+        for nodes in cases {
+            let mut want: Vec<Node> = Vec::new();
+            for &node in &nodes {
+                if !want.contains(&node) {
+                    want.push(node);
+                }
+            }
+            let mut set = DeclarationSet::default();
+            let mut got: SmallVec<[Node; 4]> = SmallVec::new();
+            for &node in &nodes {
+                set.add(&mut got, node, nodes.len());
+            }
+            assert_eq!(got.as_slice(), want.as_slice());
+        }
+    }
+
+    /// `DeclarationSet::add` gives the `core.AppendIfUnique` list when the
+    /// list grows past `len_hint`: the table doubles before it is more than
+    /// half full (a full table would loop forever). `Node::NIL`, which marks
+    /// a free slot, takes the scan and is listed once.
+    #[test]
+    fn declaration_set_grows_past_its_hint() {
+        let node = |k: u64| Node(((k % 3 + 1) << 32) | k);
+        let mut nodes: Vec<Node> = (1..=300).map(node).collect();
+        nodes.extend((1..=300).step_by(7).map(node));
+        nodes.insert(40, Node::NIL);
+        nodes.push(Node::NIL);
+        let mut want: Vec<Node> = Vec::new();
+        for &node in &nodes {
+            if !want.contains(&node) {
+                want.push(node);
+            }
+        }
+        for len_hint in [0, 16, 40] {
+            let mut set = DeclarationSet::default();
+            let mut got: SmallVec<[Node; 4]> = SmallVec::new();
+            for &node in &nodes {
+                set.add(&mut got, node, len_hint);
+                let used = set.slots.iter().filter(|slot| slot.is_some()).count();
+                assert!(
+                    used * 2 <= set.slots.len(),
+                    "len_hint {len_hint}: {used} used"
+                );
+            }
+            assert_eq!(got.as_slice(), want.as_slice(), "len_hint {len_hint}");
+        }
     }
 }

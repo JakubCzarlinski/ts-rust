@@ -109,6 +109,18 @@ pub fn parse_result(
     )
 }
 
+/// Whether `parse_result` parses the canonical output of `result` for a
+/// file whose text is `content`. Go `ParseResult` checks the mappings, then
+/// the virtual extension, and parses only after both pass. A parse worker
+/// parses the virtual text only then (`files_parser::prefetch_mapped`), so
+/// no parse runs before those checks, as in Go.
+// PORT: not in Go (see `PrefetchedTransform`).
+pub(crate) fn parses_canonical_output(result: &Result, content: &str) -> bool {
+    result.mappings.as_ref().is_some_and(|mappings| {
+        spanmap::SpanMap::validate(Some(&**mappings), &result.text, content).is_none()
+    }) && is_supported_virtual_extension(&result.virtual_extension)
+}
+
 /// `parse_result` that takes `parse` as the parse of the virtual text when
 /// a parse worker made it (`PrefetchedTransform`).
 // PORT: not in Go (see `PrefetchedTransform`).
@@ -269,6 +281,42 @@ mod tests {
             file_name: "/component.astro".to_string(),
             path: Path("/component.astro".to_string()),
             ..Default::default()
+        }
+    }
+
+    // PORT: no Go counterpart (cmpar1). A parse worker parses the virtual
+    // text only for a result that `parse_result` parses: Go checks the
+    // mappings, then the virtual extension, before its parse
+    // (transform.go:48-58).
+    #[test]
+    fn a_worker_parses_only_what_parse_result_parses() {
+        let text = "export const a = 1;";
+        let verbatim = |end: usize| {
+            Some(spanmap::new(&[spanmap::Segment {
+                virtual_end: end as i32,
+                original_end: text.len() as i32,
+                kind: spanmap::Kind::VERBATIM,
+                ..Default::default()
+            }]))
+        };
+        let result = |mappings: Option<spanmap::SpanMap>, extension: &str| Result {
+            text: text.to_string(),
+            virtual_extension: extension.to_string(),
+            mappings: mappings.map(Arc::new),
+            ..Default::default()
+        };
+        let cases = [
+            (result(verbatim(text.len()), ".ts"), true),
+            (result(Some(spanmap::new(&[])), ".mts"), true),
+            // The mapping ends past the virtual text.
+            (result(verbatim(text.len() + 1), ".ts"), false),
+            (result(None, ".ts"), false),
+            (result(verbatim(text.len()), ".vue"), false),
+        ];
+        for (i, (result, parses)) in cases.into_iter().enumerate() {
+            assert_eq!(parses_canonical_output(&result, text), parses, "case {i}");
+            let parsed = parse_result(&astro_parse_options(), text, &Mapper::default(), "", result);
+            assert_eq!(parsed.is_ok(), parses, "case {i}");
         }
     }
 

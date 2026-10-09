@@ -2178,7 +2178,9 @@ impl Checker {
     // `get_symbol_from_type_reference` and `get_resolved_symbol` resolve; the
     // first walk resolves and caches them (Go's effects, as Go makes them),
     // and the cached links never change, so a repeat walk has no effect and
-    // gives the same answer.
+    // gives the same answer. That needs Go to keep one writer of
+    // `resolvedSymbol` on TypeReference nodes: a pin bump checks it
+    // (UPSTREAM.md "Pin bump checks").
     pub fn is_distribution_dependent(&mut self, root: &Rc<RefCell<ConditionalRoot>>) -> bool {
         let (is_distributive, check_type, node, known) = {
             let rb = root.borrow();

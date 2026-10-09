@@ -529,6 +529,12 @@ The batch that adds it is not accepted until Theo approves.
   does not change, no watch event names it and no build of the cycle
   wrote it (`BuildHost::watch_source_file`, as Go `tsc --watch` keeps its
   files), so a cycle parses only the changed files, on the loading thread.
+  A `.d.ts` or `.json` file still comes through `source_files` (Go
+  `sourceFiles`) first, which keeps the first parse of a cycle until the
+  cycle ends, as in Go: a project that builds beside an upstream project
+  (no reference) can read the upstream `.d.ts` before that build writes
+  it, and a downstream project of the same cycle then gets the old parse
+  (bwsig1, `build_watch_keeps_the_first_dts_parse_of_a_cycle`).
   A config change keeps the parses too: their key holds the parse options,
   and a parse with other module indicator options that it did not read is
   kept as a copy, as in `tsc --watch`
@@ -757,12 +763,14 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
     PORT: signal-hook sets the handler (the bit) a moment before it
     publishes the action that the handler runs, so a signal sent on in
     between does nothing. Followups9 round b also waited for the worker's
-    thread that starts after the registration (`go-signals`,
-    `signal.NotifyContext`). A thread gets its name only when it first
-    runs, so that wait held signals longer: with a launcher, an up-to-date
-    `tsgo -b` under CPU load (zbook) lost 110 and 134 of 1000 SIGQUIT and
-    SIGHUP that came in its first 9 or 19 ms, where the same build without
-    that wait (goport-int35) lost 81 and 90 (followups9e).
+    threads that started after the registration (then `go-signals`, which
+    startexit1 removed: the main thread now waits for those signals,
+    `wait_go_signals`; and `signal.NotifyContext`). A thread gets its name
+    only when it first runs, so that wait held signals longer: with a
+    launcher, an up-to-date `tsgo -b` under CPU load (zbook) lost 110 and
+    134 of 1000 SIGQUIT and SIGHUP that came in its first 9 or 19 ms, where
+    the same build without that wait (goport-int35) lost 81 and 90
+    (followups9e).
   - The worker ends with its launcher: a parent-death SIGKILL, and a
     worker whose launcher died before that (its parent is not the named
     launcher, and the named launcher is gone or a zombie) kills itself. A
@@ -842,6 +850,16 @@ process (bin/tsgo.rs `unblock_go_signals`, `go_runtime_start`).
   caches) is per thread. A worker starts from a copy of the loading
   thread's state (`WorkerSeed`), so each checker's results depend only on
   its own files, not on thread timing.
+- Symbol ids: the port gives a symbol its id where Go calls
+  `ast.GetSymbolId` (every `valueSymbolLinks` read through
+  `SymbolArenaLinks`, and the node builder, symbol accessibility, enum
+  relation and emit resolver maps), so one checker counts ids as Go does.
+  Late-bound names hold ids (`__@k@<id>`), and the node builder counts their
+  length toward truncation. Go's checkers share one counter: a worker skips
+  the ids of the other checkers' `NewChecker` (`program::new_pool_checker`),
+  but not the ids that other checkers give while they check, which race in
+  Go. Go also gives each class with private names an id at bind time; the
+  port does not (`get_symbol_name_for_private_identifier`).
 - One thread can hold checkers of several programs (the language server's
   dispatch thread). Make a checker's program current while the checker runs
   (`core::enter_program`): the `program.rs` functions that checker code

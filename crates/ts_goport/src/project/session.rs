@@ -1017,6 +1017,11 @@ impl WarmAutoImportPreempt {
         let _ = self.0.busy.set(busy);
     }
 
+    /// Whether a message waits for the dispatch thread (`set_busy`).
+    fn busy(&self) -> bool {
+        self.0.busy.get().is_some_and(|busy| busy())
+    }
+
     /// Go `cancelWarmAutoImportCache`, with the log line of the stored
     /// cancel function. Safe to call from any thread.
     pub fn cancel(&self, logger: &dyn logging::Logger) {
@@ -1084,7 +1089,7 @@ impl WarmAutoImportPreempt {
     /// Starts a clone attempt, unless a message waits.
     fn start_attempt(&self, cancel: gostd::context::CancelFunc, hold: Option<Duration>) -> bool {
         let mut entry = self.entry();
-        if self.0.busy.get().is_some_and(|busy| busy()) {
+        if self.busy() {
             return false;
         }
         if let Some(entry) = entry.as_mut() {
@@ -2502,11 +2507,15 @@ impl Session {
     // queue's tasks have finished, including the debounced ones, which
     // count until their timer has run. The auto-import warm clone is idle work
     // (see `warm_auto_import_cache`); Go waits for it as part of its task,
-    // so this runs the idle work too, retries included.
+    // so this runs the idle work too, retries included. While a message
+    // waits for the dispatch thread (`WarmAutoImportPreempt::set_busy`), a
+    // warm attempt does not start and queues itself again, and the message
+    // cannot run while this waits, so the wait stops there instead of
+    // running that attempt forever.
     pub fn wait_for_background_tasks(&self) {
         self.cancel_idle_cache_clean();
         self.background_queue.wait();
-        while gostd::local::run_idle() {
+        while !self.warm_auto_import_preempt.busy() && gostd::local::run_idle() {
             self.background_queue.wait();
         }
     }

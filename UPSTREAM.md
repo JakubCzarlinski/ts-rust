@@ -54,6 +54,25 @@ mount namespace where the default oracle, Go checkout and caches show the pin's 
 The `tests/go_baselines` harness reads `TS_GO_REPO`; under `pin.py exec` its default path is
 the pin checkout.
 
+## Pin bump checks
+
+Some port-only shortcuts are exact only while some Go code stays as it is. At each pin bump, check
+each one against Go at the new pin (`drift.py` lists the Go changes), and fix or drop the shortcut
+when the condition no longer holds.
+
+- `crates/ts_goport/src/flags.rs` holds Go's integer flag and enum consts, kept in step by hand.
+  Compare it with `internal/{ast,binder,checker,core}` at the new pin.
+- `Checker::is_distribution_dependent` (`checker/relater_p5.rs`) keeps the answer of its first walk
+  on the conditional root (chkperf3). That is exact only while the walk
+  (`isTypeParameterPossiblyReferenced`, checker.go:22823 at `673a5f17d713`) reads only state that
+  its first read fixes: the AST; `resolvedSymbol` of TypeReference nodes, whose one writer is
+  `getSymbolFromTypeReference` (checker.go:23538; TypeScript's JS `getTypeFromTypeReference` also
+  writes it); the write-once `getResolvedSymbol` links (checker.go:14132); and the declarations of a
+  resolved value symbol (check-time `mergeSymbol` clones a non-transient target before it appends,
+  checker.go:14387-14412). Check: `grep -n 'resolvedSymbol = ' internal/checker/*.go` and the walk
+  itself. If a new writer of `resolvedSymbol` can reach a TypeReference node (or the first
+  identifier of a `typeof` query), or the walk reads other state, drop the memo or clear it there.
+
 ## Pins in microsoft/TypeScript
 
 `microsoft/typescript-go` is archived. From 2026-08-19 the Go code is in

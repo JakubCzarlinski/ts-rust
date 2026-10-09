@@ -1627,10 +1627,14 @@ pub fn build_info_version(effect: bool) -> std::borrow::Cow<'static, str> {
 impl BuildInfo {
     // Go: incremental/buildInfo.go:495 IsValidVersion
     // PORT: `effect` is whether the reading program runs the Effect rules
-    // (`build_info_version`).
+    // (`build_info_version`). Build info with Effect options and the plain
+    // version is from tsc-rs before effectfix2 (Theo PR #4), which did not
+    // add the suffix. effect-tsgo sees another version there and builds
+    // again. A program without the rules does the same, so it does not reuse
+    // those Effect diagnostics (a standalone API process).
     #[must_use]
     pub fn is_valid_version(&self, effect: bool) -> bool {
-        self.version == build_info_version(effect)
+        self.version == build_info_version(effect) && (effect || self.effect.is_none())
     }
 
     // Go: incremental/buildInfo.go:510 ContentMapperIdentitiesMatch (tsgo#4712)

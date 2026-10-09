@@ -1608,6 +1608,16 @@ pub fn new_host_with_options(
 // callback closes the spawned processes (the part of Close that other
 // threads can reach, through `processes`); the host maps stay until the
 // owner closes or drops the host.
+// Go has no close at drop, and neither has the host. A mapper process
+// closes at `close`, when `ctx` ends (the callback above), or when the last
+// project lease or `acquire` that uses its identity is released
+// (`release`). The leases and the acquire releases hold the host (`rc`), as
+// Go's `*host` pointers do, and the `MuxConn` reader thread holds each
+// process, as Go's `Run` goroutine holds `rwc`. So, as in Go, an owner that
+// drops the host while a project or an acquire is not released leaves
+// those processes running until `ctx` ends. The owners follow Go's: `tsc`
+// closes its project, `tsc -b` closes the host, and the watcher and the LSP
+// session end with their context.
 fn new_with_dial(
     ctx: &Context,
     diagnostic_locale: Locale,

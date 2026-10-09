@@ -806,7 +806,8 @@ impl BuildTask {
     /// sends values that `signal` makes behind the check and emit jobs that
     /// the task's program started (`program::send_checker_barrier`), and
     /// returns how many there are. When all have dropped, those jobs are
-    /// done. 0 when the program has no checker pool, so no job runs.
+    /// done. 0 when the program has no checker pool, so no job runs (no
+    /// check and no early emit started).
     pub fn notify_when_compiled<T: Send + 'static>(&self, signal: impl Fn() -> T) -> usize {
         let compile = self.compile.as_ref().expect("compile_and_emit_start ran");
         let _scope = crate::core::enter_program(Some(compile.program));
@@ -1057,11 +1058,15 @@ impl BuildTask {
             // check starts on this program's checker threads now, and so
             // does the emit, behind the check, as in `tsc -p` (when the
             // rules of `Program::start_emit` allow it; else the emit runs
-            // in `compile_and_emit_finish`). The emit keeps its writes
+            // in `compile_and_emit_finish`). A task that checks nothing
+            // (cached semantic diagnostics, `noCheck`, or syntactic, program
+            // or global diagnostics) starts its emit there too, so it ends
+            // when its emit ends, as its Go goroutine does. The emit keeps
+            // its writes
             // until `compile_and_emit_finish`, which writes them first
             // (`buffer_early_emit_writes`). So the task writes when the
-            // orchestrator finishes it (in the order the checks end, or in
-            // build order when tasks share outputs, see
+            // orchestrator finishes it (in the order the checks and emits
+            // end, or in build order when tasks share outputs, see
             // `build_all_tasks`), and a task that runs beside others reads
             // the file system before they write. The statistics' check time
             // is the time of the wait for the check plus the time that

@@ -1382,7 +1382,9 @@ impl Checker {
     /// `KEYED_SORT_MIN` to `KEYED_SORT_MAX` types are sorted as key pairs
     /// with keyed comparisons: Go's algorithm (`gostd`) makes the same
     /// comparisons in the same order, and the keys only answer some of them
-    /// early, so the result and the lazy symbol ids are Go's.
+    /// early, so the result and the lazy symbol ids are Go's. Longer lists
+    /// go to `sort_large_union_types` (one table entry per distinct type,
+    /// with its key and the key of its second member).
     // Go: checker/checker.go:26275 slices.SortStableFunc(types, CompareTypes)
     pub(crate) fn sort_union_types(&self, types: &mut [TypeId]) {
         if types.len() > KEYED_SORT_MAX {
@@ -1457,6 +1459,36 @@ impl Checker {
             }
         }
         entry
+    }
+
+    /// Go `containsType(targets, t)` for each `t` of `sources` in order, up
+    /// to the first that is not found (the loop of Go
+    /// `isTypeSubsetOfUnion`). The searches run on the entries of the
+    /// targets (`LargeSortEntry`): an entry order has Go's sign with no
+    /// effect, and a tie goes to `compare_types`, so Go's searches make Go's
+    /// comparisons in Go's order. On eslint-plugin-svelte (sources of
+    /// 43,000 to 56,000 types in unions of about the same size) the entries
+    /// decide 93% of the comparisons.
+    // PERF (unionsub1): for long searches only; making the entries costs
+    // about one comparison per type.
+    pub(crate) fn contains_types_by_entries(&self, targets: &[TypeId], sources: &[TypeId]) -> bool {
+        let table: Vec<LargeSortEntry> =
+            targets.iter().map(|&t| self.large_sort_entry(t)).collect();
+        sources.iter().all(|&t| {
+            let entry = self.large_sort_entry(t);
+            crate::gostd::slices::binary_search_func(&table, entry, |x, y| {
+                // Go's first step: the same type gives 0.
+                if x.t == y.t {
+                    return 0;
+                }
+                match x.keyed_order(y) {
+                    Ordering::Less => -1,
+                    Ordering::Greater => 1,
+                    Ordering::Equal => self.compare_types(x.t, y.t),
+                }
+            })
+            .1
+        })
     }
 
     /// `(union_sort_key(t), t)` for each of `types`, in order.
@@ -2517,5 +2549,135 @@ type U1 = (A | SvelteProgram) & (B | Box<string>) & ({ p: 1 } | SvelteShorthandA
                 assert_eq!(large, go, "n {n}");
             }
         });
+    }
+
+    /// `contains_types_by_entries` (unionsub1) gives Go's answer: each
+    /// source searched with `compare_types` in Go's order of the targets,
+    /// up to the first miss. The types are those of
+    /// `large_union_sort_matches_go`; the targets lack some of them.
+    #[test]
+    fn entry_searches_match_go() {
+        with_alias_types(&format!("{SOURCE}{LARGE_SOURCE}"), |c, aliases| {
+            let mut types = aliases.to_vec();
+            for &t in aliases {
+                if c.ty(t).flags.intersects(TypeFlags::UNION) {
+                    types.extend_from_slice(c.ty(t).types());
+                }
+            }
+            types.sort_unstable();
+            types.dedup();
+            sort_stable_func(&mut types, |&a, &b| c.compare_types(a, b));
+            let go = |targets: &[TypeId], sources: &[TypeId]| {
+                sources
+                    .iter()
+                    .all(|&t| binary_search_func(targets, t, |&a, &b| c.compare_types(a, b)).1)
+            };
+            let mut state = 0x9e37_79b9_7f4a_7c15u64;
+            let (mut found, mut missed) = (0, 0);
+            for round in 0..64 {
+                let (mut targets, mut sources) = (Vec::new(), Vec::new());
+                for &t in &types {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    if round % 2 == 0 || state % 16 != 0 {
+                        targets.push(t);
+                    }
+                    if state % 3 == 0 {
+                        sources.push(t);
+                    }
+                }
+                let want = go(&targets, &sources);
+                assert_eq!(
+                    c.contains_types_by_entries(&targets, &sources),
+                    want,
+                    "round {round}"
+                );
+                if want {
+                    found += 1
+                } else {
+                    missed += 1
+                }
+                for &t in &types {
+                    let want = go(&targets, &[t]);
+                    assert_eq!(c.contains_types_by_entries(&targets, &[t]), want, "{t:?}");
+                }
+            }
+            assert!(found > 0 && missed > 0, "{found} {missed}");
+        });
+    }
+
+    /// Lists over `KEYED_SORT_MAX`: the large sort makes the comparisons of
+    /// Go's sort that have an effect, in Go's order. The one effect of
+    /// `compare_types` is a lazy symbol id: `compare_symbols_worker` falls
+    /// back to ids for two symbols with no declaration and one name (Go
+    /// makes such symbols for import attributes, checker.go:5582). So the
+    /// `LARGE_SOURCE` types get 24 anonymous types of such symbols, and the
+    /// intersections of each with `A`, and the two sorts of one shuffle,
+    /// each on its own checker, give the same list and the same ids to the
+    /// same symbols, in the same order.
+    #[test]
+    fn large_union_sort_assigns_go_symbol_ids() {
+        let run = |large: bool| {
+            with_alias_types(&format!("{SOURCE}{LARGE_SOURCE}"), move |c, aliases| {
+                let mut types = aliases.to_vec();
+                for &t in aliases {
+                    if c.ty(t).flags.intersects(TypeFlags::UNION) {
+                        types.extend_from_slice(c.ty(t).types());
+                    }
+                }
+                types.sort_unstable();
+                types.dedup();
+                let a = aliases[0];
+                let bare: Vec<SymbolId> = (0..24)
+                    .map(|_| {
+                        c.new_symbol(
+                            SymbolFlags::TYPE_LITERAL,
+                            crate::ast::INTERNAL_SYMBOL_NAME_TYPE,
+                        )
+                    })
+                    .collect();
+                for &symbol in &bare {
+                    let t = c.new_anonymous_type(symbol, SymbolTable::NIL, &[], &[], &[]);
+                    let both = c.get_intersection_type(&[t, a]);
+                    types.extend([t, both]);
+                }
+                let mut state = 0x6a09_e667_f3bc_c908u64;
+                let mut list: Vec<TypeId> = (0..=KEYED_SORT_MAX)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        types[(state % types.len() as u64) as usize]
+                    })
+                    .collect();
+                let first = crate::ast::next_ids().1;
+                if large {
+                    c.sort_union_types(&mut list);
+                } else {
+                    sort_stable_func(&mut list, |&x, &y| c.compare_types(x, y));
+                }
+                let last = crate::ast::next_ids().1;
+                // The id that the sort gave each bare symbol, from 1 in the
+                // order the sort gave them; 0 for none.
+                let ids: Vec<u64> = bare
+                    .iter()
+                    .map(|&symbol| {
+                        let id = crate::ast::get_symbol_id(&c.symbols, symbol);
+                        if id <= last { id - first } else { 0 }
+                    })
+                    .collect();
+                let order: Vec<usize> = list
+                    .iter()
+                    .map(|t| types.iter().position(|x| x == t).unwrap())
+                    .collect();
+                (order, last - first, ids)
+            })
+        };
+        let (large, go) = (run(true), run(false));
+        assert!(go.1 >= 12, "Go's sort gave {} symbol ids", go.1);
+        assert_eq!(large.1, go.1, "symbol ids given");
+        assert_eq!(large.2, go.2, "the ids of the bare symbols");
+        assert_eq!(large.0, go.0, "the order");
     }
 }

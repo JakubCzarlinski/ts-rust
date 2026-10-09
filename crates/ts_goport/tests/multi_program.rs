@@ -60,6 +60,11 @@ const WATCH_CONFIG_FIXTURE: &str = concat!(
     "/tests/fixtures/multiprog/watch-config"
 );
 
+const WATCH_STALE_DTS_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/multiprog/watch-stale-dts"
+);
+
 const BUILD_DEDUP_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/multiprog/build-dedup"
@@ -817,6 +822,74 @@ fn build_watch_config_edits_of_emit_options_print_like_go() {
         &["-b", "--watch", "tsconfig.json", "--pretty"],
         "expected-bw.txt",
     );
+}
+
+/// bwsig1: Go `tsc -b --watch` keeps the `.d.ts` and `.json` parses of a
+/// cycle until the cycle ends (build/host.go `GetSourceFile`,
+/// build/orchestrator.go `resetCaches`). `side` has no reference to `lib`
+/// but imports its output `lib/dist/a.d.ts`, so it builds beside `lib` and
+/// reads that file before `lib` writes it. The edit turns on
+/// `removeComments` in the base config: every project builds again, and
+/// `lib` writes `a.d.ts` without its comment. `app` references `lib`,
+/// builds after it and gets the parse that `side` made: its build info
+/// keeps the old version of `a.d.ts` and no signature for `index.ts`.
+/// `expected.txt` (the output up to the end of the second build) and
+/// `expected-app.tsbuildinfo.json` are from `tsgo-oracle-673a5f17d713` for
+/// the same steps (10 of 10 runs).
+// PORT: no Go counterpart; the output is Go's.
+#[test]
+fn build_watch_keeps_the_first_dts_parse_of_a_cycle() {
+    let root = scratch_dir("watch-stale-dts");
+    // Go `CanWatchDirectory` does not watch `/tmp/<dir>/project`
+    // (`watch_frees_file_versions`).
+    let project = root.join("work").join("project");
+    copy_dir(Path::new(WATCH_STALE_DTS_FIXTURE), &project);
+    // The first build builds `side` before `lib` writes `a.d.ts` (TS2307,
+    // as in Go); the second builds `side` again with it.
+    for expect_success in [false, true] {
+        let build = Command::new(env!("CARGO_BIN_EXE_tsgo"))
+            .args(["-b", "tsconfig.json", "--pretty", "false"])
+            .current_dir(&project)
+            .output()
+            .expect("run tsgo -b");
+        assert_eq!(
+            build.status.success(),
+            expect_success,
+            "tsgo -b in {}:\n{}",
+            root.display(),
+            String::from_utf8_lossy(&build.stdout)
+        );
+    }
+    let out = root.join("watch.txt");
+    let run = Command::new(env!("CARGO_BIN_EXE_goport_watch"))
+        .arg(&out)
+        .arg("tsconfig.base.json")
+        .arg("edits/tsconfig.base.json")
+        .args(["--", "-b", "--watch", "tsconfig.json", "--pretty", "false"])
+        .current_dir(&project)
+        .output()
+        .expect("run goport_watch");
+    assert!(
+        run.status.success(),
+        "goport_watch failed ({}) in {}:\n{}\n{}",
+        run.status,
+        root.display(),
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        normalize_watch_output(&read(&out)),
+        read(&project.join("expected.txt")),
+        "watch output against tsgo ({})",
+        root.display()
+    );
+    assert_eq!(
+        read(&project.join("app/dist/tsconfig.tsbuildinfo")),
+        read(&project.join("expected-app.tsbuildinfo.json")),
+        "app build info against tsgo ({})",
+        root.display()
+    );
+    fs::remove_dir_all(&root).unwrap_or_else(|error| panic!("remove {}: {error}", root.display()));
 }
 
 /// Runs `goport_watch` with `tsc_args` on a copy of the `watch-config`

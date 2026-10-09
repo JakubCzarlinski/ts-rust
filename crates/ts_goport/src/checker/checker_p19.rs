@@ -76,7 +76,9 @@ impl Checker {
                 e, false, /*includePatternInType*/
                 true,  /*reportErrors*/
             );
-            self.value_symbol_links.get(symbol).resolved_type = resolved_type;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, symbol)
+                .resolved_type = resolved_type;
             let symbol_name = self.sym(symbol).name.clone();
             self.symbols.set(members, symbol_name, symbol);
         }
@@ -176,13 +178,22 @@ impl Checker {
 
     // Go: checker/checker.go:17224 getTypeOfFuncClassEnumModule
     pub fn get_type_of_func_class_enum_module(&mut self, symbol: SymbolId) -> TypeId {
-        if self.value_symbol_links.get(symbol).resolved_type.is_nil() {
+        if self
+            .value_symbol_links
+            .get_by_id(&self.symbols, symbol)
+            .resolved_type
+            .is_nil()
+        {
             let t = self.get_type_of_func_class_enum_module_worker(symbol);
             // PORT: Go assigns through the links pointer taken before the
             // worker call; re-fetch the record here.
-            self.value_symbol_links.get(symbol).resolved_type = t;
+            self.value_symbol_links
+                .get_by_id(&self.symbols, symbol)
+                .resolved_type = t;
         }
-        self.value_symbol_links.get(symbol).resolved_type
+        self.value_symbol_links
+            .get_by_id(&self.symbols, symbol)
+            .resolved_type
     }
 
     // Go: checker/checker.go:17232 getTypeOfFuncClassEnumModuleWorker
@@ -458,12 +469,14 @@ impl Checker {
             |d: Node| d.is_some() && (d.initializer().is_some() || is_optional_declaration(d));
         match self
             .value_symbol_links
-            .try_get(symbol)
+            .try_get_by_id(&self.symbols, symbol)
             .map(|links| links.optional_parameter)
         {
             Some(Tristate::Unknown) => {
                 let optional = test(declaration);
-                self.value_symbol_links.get(symbol).optional_parameter = bool_to_tristate(optional);
+                self.value_symbol_links
+                    .get_by_id(&self.symbols, symbol)
+                    .optional_parameter = bool_to_tristate(optional);
                 optional
             }
             Some(memo) => {
@@ -2195,7 +2208,10 @@ impl Checker {
             // We can use a cached resolved type if no optionality was included in that type.
             let symbol = self.get_symbol_of_declaration(node);
             if symbol.is_some() {
-                let resolved_type = self.value_symbol_links.get(symbol).resolved_type;
+                let resolved_type = self
+                    .value_symbol_links
+                    .get_by_id(&self.symbols, symbol)
+                    .resolved_type;
                 if resolved_type.is_some()
                     && !(self.strict_null_checks && is_optional_declaration(node))
                 {

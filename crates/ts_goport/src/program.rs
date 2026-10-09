@@ -3427,6 +3427,24 @@ fn create_checkers() -> CheckerPool {
     start_checkers(count)
 }
 
+// Go: compiler/checkerpool.go:365 createCheckers (one `checker.NewChecker`)
+/// Makes checker `index` of a pool of `count` on this thread.
+// PORT: Go makes every checker of the pool before the first check, and the
+// checkers share one symbol id counter (`ast.GetSymbolId`). So the first
+// check of each checker comes after the ids that all `NewChecker` calls gave
+// (`initializeChecker` gives 4 checker symbols their ids). A worker here
+// counts its ids on its own (`ast::id_seed`), so it skips the ids that the
+// other checkers' `NewChecker` gave: each makes the same calls. Late-bound
+// names hold symbol ids (`__@iterator@<id>`), and the node builder counts
+// their length toward truncation.
+fn new_pool_checker(index: usize, count: usize) -> Checker {
+    let (_, before) = next_ids();
+    let checker = Checker::new(index);
+    let (_, after) = next_ids();
+    skip_symbol_ids((after - before) * (count as u64 - 1));
+    checker
+}
+
 /// Starts `count` checker workers, each on its own thread with its own
 /// checker, and returns the pool.
 #[cfg(not(target_family = "wasm"))]
@@ -3454,7 +3472,7 @@ fn start_checkers(count: usize) -> CheckerPool {
                         set_jemalloc_thread_arena(arena);
                     }
                     seed.install();
-                    let checker = Checker::new(index);
+                    let checker = new_pool_checker(index, count);
                     WORKER_CHECKER.with(|slot| *slot.borrow_mut() = Some(checker));
                     WORKER_INDEX.with(|slot| slot.set(Some(index)));
                     for job in receiver {
@@ -3491,7 +3509,7 @@ fn start_checkers(count: usize) -> CheckerPool {
     let checkers = (0..count)
         .map(|index| {
             let mut ids = WorkerIds(id_seed().into());
-            let checker = ids.run(|| Checker::new(index));
+            let checker = ids.run(|| new_pool_checker(index, count));
             Some((checker, ids))
         })
         .collect();

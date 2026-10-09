@@ -302,9 +302,11 @@ pub struct BuildHost {
     // (`cached_source_file_refs`), and a worker parse of a published path
     // is a freeable file version (`freeable_worker_parses`).
     pub prefetch: std::cell::Cell<bool>,
-    // PORT: not in Go (`watch_source_file`). The parses of the source files
-    // (not `.d.ts` or `.json`) in `tsc -b --watch`, with the modification
-    // time of each file at its parse. `None` outside watch mode.
+    // PORT: not in Go (`watch_source_file`). The parses of the files in
+    // `tsc -b --watch`, with the modification time of each file at its
+    // parse. `None` outside watch mode. A `.d.ts` or `.json` file comes
+    // through `source_files` first, which keeps the first parse of a cycle
+    // for the rest of the cycle (`get_source_file`).
     pub watch_sources: RefCell<Option<FxHashMap<SourceFileCacheKey, WatchSource>>>,
     // PORT: not in Go (`keep_watch_sources_for_config_change`). In a cycle
     // after a config change, the parses that `watch_sources` had before it
@@ -410,7 +412,8 @@ impl BuildHost {
     /// of a cycle ran on one thread (query-persist-client-core rebuilds took
     /// 2.7 times as long). A parse of the same text with the same options is
     /// the same file, so the output does not change. A bundled lib never
-    /// changes.
+    /// changes. A `.d.ts` or `.json` file comes here through `source_files`
+    /// (`get_source_file`), so in one cycle only its first parse comes here.
     fn watch_source_file(&self, opts: &SourceFileParseOptions) -> Option<Rc<ParsedSourceFile>> {
         let key = SourceFileCacheKey(opts.clone());
         let fixed = crate::frontend::bundled::is_bundled(&opts.file_name);
@@ -803,9 +806,7 @@ impl CompilerHost for BuildHost {
 
     // Go: build/host.go:54 (*host).GetSourceFile
     fn get_source_file(&self, opts: &SourceFileParseOptions) -> Option<Rc<ParsedSourceFile>> {
-        if self.watch_sources.borrow().is_some() {
-            return self.watch_source_file(opts);
-        }
+        let watch = self.watch_sources.borrow().is_some();
         if is_declaration_file_name(&opts.file_name)
             || file_extension_is(&opts.file_name, EXTENSION_JSON)
         {
@@ -816,9 +817,20 @@ impl CompilerHost for BuildHost {
             // keeps the whole `*ast.SourceFile`. The note makes the publish
             // of the first program give the store its complete Go file, so
             // the later program can use it.
+            // PORT: in `tsc -b --watch` the parse comes from
+            // `watch_source_file`, and this cache still gives the first
+            // parse of the cycle to each later program of the cycle, as Go
+            // does. A program that builds beside an upstream project (no
+            // reference to it) can read its `.d.ts` before the upstream
+            // build writes it; a downstream program of the same cycle then
+            // gets that parse, not the new text (bwsig1: hono
+            // `runtime-tests/*` build infos after a `removeComments` edit).
             return self.source_files.load_or_store(
                 SourceFileCacheKey(opts.clone()),
                 |key| {
+                    if watch {
+                        return self.watch_source_file(&key.0);
+                    }
                     let file = self.host.get_source_file(&key.0);
                     if let Some(file) = &file {
                         crate::program::note_parsed_source_file(file);
@@ -827,6 +839,9 @@ impl CompilerHost for BuildHost {
                 },
                 false, /* allowZero */
             );
+        }
+        if watch {
+            return self.watch_source_file(opts);
         }
         self.host.get_source_file(opts)
     }
