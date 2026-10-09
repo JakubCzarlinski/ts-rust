@@ -605,6 +605,8 @@ pub fn plain_js_errors() -> &'static FxHashSet<i32> {
             diag::A_continue_statement_can_only_jump_to_a_label_of_an_enclosing_iteration_statement.code() as i32,
             diag::A_default_clause_cannot_appear_more_than_once_in_a_switch_statement.code() as i32,
             diag::A_default_export_must_be_at_the_top_level_of_a_file_or_module_declaration.code() as i32,
+            // ts#64640
+            diag::A_deferred_import_must_specify_a_namespace_binding.code() as i32,
             diag::A_definite_assignment_assertion_is_not_permitted_in_this_context.code() as i32,
             diag::A_destructuring_declaration_must_have_an_initializer.code() as i32,
             diag::A_get_accessor_cannot_have_parameters.code() as i32,

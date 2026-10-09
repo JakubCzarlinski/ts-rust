@@ -4960,7 +4960,7 @@ pub fn get_diagnostics_of_any_program(
 // PORT: built on each call from the generated message statics (a static set
 // cannot read them at compile time). It is only used for plain JS files.
 fn is_plain_js_error(code: i32) -> bool {
-    let messages: [&'static crate::diagnostics::Message; 97] = [
+    let messages: [&'static crate::diagnostics::Message; 98] = [
         // binder errors
         diag::Cannot_redeclare_block_scoped_variable_0,
         diag::A_module_cannot_have_multiple_default_exports,
@@ -4986,6 +4986,8 @@ fn is_plain_js_error(code: i32) -> bool {
         diag::A_continue_statement_can_only_jump_to_a_label_of_an_enclosing_iteration_statement,
         diag::A_default_clause_cannot_appear_more_than_once_in_a_switch_statement,
         diag::A_default_export_must_be_at_the_top_level_of_a_file_or_module_declaration,
+        // ts#64640
+        diag::A_deferred_import_must_specify_a_namespace_binding,
         diag::A_definite_assignment_assertion_is_not_permitted_in_this_context,
         diag::A_destructuring_declaration_must_have_an_initializer,
         diag::A_get_accessor_cannot_have_parameters,
