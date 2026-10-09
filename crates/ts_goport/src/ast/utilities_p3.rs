@@ -315,6 +315,10 @@ pub fn is_in_expression_context(node: Node) -> bool {
             parent.expression() == node && !is_part_of_type_node(parent)
         }
         SyntaxKind::ShorthandPropertyAssignment => parent.object_assignment_initializer() == node,
+        SyntaxKind::FunctionExpression | SyntaxKind::ClassExpression => {
+            // The name of a function or class expression is a declaration name, not an expression.
+            parent.name() != node
+        }
         _ => is_expression_node(parent),
     }
 }
