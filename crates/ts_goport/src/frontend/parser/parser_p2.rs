@@ -1599,7 +1599,8 @@ impl<'a> Parser<'a> {
             self.parse_expected(SyntaxKind::FromKeyword);
             return import_clause;
         }
-        if phase_modifier == SyntaxKind::SourceKeyword {
+        if phase_modifier == SyntaxKind::DeferKeyword || phase_modifier == SyntaxKind::SourceKeyword
+        {
             let node = self.factory.new_import_clause(
                 phase_modifier,
                 Node::NIL, /*name*/
