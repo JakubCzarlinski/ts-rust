@@ -382,6 +382,39 @@ pub fn own_symbol_id_count() -> u64 {
     })
 }
 
+/// The symbol ids that the checker of one program left on its thread: the
+/// next id and the ids of the binder lineage symbols. The ids of the
+/// checker's own symbols die with the checker.
+// PORT: Go has one symbol id counter per process, and a bound file keeps
+// the ids of its symbols in every later program. A one-checker
+// `--singleThreaded` pool hands these ids to its loading thread when the
+// program is released (`program::CheckerPool::stop`), so the next program
+// of the process (`tsc -b`, watch) counts on from them.
+pub struct SymbolIdCarry {
+    next_symbol_id: u64,
+    symbol_ids: LineageIds,
+}
+
+/// A copy of the symbol ids of this thread (`SymbolIdCarry`).
+#[must_use]
+pub fn copy_symbol_ids() -> SymbolIdCarry {
+    SymbolIdCarry {
+        next_symbol_id: NEXT_SYMBOL_ID.with(std::cell::Cell::get),
+        symbol_ids: SYMBOL_IDS.with(|ids| {
+            let mut ids = ids.borrow_mut();
+            // The copy has no ids of freed lineage chunks.
+            ids.free_dead();
+            ids.clone()
+        }),
+    }
+}
+
+/// Makes `carry` the next symbol id and the lineage ids of this thread.
+pub fn install_symbol_ids(carry: SymbolIdCarry) {
+    NEXT_SYMBOL_ID.with(|next| next.set(carry.next_symbol_id));
+    SYMBOL_IDS.with(|ids| *ids.borrow_mut() = carry.symbol_ids);
+}
+
 /// Makes `seed` the id state of this thread.
 pub fn install_id_seed(seed: IdSeed) {
     NEXT_NODE_ID.with(|next| next.set(seed.next_node_id));

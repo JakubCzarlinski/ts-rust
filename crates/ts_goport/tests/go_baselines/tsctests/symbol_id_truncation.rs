@@ -21,11 +21,17 @@
 //! same files.
 //!
 //! followups38 adds the ids that `NewChecker` gives to binder symbols (merge
-//! errors), which Go gives once in a pool.
+//! errors), which Go gives once in a pool, and the programs of one process
+//! with `--singleThreaded` (`tsc -b`, watch): Go's counter runs on from one
+//! program to the next (`program::CheckerPool::carry_symbol_ids`).
 
 use ts_goport::execute::tsc::ExitStatus;
+use ts_goport::fswatch::{Event, EventKind};
+use ts_goport::gostd::context;
 
-use crate::support::child::run_command_in_child;
+use crate::support::child::{
+    command_line_in_process, new_in_process_test_sys, run_command_in_child, run_test_in_child,
+};
 use crate::support::runner::TscInput;
 use crate::support::test_sys::new_test_sys;
 
@@ -159,4 +165,103 @@ fn pool_checkers_skip_only_the_ids_of_their_own_symbols() {
         ("dup2.d.ts", "declare const z: number;\n".into()),
     ];
     assert_eq!(check_files(&files, 8, &[]), expected_with_pad(8, 15, 5));
+}
+
+/// Go's error for `a_ts(9)` in `file`, with the members up to
+/// `w{shown - 1}` and `more` hidden.
+fn expected_in(file: &str, shown: usize, more: usize) -> String {
+    expected(shown, more).replacen("a.ts", file, 1)
+}
+
+#[test]
+fn ids_count_on_across_the_projects_of_tsc_b_single_threaded() {
+    // Go: k4 gets id 9 in p1 and 44 in p2 (p1 gave 35 ids), so p2 shows one
+    // member less. Each program counted from the start before.
+    let file = |name: &str, text: String| (format!("{PROJECT}/{name}"), text.into());
+    let config = r#"{"compilerOptions":{"composite":true,"noLib":true,"skipLibCheck":true,"strict":true,"outDir":"out"},"files":["globals.d.ts","a.ts"]}"#;
+    let input = TscInput {
+        files: [
+            file(
+                "tsconfig.json",
+                r#"{"files":[],"references":[{"path":"p1"},{"path":"p2"}]}"#.into(),
+            ),
+            file("p1/globals.d.ts", GLOBALS.into()),
+            file("p1/a.ts", a_ts(9)),
+            file("p1/tsconfig.json", config.into()),
+            file("p2/globals.d.ts", GLOBALS.into()),
+            file("p2/a.ts", a_ts(9)),
+            file("p2/tsconfig.json", config.into()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let sys = new_test_sys(&input, false);
+    let args = ["-b", "--pretty", "false", "--singleThreaded"].map(String::from);
+    let result = run_command_in_child(&sys, &args).unwrap_or_else(|err| panic!("tsgo: {err}"));
+    assert!(result.unported.is_none(), "unported {:?}", result.unported);
+    // The test system adds the list of files of each project.
+    let diagnostics: String = sys
+        .output_text()
+        .lines()
+        .filter(|line| !line.starts_with("!!! List files"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        expected_in("p1/a.ts", 15, 5) + &expected_in("p2/a.ts", 14, 6)
+    );
+}
+
+#[test]
+fn ids_count_on_across_watch_cycles_single_threaded() {
+    run_test_in_child(
+        "tsctests::symbol_id_truncation::ids_count_on_across_watch_cycles_single_threaded",
+        || {
+            // Go: k4 gets id 9 in the first build. The edit adds e1, and
+            // the next build's checker counts on from the 35 ids of the
+            // first: k4 gets 44, so one member less shows.
+            let file = |name: &str, text: String| (format!("{PROJECT}/{name}"), text.into());
+            let input = TscInput {
+                files: [
+                    file("globals.d.ts", GLOBALS.into()),
+                    file("a.ts", a_ts(9)),
+                    file(
+                        "tsconfig.json",
+                        r#"{"compilerOptions":{"noLib":true,"skipLibCheck":true,"strict":true,"noEmit":true},"files":["globals.d.ts","a.ts"]}"#.into(),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            };
+            let sys = new_in_process_test_sys(&input);
+            let args = ["-w", "--pretty", "false", "--singleThreaded"].map(String::from);
+            let result = command_line_in_process(&context::background(), &sys, &args);
+            let mut w = result
+                .watcher
+                .expect("expected Watcher to be non-nil in watch mode");
+            assert!(
+                sys.output_text().contains(&expected(15, 5)),
+                "first build: {}",
+                sys.output_text()
+            );
+            sys.set_output_bytes(Vec::new());
+            let a = format!("{PROJECT}/a.ts");
+            let _ = sys
+                .fs_from_file_map()
+                .write_file(&a, &format!("declare const e1: number;\n{}", a_ts(9)));
+            sys.mock_watch_backend().send_events(vec![Event {
+                kind: EventKind::Update,
+                path: a,
+            }]);
+            w.do_cycle();
+            let expected = expected(14, 6).replacen("(7,7)", "(8,7)", 1);
+            assert!(
+                sys.output_text().contains(&expected),
+                "second build: {}",
+                sys.output_text()
+            );
+        },
+    );
 }

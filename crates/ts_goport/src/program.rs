@@ -334,6 +334,11 @@ struct CheckerPool {
     /// (`send_emit_pool_jobs`). It stops with the checkers. wasm has none.
     #[cfg(not(target_family = "wasm"))]
     emit: Option<EmitPool>,
+    /// `--singleThreaded`: the next symbol id of the loading thread when the
+    /// pool was made. The pool's checker hands its symbol ids to the next
+    /// pool (`symbol_id_carry_start`) or back to the loading thread when it
+    /// stops (`carry_symbol_ids`). None for other pools.
+    carry_from: Option<u64>,
 }
 
 impl CheckerPool {
@@ -377,11 +382,13 @@ impl CheckerPool {
     /// synthetic nodes, closes the job queues and returns the worker
     /// threads, with the threads of the emit pool.
     #[cfg(not(target_family = "wasm"))]
-    fn stop(self) -> Vec<std::thread::JoinHandle<()>> {
+    fn stop(mut self) -> Vec<std::thread::JoinHandle<()>> {
+        self.carry_symbol_ids();
         let CheckerPool {
             workers,
             mut threads,
             emit,
+            carry_from: _,
         } = self;
         // A pool that only ends with the process forgets its checkers and
         // synthetic nodes (see `create_checkers`); a released program frees
@@ -405,12 +412,59 @@ impl CheckerPool {
     /// synthetic nodes are in the loading thread's arena, which keeps them
     /// until the process (the wasm instance) ends.
     #[cfg(target_family = "wasm")]
-    fn stop(self) -> Vec<std::thread::JoinHandle<()>> {
-        let CheckerPool { checkers } = self;
+    fn stop(mut self) -> Vec<std::thread::JoinHandle<()>> {
+        self.carry_symbol_ids();
+        let CheckerPool {
+            checkers,
+            carry_from: _,
+        } = self;
         for (checker, mut ids) in checkers.into_iter().flatten() {
             ids.run(|| drop(checker));
         }
         Vec::new()
+    }
+
+    /// A `--singleThreaded` pool (`carry_from`): makes the symbol ids of its
+    /// checker the symbol ids of this thread (the loading thread), so the
+    /// next program's checker starts from them (`WorkerSeed`). When this
+    /// thread gave ids after the pool was made, or took the ids of a later
+    /// pool, it keeps its own.
+    // PORT: Go has one symbol id counter per process, so the ids of the next
+    // program (`tsc -b`, a watch cycle) count on from the last one, and a
+    // bound file keeps the ids of its symbols (`ast::SymbolIdCarry`). With
+    // more checkers Go's ids race, and each checker here counts on its own,
+    // so only a one-checker `--singleThreaded` pool hands its ids on.
+    fn carry_symbol_ids(&mut self) {
+        let Some(from) = self.carry_from else {
+            return;
+        };
+        if next_ids().1 != from {
+            return;
+        }
+        if let Some(carry) = self.symbol_ids() {
+            install_symbol_ids(carry);
+        }
+    }
+
+    /// A copy of the symbol ids of the pool's first checker, after the jobs
+    /// sent to it so far.
+    #[cfg(not(target_family = "wasm"))]
+    fn symbol_ids(&self) -> Option<SymbolIdCarry> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.workers
+            .first()?
+            .send(Box::new(move || {
+                let _ = sender.send(copy_symbol_ids());
+            }))
+            .ok()?;
+        receiver.recv().ok()
+    }
+
+    /// wasm: a copy of the symbol ids of the pool's first checker.
+    #[cfg(target_family = "wasm")]
+    fn symbol_ids(&mut self) -> Option<SymbolIdCarry> {
+        let (_, ids) = self.checkers.first_mut()?.as_mut()?;
+        Some(ids.run(copy_symbol_ids))
     }
 }
 
@@ -698,10 +752,7 @@ pub fn send_emit_pool_jobs<R: Send + 'static>(
     if jobs.is_empty() {
         return Vec::new();
     }
-    let id = prog().id;
-    POOLS.with(|pools| {
-        let mut pools = pools.borrow_mut();
-        let pool = pools.entry(id).or_insert_with(create_checkers);
+    with_pool(|pool| {
         let emit = pool
             .emit
             .get_or_insert_with(|| create_emit_pool(emit_thread_count().clamp(1, jobs.len())));
@@ -3448,6 +3499,28 @@ fn new_pool_checker(index: usize, count: usize) -> Checker {
     checker
 }
 
+/// `CheckerPool::carry_from` of a new pool of `count` checkers: the next
+/// symbol id of this thread for a one-checker `--singleThreaded` pool.
+/// Watch mode makes the next program before it releases the last one, so
+/// the pool of the last program can still be here: its symbol ids become
+/// this thread's first (`CheckerPool::carry_symbol_ids`).
+fn symbol_id_carry_start(count: usize) -> Option<u64> {
+    if count != 1 || !single_threaded() {
+        return None;
+    }
+    POOLS.with(|pools| {
+        let mut pools = pools.borrow_mut();
+        let last = pools
+            .iter_mut()
+            .filter(|(_, pool)| pool.carry_from.is_some())
+            .max_by_key(|&(&id, _)| id);
+        if let Some((_, pool)) = last {
+            pool.carry_symbol_ids();
+        }
+    });
+    Some(next_ids().1)
+}
+
 /// Starts `count` checker workers, each on its own thread with its own
 /// checker, and returns the pool.
 #[cfg(not(target_family = "wasm"))]
@@ -3463,6 +3536,7 @@ fn start_checkers(count: usize) -> CheckerPool {
     } else {
         None
     };
+    let carry_from = symbol_id_carry_start(count);
     let (workers, threads): (Vec<_>, Vec<_>) = (0..count)
         .map(|index| {
             let (sender, receiver) = std::sync::mpsc::channel::<Job>();
@@ -3502,6 +3576,7 @@ fn start_checkers(count: usize) -> CheckerPool {
         workers,
         threads,
         emit: None,
+        carry_from,
     }
 }
 
@@ -3516,7 +3591,10 @@ fn start_checkers(count: usize) -> CheckerPool {
             Some((checker, ids))
         })
         .collect();
-    CheckerPool { checkers }
+    CheckerPool {
+        checkers,
+        carry_from: symbol_id_carry_start(count),
+    }
 }
 
 /// wasm: the ids of one checker of the inline pool. A native checker
@@ -3585,6 +3663,19 @@ pub fn send_checker_barrier<T: Send + 'static>(signal: impl Fn() -> T) -> usize 
     })
 }
 
+/// Runs `f` with the checker pool of the current program, made first when
+/// it has none (`create_checkers`). A new pool is made outside the `POOLS`
+/// borrow: a `--singleThreaded` pool reads the pools of earlier programs
+/// (`symbol_id_carry_start`).
+fn with_pool<R>(f: impl FnOnce(&mut CheckerPool) -> R) -> R {
+    let id = prog().id;
+    if !POOLS.with(|pools| pools.borrow().contains_key(&id)) {
+        let pool = create_checkers();
+        POOLS.with(|pools| pools.borrow_mut().insert(id, pool));
+    }
+    POOLS.with(|pools| f(pools.borrow_mut().get_mut(&id).expect("checker pool")))
+}
+
 /// Starts `f` with checker `index` on its thread and returns where the
 /// result arrives. Jobs for one checker run in the order they are sent.
 fn send_job<R: Send + 'static>(
@@ -3606,10 +3697,7 @@ fn send_thread_job<R: Send + 'static>(
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         let _ = sender.send(result);
     });
-    let id = prog().id;
-    POOLS.with(|pools| {
-        let mut pools = pools.borrow_mut();
-        let pool = pools.entry(id).or_insert_with(create_checkers);
+    with_pool(|pool| {
         pool.workers[index]
             .send(job)
             .expect("checker thread stopped");
@@ -3634,11 +3722,7 @@ fn send_thread_job<R: Send + 'static>(
     let id = prog().id;
     // The pool borrow ends before the job runs: a job reads the pool
     // (`checker_index_for_file`).
-    let (checker, mut ids) = POOLS.with(|pools| {
-        let mut pools = pools.borrow_mut();
-        let pool = pools.entry(id).or_insert_with(create_checkers);
-        pool.checkers[index].take().expect("checker in use")
-    });
+    let (checker, mut ids) = with_pool(|pool| pool.checkers[index].take().expect("checker in use"));
     let (result, checker) = ids.run(|| {
         WORKER_CHECKER.with(|slot| *slot.borrow_mut() = Some(checker));
         WORKER_INDEX.with(|slot| slot.set(Some(index)));
@@ -3729,10 +3813,7 @@ fn checker_index_for_file(file: Node) -> usize {
     if let Some(index) = with_tables(index) {
         return index;
     }
-    let id = prog().id;
-    POOLS.with(|pools| {
-        pools.borrow_mut().entry(id).or_insert_with(create_checkers);
-    });
+    with_pool(|_| ());
     with_tables(index).expect("checker pool not made")
 }
 
