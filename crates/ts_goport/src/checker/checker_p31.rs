@@ -552,7 +552,11 @@ impl Checker {
                 if is_property_access_or_qualified_name(location) {
                     let mut top_prop = location;
                     while is_property_access_or_qualified_name(top_prop) {
-                        if is_part_of_type_node(top_prop) {
+                        // Names in an import type's qualifier (`ns.y` in `typeof import("./b").ns.y`) are exports of the imported module, not references to this file's imports
+                        // (ts#64636, Go N' checker.go:28844)
+                        if is_part_of_type_node(top_prop)
+                            || is_import_type_qualifier_part(top_prop).is_some()
+                        {
                             return;
                         }
                         top_prop = top_prop.parent();
