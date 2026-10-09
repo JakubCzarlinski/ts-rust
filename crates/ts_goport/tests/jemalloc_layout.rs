@@ -122,13 +122,13 @@ fn tsgo_exits_with_the_holder() {
     // nothing.
     let holder = ts_goport::gostd::stack::memory_limit().is_none();
     let out = dir.0.join("watch-out");
-    let watch = tsgo(&["-w", "-p", p, "--outDir", out.to_str().unwrap()])
+    let mut watch = tsgo(&["-w", "-p", p, "--outDir", out.to_str().unwrap()])
         .spawn()
         .unwrap();
-    wait_for(&watch, || {
-        let dir = proc_dir(&watch);
-        (!holder || has_thread(&dir, HOLDER_NAME))
-            && has_thread(&dir, "signal.Notify")
+    let watch_dir = proc_dir(&watch);
+    wait_for(&mut watch, || {
+        (!holder || has_thread(&watch_dir, HOLDER_NAME))
+            && has_thread(&watch_dir, "signal.Notify")
             && out.join("b.js").exists()
     });
     rustix::process::kill_process(
@@ -138,7 +138,8 @@ fn tsgo_exits_with_the_holder() {
     .unwrap();
     assert_eq!(wait_limited(watch, &["-w"]).code(), Some(0), "-w");
     let mut lsp = tsgo(&["--lsp", "--stdio"]).spawn().unwrap();
-    wait_for(&lsp, || !holder || has_thread(&proc_dir(&lsp), HOLDER_NAME));
+    let lsp_dir = proc_dir(&lsp);
+    wait_for(&mut lsp, || !holder || has_thread(&lsp_dir, HOLDER_NAME));
     drop(lsp.stdin.take());
     assert_eq!(wait_limited(lsp, &["--lsp"]).code(), Some(0), "--lsp");
 }
@@ -189,10 +190,16 @@ fn proc_dir(child: &Child) -> PathBuf {
 }
 
 /// Waits until `ready` is true, at most `RUN_LIMIT`, while `child` runs.
-fn wait_for(child: &Child, ready: impl Fn() -> bool) {
+/// On a timeout it kills `child` before the panic, so that no `-w` or
+/// `--lsp` tsgo stays after the test.
+fn wait_for(child: &mut Child, ready: impl Fn() -> bool) {
     let start = Instant::now();
     while !ready() {
-        assert!(start.elapsed() < RUN_LIMIT, "tsgo {} not ready", child.id());
+        if start.elapsed() >= RUN_LIMIT {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("tsgo {} not ready in {RUN_LIMIT:?}", child.id());
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
