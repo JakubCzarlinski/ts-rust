@@ -494,6 +494,8 @@ static EMBEDDED_CONTENTS: &[EmbeddedLib] = &[
     bundled_lib!("lib.esnext.disposable.d.ts"),
     bundled_lib!("lib.esnext.full.d.ts"),
     bundled_lib!("lib.esnext.intl.d.ts"),
+    bundled_lib!("lib.esnext.modulesource.d.ts"),
+    bundled_lib!("lib.esnext.promise.d.ts"),
     bundled_lib!("lib.esnext.sharedmemory.d.ts"),
     bundled_lib!("lib.esnext.temporal.d.ts"),
     bundled_lib!("lib.scripthost.d.ts"),

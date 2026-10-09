@@ -131,17 +131,20 @@ pub static LIB_MAP: LazyLock<CommandLineOptionEnumMap> = LazyLock::new(|| {
         ("esnext.regexp", "lib.es2024.regexp.d.ts"),
         ("esnext.string", "lib.es2024.string.d.ts"),
         ("esnext.float16", "lib.es2025.float16.d.ts"),
-        ("esnext.promise", "lib.es2025.promise.d.ts"),
         ("esnext.array", "lib.es2026.array.d.ts"),
         ("esnext.collection", "lib.es2026.collection.d.ts"),
         ("esnext.error", "lib.es2026.error.d.ts"),
         ("esnext.iterator", "lib.es2026.iterator.d.ts"),
         ("esnext.typedarrays", "lib.es2026.typedarrays.d.ts"),
+        // ts#64093
+        ("esnext.promise", "lib.esnext.promise.d.ts"),
         // ESNext By-feature options
         ("esnext.date", "lib.esnext.date.d.ts"),
         ("esnext.decorators", "lib.esnext.decorators.d.ts"),
         ("esnext.disposable", "lib.esnext.disposable.d.ts"),
         ("esnext.intl", "lib.esnext.intl.d.ts"),
+        // ts#63915
+        ("esnext.modulesource", "lib.esnext.modulesource.d.ts"),
         ("esnext.sharedmemory", "lib.esnext.sharedmemory.d.ts"),
         ("esnext.temporal", "lib.esnext.temporal.d.ts"),
         // Decorators
